@@ -75,12 +75,20 @@ enter the repository.
 
 ## Release
 
-1. Set the version and move `Unreleased` `CHANGELOG.md` entries under it, dated.
+Pushing to `main` releases: once CI passes, its `release` job publishes `package.json`'s version to
+npm unless that version is already there, then tags `vX.Y.Z` and creates the GitHub release from the
+version's `CHANGELOG.md` section. Never tag or publish by hand.
+
+1. On `dev`, set the version and move `Unreleased` `CHANGELOG.md` entries under a dated
+   `## [X.Y.Z] - YYYY-MM-DD` heading; the job fails without one.
 2. Run `npm run check`; review the packed consumer result and the complete release diff.
 3. Confirm the package contains built JavaScript and declarations, usage docs, README, CHANGELOG and
    LICENSE, and nothing else.
-4. Obtain maintainer approval before release commits, creating `vX.Y.Z`, pushing, or publishing. Tag
-   only a committed tree, then publish that tree with `npm publish`; `prepack` builds `dist/`.
+4. Obtain maintainer approval, then fast-forward `main` to `dev`.
+
+The job authenticates through npm trusted publishing: the package's npm settings trust this
+repository's `ci.yml`. It stores no token; a publish failing with `E404` or `ENEEDAUTH` means that
+trust is missing or names another repository or workflow.
 
 ## Troubleshooting
 
