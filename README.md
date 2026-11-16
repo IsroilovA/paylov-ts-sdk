@@ -70,7 +70,8 @@ Paylov leaves behavior undocumented, the SDK does not guess; those gaps are trac
 The repository also holds the Paylov protocol notes the SDK implements
 ([`docs/paylov/`](docs/paylov/README.md)), the [architecture](docs/architecture.md), runnable
 [examples](examples/), and the contributor guide ([`AGENTS.md`](AGENTS.md) and the
-[runbook](docs/runbook.md)).
+[runbook](docs/runbook.md)). Report vulnerabilities privately as described in
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 

@@ -84,7 +84,7 @@ version's `CHANGELOG.md` section. Never tag or publish by hand.
 2. Run `npm run check`; review the packed consumer result and the complete release diff.
 3. Confirm the package contains built JavaScript and declarations, usage docs, README, CHANGELOG and
    LICENSE, and nothing else.
-4. Obtain maintainer approval, then fast-forward `main` to `dev`.
+4. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`.
 
 The job authenticates through npm trusted publishing: the package's npm settings trust this
 repository's `ci.yml`. It stores no token; a publish failing with `E404` or `ENEEDAUTH` means that
