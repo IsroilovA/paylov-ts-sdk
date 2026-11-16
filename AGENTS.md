@@ -67,5 +67,8 @@ Server-side TypeScript SDK for the Paylov payment gateway.
 - Use Conventional Commits and `feat/<topic>`, `fix/<topic>`, or `refactor/<topic>` branches.
 - Base branches and PRs on `dev`; prefer squash merges into it. Never commit directly to `main`;
   fast-forward `dev` into it with `git push origin origin/dev:main`.
+- A push to `main` is a release: CI publishes an unpublished `package.json` version to npm, then
+  tags and releases it. Fast-forward `main` only for an approved release; never tag or publish by
+  hand ([runbook](docs/runbook.md#release)).
 - Report only phase changes, blockers, consequential findings, and needed decisions. Final responses
   state outcome, changed paths, verification, and unresolved items.
