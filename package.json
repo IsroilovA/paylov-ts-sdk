@@ -23,7 +23,7 @@
     "url": "git+https://github.com/IsroilovA/paylov-ts-sdk.git"
   },
   "license": "MIT",
-  "author": "quot3d",
+  "author": "IsroilovA",
   "type": "module",
   "sideEffects": false,
   "engines": {
