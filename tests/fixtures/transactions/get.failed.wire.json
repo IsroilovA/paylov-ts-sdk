@@ -1,0 +1,33 @@
+{
+  "capture": "135",
+  "status": 200,
+  "body": {
+    "result": {
+      "totalTransaction": 1,
+      "transactions": [
+        {
+          "id": "5eed0000-0000-4000-8000-000000000003",
+          "external_id": null,
+          "userId": "user-example-1",
+          "card_id": "5eed0000-0000-4000-8000-000000000004",
+          "cardNumber": "986000******0000",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "amount": 1.0,
+          "amount_in_tiyin": 100,
+          "status": "failed",
+          "account": {},
+          "cancel_time": null,
+          "error_message": "processing_error",
+          "date": "2026-11-12 20:53:11",
+          "is_split": false,
+          "is_hold": false,
+          "is_a2c": false,
+          "transaction_type": "To'lov",
+          "via_link": null,
+          "ofd": []
+        }
+      ]
+    },
+    "error": null
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "result": {
+    "success": true,
+    "isRefund": false,
+    "receiptUrl": "https://ofd.soliq.uz/epi?t=EP000000000001&r=001&c=20060102000000&s=000000000001",
+    "terminalId": "EP000000000378",
+    "receiptId": 173723,
+    "fiscalSign": "947030008479"
+  }
+}

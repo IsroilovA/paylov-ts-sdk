@@ -1,0 +1,11 @@
+{
+  "capture": "246",
+  "status": 500,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "server_error",
+      "message": "Server error."
+    }
+  }
+}

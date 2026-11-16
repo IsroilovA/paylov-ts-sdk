@@ -1,0 +1,24 @@
+{
+  "result": {
+    "card": {
+      "userId": "32",
+      "cardId": "1a11a111-b6c1-43c2-b1ae-ee3f7b51231f",
+      "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+      "cardName": "",
+      "number": "561468******1311",
+      "balance": 150000,
+      "expireDate": "EXPIRY-REDACTED",
+      "bankId": "13",
+      "vendor": "MIR",
+      "processing": "Uzcard",
+      "status": {
+        "result": {
+          "is_active": false,
+          "status_message": "stolen_card_capture",
+          "sms_info": true
+        }
+      }
+    }
+  },
+  "error": null
+}

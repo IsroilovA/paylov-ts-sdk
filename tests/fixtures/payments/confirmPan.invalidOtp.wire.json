@@ -1,0 +1,11 @@
+{
+  "capture": "167",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "invalid_otp",
+      "message": "The confirmation code is incorrect."
+    }
+  }
+}

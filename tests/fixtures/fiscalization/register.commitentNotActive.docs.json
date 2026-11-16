@@ -1,0 +1,12 @@
+{
+  "result": null,
+  "error": {
+    "code": "ofd_commitent_or_subcommission_not_active",
+    "message": "A receipt item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue.",
+    "data": {
+      "itemIndex": 0,
+      "tin": "123456789",
+      "pinfl": null
+    }
+  }
+}

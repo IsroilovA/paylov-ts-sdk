@@ -1,0 +1,12 @@
+{
+  "capture": "111",
+  "status": 200,
+  "body": {
+    "result": {
+      "transactionId": "5eed0000-0000-4000-8000-000000000001",
+      "status": "cancelled",
+      "cancelTime": "2026-11-12 20:54:08"
+    },
+    "error": null
+  }
+}

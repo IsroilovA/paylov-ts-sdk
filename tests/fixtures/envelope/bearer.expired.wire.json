@@ -1,0 +1,11 @@
+{
+  "capture": "389",
+  "status": 401,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "permission_denied",
+      "message": "Token invalid or expired"
+    }
+  }
+}

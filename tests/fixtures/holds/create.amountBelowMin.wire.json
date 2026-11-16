@@ -1,0 +1,14 @@
+{
+  "capture": "204",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "validation_error",
+      "message": "The request contains invalid data.",
+      "data": {
+        "amount": ["Input should be greater than or equal to 10"]
+      }
+    }
+  }
+}

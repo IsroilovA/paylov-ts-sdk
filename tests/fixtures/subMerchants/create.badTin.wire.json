@@ -1,0 +1,14 @@
+{
+  "capture": "302",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "validation_error",
+      "message": "The request contains invalid data.",
+      "data": {
+        "non_field_errors": ["TIN must consist of 9 digits"]
+      }
+    }
+  }
+}

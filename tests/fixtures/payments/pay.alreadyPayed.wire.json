@@ -1,0 +1,11 @@
+{
+  "capture": "090",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "transaction_already_payed",
+      "message": "Transaction already payed."
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "capture": "274",
+  "status": 200,
+  "body": {
+    "result": {
+      "success": false,
+      "receiptUrl": null,
+      "isRefund": null
+    },
+    "error": null
+  }
+}

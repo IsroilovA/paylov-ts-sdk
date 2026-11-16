@@ -1,0 +1,16 @@
+{
+  "capture": "361",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "validation_error",
+      "message": "The request contains invalid data.",
+      "data": {
+        "token": ["String should have at least 8 characters"],
+        "username": ["String should have at least 8 characters"],
+        "password": ["String should have at least 8 characters"]
+      }
+    }
+  }
+}

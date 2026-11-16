@@ -1,0 +1,11 @@
+{
+  "capture": "210",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "transaction_not_found",
+      "message": "The transaction was not found."
+    }
+  }
+}

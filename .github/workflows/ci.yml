@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    # Lint, secret, layer, dependency, docs and type checks. None depends on the Node runtime, so
+    # they run once, on the engines floor.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.13.1'
+          cache: npm
+      # No dependency needs an install script on Linux.
+      - run: npm ci --ignore-scripts
+      - run: npm run check:static
+
+  runtime:
+    # Tests, build and the packed consumer, on every ref including tags: a dts/entry-point
+    # regression must fail on the PR, not for the first time on the tag.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The engines floor, the latest of its line, and the active LTS.
+        node: ['24.13.1', '24.x', '26.x']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # No dependency needs an install script on Linux.
+      - run: npm ci --ignore-scripts
+      - run: npm run check:runtime

@@ -1,0 +1,196 @@
+/**
+ * Sandbox cards: refusals of unknown ids, then the Uzcard test card bound by PAN and OTP, read,
+ * listed, checked and deleted; and Card Bind sessions, fresh and completed.
+ */
+
+import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+import { afterAll, describe, expect, it } from 'vitest';
+
+import { isPaylovApiError, type Card } from '../../src/index.js';
+import { liveClient, liveGate, liveUserId, observe, refused, settle } from '../helpers/live.js';
+import { completeCardBind, uzcardTestCard } from './sandboxCards.js';
+
+const gate = await liveGate();
+const writes = gate.enabled && gate.config.writes;
+const testCard = writes ? await uzcardTestCard() : undefined;
+
+const MASKED_PAN = /^\d{4,6}\*+\d{4}$/;
+
+/** The decoded card contract; comparisons are booleans so no id or card data is printed. */
+function expectBoundCard(label: string, card: Card, cardId: string, userId: string): void {
+  observe(label, {
+    vendor: card.vendor,
+    processing: card.processing,
+    isActive: card.isActive,
+    processingStatus: card.processingStatus,
+    isSmsEnabled: card.isSmsEnabled,
+    hasCardName: card.cardName !== null,
+    hasBankName: card.bankName !== null,
+  });
+  expect(card.cardId === cardId, `${label}: cardId`).toBe(true);
+  expect(card.userId === userId, `${label}: userId`).toBe(true);
+  expect(MASKED_PAN.test(card.maskedCardNumber), `${label}: masked card number`).toBe(true);
+  expect(card.vendor.toLowerCase()).toBe('uzcard');
+  expect(card).toMatchObject({ isActive: true, processingStatus: 'active' });
+  expect(Number.isSafeInteger(card.balanceTiyin) && card.balanceTiyin >= 0).toBe(true);
+  expect(card.bankId).toMatch(/^\d+$/);
+}
+
+describe.skipIf(!gate.enabled)('cards reads', () => {
+  if (!gate.enabled) return;
+  const client = liveClient(gate.config);
+
+  it('list for a user without cards is empty', async () => {
+    const cards = await client.cards.list({ userId: liveUserId('cards-empty') });
+    expect(cards.length).toBe(0);
+  });
+
+  it('get of an unknown card id is card_not_found', async () => {
+    const error = await refused('cards.get.unknown', client.cards.get({ cardId: randomUUID() }));
+    expect(error.code).toBe('card_not_found');
+  });
+
+  it('getBindSession of an unknown token is link_expired', async () => {
+    const token = randomUUID().replaceAll('-', '');
+    const error = await refused(
+      'cards.getBindSession.unknown',
+      client.cards.getBindSession({ token }),
+    );
+    expect(error.code).toBe('link_expired');
+  });
+});
+
+describe.skipIf(!writes)('cards writes: Card Bind', () => {
+  if (!gate.enabled) return;
+  const client = liveClient(gate.config);
+
+  it('createBindLink returns an https link whose session starts as created', async () => {
+    const link = await client.cards.createBindLink({ userId: liveUserId('cards-bind-link') });
+    expect(link.token.length).toBeGreaterThan(0);
+    expect(new URL(link.bindUrl).protocol).toBe('https:');
+    // About 20 minutes; a wrong zone reading of `expiresAt` misses this by hours.
+    const minutesLeft = (link.expiresAt.getTime() - Date.now()) / 60_000;
+    observe('cards.createBindLink', { minutesLeft: Math.round(minutesLeft) });
+    expect(minutesLeft).toBeGreaterThan(10);
+    expect(minutesLeft).toBeLessThan(30);
+
+    const session = await client.cards.getBindSession({ token: link.token });
+    observe('cards.getBindSession.fresh', { isBound: session.isBound, status: session.status });
+    expect(session.isBound).toBe(false);
+    expect(session.status).toBe('created');
+    expect(session.card === null, 'no card yet').toBe(true);
+  });
+});
+
+describe.skipIf(!writes || testCard?.ok !== true)('cards writes: Card Bind completion', () => {
+  if (!gate.enabled || testCard?.ok !== true) return;
+  const { config } = gate;
+  const client = liveClient(config);
+  const userId = liveUserId('cards-bind-complete');
+  let cardId: string | undefined;
+
+  afterAll(async () => {
+    if (cardId !== undefined) await settle('cards.bind.cleanup', client.cards.delete({ cardId }));
+  });
+
+  it('a completed link reads confirmed with the bound card', async () => {
+    const link = await client.cards.createBindLink({ userId });
+    cardId = await completeCardBind(config.baseUrl, link.token, testCard.value);
+
+    const session = await client.cards.getBindSession({ token: link.token });
+    observe('cards.getBindSession.confirmed', { isBound: session.isBound, status: session.status });
+    expect(session.isBound).toBe(true);
+    if (session.isBound) expectBoundCard('cards.getBindSession', session.card, cardId, userId);
+  });
+});
+
+describe.skipIf(!writes || testCard?.ok !== true)('cards writes: PAN binding', () => {
+  if (!gate.enabled || testCard?.ok !== true) return;
+  const { config } = gate;
+  const client = liveClient(config);
+  const card = testCard.value;
+  const userId = liveUserId('cards');
+  let cardId: string | undefined;
+
+  function boundCardId(): string {
+    if (cardId === undefined) throw new Error('the PAN binding step did not bind a card');
+    return cardId;
+  }
+
+  afterAll(async () => {
+    if (cardId !== undefined) await settle('cards.cleanup.delete', client.cards.delete({ cardId }));
+  });
+
+  it('startPanBinding then confirmPanBinding binds the card', async () => {
+    const started = await client.cards.startPanBinding({
+      userId,
+      cardNumber: card.pan,
+      cardExpiry: card.expiry,
+    });
+    expect(started.otpSentPhone.length).toBeGreaterThan(0);
+    cardId = started.cardId;
+
+    const confirmed = await client.cards.confirmPanBinding({
+      cardId: started.cardId,
+      otp: card.otp,
+    });
+    expectBoundCard('cards.confirmPanBinding', confirmed, started.cardId, userId);
+    expect(confirmed.maskedCardNumber.slice(-4) === card.pan.slice(-4), 'last four digits').toBe(
+      true,
+    );
+  });
+
+  it('get reads the card with its status flattened', async () => {
+    const fetched = await client.cards.get({ cardId: boundCardId() });
+    expectBoundCard('cards.get', fetched, boundCardId(), userId);
+    expect(fetched.maskedCardNumber.slice(-4) === card.pan.slice(-4), 'last four digits').toBe(
+      true,
+    );
+  });
+
+  it('list holds exactly the bound card, with its status flattened', async () => {
+    const cards = await client.cards.list({ userId });
+    observe('cards.list', { count: cards.length });
+    expect(cards.length).toBe(1);
+    const [listed] = cards;
+    if (listed === undefined) throw new Error('cards.list is empty');
+    expectBoundCard('cards.list', listed, boundCardId(), userId);
+  });
+
+  it('checkPhone answers false, phone_not_match, or is not enabled', async () => {
+    // A fixed non-subscriber number.
+    const outcome = await settle(
+      'cards.checkPhone',
+      client.cards.checkPhone({ cardId: boundCardId(), phoneNumber: '+998900000000' }),
+    );
+    const answer = outcome.ok ? outcome.value : outcome.error.code;
+    expect([false, 'phone_not_match', 'permission_denied']).toContain(answer);
+  });
+
+  it('delete unbinds the card; list and get drop it once their caches expire', async () => {
+    const id = boundCardId();
+    await expect(client.cards.delete({ cardId: id })).resolves.toBeUndefined();
+    cardId = undefined;
+    const deletedAt = Date.now();
+    const again = await refused('cards.delete.repeat', client.cards.delete({ cardId: id }));
+    expect(again.code).toBe('card_not_found');
+    // `getAllUserCards/` and `getCard/` serve cached copies of a just-deleted card for a while.
+    const waitUntilGone = async (label: string, gone: () => Promise<boolean>): Promise<void> => {
+      while (!(await gone())) {
+        if (Date.now() - deletedAt > 45_000) throw new Error(`${label} kept the deleted card 45 s`);
+        await sleep(3_000);
+      }
+      observe(label, { secondsCached: Math.round((Date.now() - deletedAt) / 1000) });
+    };
+    await waitUntilGone(
+      'cards.list.deleted',
+      async () => (await client.cards.list({ userId })).length === 0,
+    );
+    await waitUntilGone('cards.get.deleted', async () => {
+      const outcome = await client.cards.get({ cardId: id }).catch((error: unknown) => error);
+      return isPaylovApiError(outcome, 'card_not_found');
+    });
+  });
+});

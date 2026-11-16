@@ -1,0 +1,11 @@
+{
+  "capture": "134",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "processing_error",
+      "message": "The payment could not be processed. Please try again."
+    }
+  }
+}

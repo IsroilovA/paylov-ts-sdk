@@ -1,0 +1,10 @@
+{
+  "result": {
+    "success": true,
+    "reason": "Success",
+    "data": {
+      "status": true,
+      "activityNames": ["Lorem Ipsum is simply dummy text"]
+    }
+  }
+}

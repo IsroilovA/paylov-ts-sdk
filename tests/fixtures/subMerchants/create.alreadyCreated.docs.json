@@ -1,0 +1,7 @@
+{
+  "result": null,
+  "error": {
+    "code": "sub_merchant_already_created",
+    "message": "Sub Merchant Already Created..."
+  }
+}

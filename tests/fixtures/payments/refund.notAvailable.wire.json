@@ -1,0 +1,11 @@
+{
+  "capture": "112",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "transaction_not_available_for_cancel",
+      "message": "The transaction is not available for cancellation."
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "result": {
+    "transactionId": "5eed0000-0000-4000-8000-000000000001",
+    "status": "hold",
+    "payedAt": null,
+    "cancelTime": null,
+    "amount": 1000000000000000,
+    "serviceId": "5eed0000-0000-4000-8000-0000000000aa"
+  },
+  "error": null
+}

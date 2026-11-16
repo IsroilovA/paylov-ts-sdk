@@ -1,0 +1,12 @@
+{
+  "capture": "021",
+  "status": 404,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "not_found",
+      "message": "The requested resource was not found.",
+      "data": null
+    }
+  }
+}

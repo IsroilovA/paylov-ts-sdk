@@ -1,0 +1,11 @@
+{
+  "capture": "060",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "phone_not_match",
+      "message": "The phone number does not match the card."
+    }
+  }
+}

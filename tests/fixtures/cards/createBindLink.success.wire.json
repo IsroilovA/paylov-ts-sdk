@@ -1,0 +1,12 @@
+{
+  "capture": "082",
+  "status": 200,
+  "body": {
+    "result": {
+      "token": "EXAMPLE-BIND-NOT-A-REAL-TOKEN",
+      "bindUrl": "https://paylov.uz/card-bind/?token=EXAMPLE-BIND-NOT-A-REAL-TOKEN",
+      "expiresAt": "2026-11-12T21:11:50.670112+05:00"
+    },
+    "error": null
+  }
+}

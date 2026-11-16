@@ -1,0 +1,7 @@
+{
+  "result": null,
+  "error": {
+    "code": "ofd_check_not_found",
+    "message": "The fiscal receipt was not found."
+  }
+}

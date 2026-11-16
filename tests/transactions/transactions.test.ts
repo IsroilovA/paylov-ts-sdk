@@ -1,0 +1,342 @@
+import { describe, expect, it } from 'vitest';
+
+import { createTransactionsResource } from '../../src/transactions/resource.js';
+import {
+  expectApiError,
+  expectInputError,
+  expectMalformed,
+  expectNoSecretLeak,
+  recordOf,
+} from '../helpers/asserts.js';
+import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
+import { fixtureResponse, loadWire, wireResponse } from '../helpers/fixtures.js';
+import { BASE_URL, setupResource } from '../helpers/testHttp.js';
+
+const RECEIPT_ID = '5eed0000-0000-4000-8000-000000000001';
+const CARD_ID = '5eed0000-0000-4000-8000-000000000002';
+const FAILED_ID = '5eed0000-0000-4000-8000-000000000003';
+const HOLD_ID = '5eed0000-0000-4000-8000-000000000009';
+const CHECKOUT_ID = '5eed0000-0000-4000-8000-00000000000a';
+const RELEASED_HOLD_ID = '5eed0000-0000-4000-8000-00000000000f';
+const DOCS_ID = '3667c3fb-68a5-4d1c-bd86-99df49c895d9';
+const FULL_PAN = ['860000', '123456', '7890'].join('');
+
+function setup(script: FakeResponseSpec[]) {
+  return setupResource(createTransactionsResource, script);
+}
+
+/** The single transaction row of a `get` wire fixture, for malformed-row cases. */
+function rowOf(fixture: string): Record<string, unknown> {
+  const rows: unknown = recordOf(recordOf(loadWire(fixture).body)['result'])['transactions'];
+  if (!Array.isArray(rows)) throw new Error(`${fixture} has no transaction rows`);
+  return { ...recordOf(rows[0]) };
+}
+
+function getResponse(rows: readonly unknown[]): FakeResponseSpec {
+  return { body: { result: { totalTransaction: rows.length, transactions: rows }, error: null } };
+}
+
+describe('transactions.get', () => {
+  it('requests the id and decodes a created receipt', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/get.created.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: RECEIPT_ID });
+
+    expect(fetchImpl.calls[0]?.method).toBe('GET');
+    expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/?id=${RECEIPT_ID}`);
+    expect(transaction).toEqual({
+      transactionId: RECEIPT_ID,
+      externalId: null,
+      userId: 'user-example-1',
+      cardId: null,
+      maskedCardNumber: null,
+      amountTiyin: 100_000,
+      status: 'created',
+      declineCode: null,
+      paidOrCreatedAt: new Date('2026-11-12T20:52:20+05:00'),
+      cancelledAt: null,
+      isHold: false,
+      isSplit: false,
+      isA2c: false,
+      isCheckout: false,
+      fiscalReceipts: [],
+    });
+  });
+
+  it('maps payed to paid and reads the card and payment time', async () => {
+    const { resource } = setup([wireResponse('transactions/get.paid.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: RECEIPT_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'paid',
+      cardId: CARD_ID,
+      maskedCardNumber: '860000******0000',
+      paidOrCreatedAt: new Date('2026-11-12T20:52:31+05:00'),
+    });
+  });
+
+  it('reads a refunded sale (wire cancel) as refunded with the Tashkent cancel time', async () => {
+    const { resource } = setup([wireResponse('transactions/get.cancelled.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: RECEIPT_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'refunded',
+      cancelledAt: new Date('2026-11-12T20:54:08+05:00'),
+      paidOrCreatedAt: new Date('2026-11-12T20:52:31+05:00'),
+      amountTiyin: 100_000,
+    });
+  });
+
+  it('exposes the decline code of a failed payment', async () => {
+    const { resource } = setup([wireResponse('transactions/get.failed.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: FAILED_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'failed',
+      declineCode: 'processing_error',
+      amountTiyin: 100,
+    });
+  });
+
+  it('reads an uncaptured hold (wire waiting) as held', async () => {
+    const { resource } = setup([wireResponse('transactions/get.waitingHold.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: HOLD_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'held',
+      isHold: true,
+      externalId: 'hold-example-1',
+      amountTiyin: 500_000,
+    });
+  });
+
+  it('reads an expired hold Paylov released (wire refunded) as refunded', async () => {
+    const { resource } = setup([wireResponse('transactions/get.releasedHold.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: RELEASED_HOLD_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'refunded',
+      isHold: true,
+      cancelledAt: new Date('2026-11-14T12:04:50+05:00'),
+      amountTiyin: 100_000,
+    });
+  });
+
+  it('marks a checkout transaction', async () => {
+    const { resource } = setup([wireResponse('transactions/get.checkout.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: CHECKOUT_ID });
+
+    expect(transaction).toMatchObject({ isCheckout: true, userId: null, amountTiyin: 50_000 });
+  });
+
+  it('decodes fiscal receipts and keeps their time raw', async () => {
+    const { resource } = setup([fixtureResponse('transactions/get.withReceipts.docs.json')]);
+
+    const transaction = await resource.get({ transactionId: DOCS_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'paid',
+      externalId: 'order-12345',
+      isCheckout: true,
+    });
+    expect(transaction?.fiscalReceipts).toEqual([
+      {
+        receiptId: 123_456,
+        receiptUrl:
+          'https://ofd.soliq.uz/epi?t=EP000000000001&r=001&c=20060102000000&s=000000000001',
+        issuedAtRaw: '2026-04-01 06:38:38',
+        isRefund: false,
+      },
+    ]);
+  });
+
+  it('passes an unknown status through', async () => {
+    const { resource } = setup([
+      getResponse([{ ...rowOf('transactions/get.paid.wire.json'), status: 'reversed' }]),
+    ]);
+
+    const transaction = await resource.get({ transactionId: RECEIPT_ID });
+
+    expect(transaction?.status).toBe('reversed');
+  });
+
+  it('resolves to null when the gateway knows no such transaction', async () => {
+    const { resource } = setup([wireResponse('transactions/get.empty.wire.json')]);
+
+    await expect(resource.get({ transactionId: RECEIPT_ID })).resolves.toBeNull();
+  });
+
+  it('accepts an upper-case id for a lower-case row', async () => {
+    const { resource } = setup([wireResponse('transactions/get.paid.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: RECEIPT_ID.toUpperCase() });
+
+    expect(transaction?.transactionId).toBe(RECEIPT_ID);
+  });
+
+  it('fails as malformed when the rows are not the requested transaction', async () => {
+    const { resource } = setup([
+      wireResponse('transactions/list.paid.wire.json'),
+      wireResponse('transactions/get.paid.wire.json'),
+    ]);
+
+    await expectMalformed(resource.get({ transactionId: RECEIPT_ID }), 'result.transactions');
+    await expectMalformed(resource.get({ transactionId: HOLD_ID }), 'result.transactions');
+  });
+
+  it.each([
+    ['id', 42],
+    ['cardNumber', FULL_PAN],
+    ['date', '2026-11-12T20:52:31'],
+    ['cancel_time', '2026-11-12'],
+    ['amount_in_tiyin', 1000.5],
+    ['via_link', 'true'],
+    ['ofd', null],
+  ])('fails as malformed when %s is %j, without echoing the value', async (key, value) => {
+    const { resource } = setup([
+      getResponse([{ ...rowOf('transactions/get.paid.wire.json'), [key]: value }]),
+    ]);
+
+    const error = await expectMalformed(
+      resource.get({ transactionId: RECEIPT_ID }),
+      `result.transactions[0].${key}`,
+    );
+    expectNoSecretLeak(error, [FULL_PAN]);
+  });
+
+  it('fails as malformed when a documented key is absent', async () => {
+    const row = rowOf('transactions/get.paid.wire.json');
+    delete row['error_message'];
+    const { resource } = setup([getResponse([row])]);
+
+    await expectMalformed(
+      resource.get({ transactionId: RECEIPT_ID }),
+      'result.transactions[0].error_message',
+    );
+  });
+
+  it('sends a non-UUID id unchanged and surfaces the gateway validation error', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/get.invalidUuid.wire.json')]);
+
+    await expectApiError(resource.get({ transactionId: 'not-a-uuid' }), {
+      code: 'validation_error',
+      fields: ['transactionId'],
+    });
+    expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/?id=not-a-uuid`);
+  });
+});
+
+describe('transactions.list', () => {
+  it('sends no query without params and decodes the page', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/list.paid.wire.json')]);
+
+    const page = await resource.list();
+
+    expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/`);
+    expect(page.total).toBe(6);
+    expect(page.transactions.map((row) => [row.status, row.isHold, row.isCheckout])).toEqual([
+      ['paid', false, true],
+      ['paid', true, false],
+      ['paid', true, false],
+      ['paid', false, false],
+      ['paid', false, false],
+      ['paid', false, false],
+    ]);
+    // A captured hold reports the captured amount, not the held one.
+    expect(page.transactions[2]).toMatchObject({
+      transactionId: HOLD_ID,
+      amountTiyin: 400_000,
+      paidOrCreatedAt: new Date('2026-11-12T21:00:11+05:00'),
+    });
+  });
+
+  it('maps the dates and page onto the wire query', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/list.pastEnd.wire.json')]);
+
+    const page = await resource.list({ fromDate: '2026-11-01', toDate: '2026-11-30', page: 2 });
+
+    expect(fetchImpl.calls[0]?.url).toBe(
+      `${BASE_URL}/merchant/getTransactions/?beginDate=2026-11-01&endDate=2026-11-30&page=2`,
+    );
+    expect(page).toEqual({ total: 1, transactions: [] });
+  });
+
+  it.each([
+    ['fromDate', { fromDate: 20261101 }, 'type'],
+    ['page', { page: 1.5 }, 'type'],
+  ] as const)('rejects an invalid %s before any request', async (field, params, rule) => {
+    const { resource, fetchImpl } = setup([]);
+
+    await expectInputError(resource.list(params as never), { field, rule });
+    expect(fetchImpl.calls).toHaveLength(0);
+  });
+
+  it('sends a date with a time unchanged and surfaces the rejected filter by wire name', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/list.badDate.wire.json')]);
+
+    await expectApiError(resource.list({ fromDate: '2026-11-01 00:00:00' }), {
+      code: 'field_not_valid',
+      fields: ['beginDate'],
+    });
+    expect(new URL(fetchImpl.calls[0]?.url ?? '').searchParams.get('beginDate')).toBe(
+      '2026-11-01 00:00:00',
+    );
+  });
+
+  it('fails as malformed without a total', async () => {
+    const { resource } = setup([{ body: { result: { transactions: [] }, error: null } }]);
+
+    await expectMalformed(resource.list(), 'result.totalTransaction');
+  });
+});
+
+describe('transactions.getRrn', () => {
+  it('puts the id in the path, logs only the route and returns the RRN', async () => {
+    const { resource, fetchImpl, requests } = setup([
+      wireResponse('transactions/rrn.success.wire.json'),
+    ]);
+
+    const rrn = await resource.getRrn({ transactionId: RECEIPT_ID });
+
+    expect(rrn).toBe('000000000000');
+    expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/rrn/${RECEIPT_ID}/`);
+    expect(requests[0]?.endpoint).toBe('GET /merchant/getTransactions/rrn/{transactionId}/');
+  });
+
+  it.each([
+    ['rrn.notAvailable', 'receipt_not_available_for_operation'],
+    ['rrn.paymentConfirm', 'transaction_not_available_for_payment'],
+  ])('%s surfaces %s', async (fixture, code) => {
+    const { resource } = setup([wireResponse(`transactions/${fixture}.wire.json`)]);
+
+    await expectApiError(resource.getRrn({ transactionId: RECEIPT_ID }), { code });
+  });
+
+  it('refuses a dot-segment id before any request', async () => {
+    const { resource, fetchImpl } = setup([]);
+
+    await expectInputError(resource.getRrn({ transactionId: '..' }), {
+      field: 'transactionId',
+      rule: 'format',
+    });
+    expect(fetchImpl.calls).toHaveLength(0);
+  });
+});
+
+describe('call options', () => {
+  it('passes the caller signal to the request', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('transactions/list.pastEnd.wire.json')]);
+    const controller = new AbortController();
+
+    await resource.list({}, { signal: controller.signal });
+    controller.abort();
+
+    expect(fetchImpl.calls[0]?.signal?.aborted).toBe(true);
+  });
+});

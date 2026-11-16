@@ -1,0 +1,11 @@
+{
+  "capture": "169",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "otp_expired",
+      "message": "The confirmation code has expired."
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "capture": "904",
+  "status": 429,
+  "headers": { "retry-after": "48" },
+  "body": {
+    "result": null,
+    "error": {
+      "code": "rate_limit_exceeded",
+      "message": "Too many requests. Retry after 48s.",
+      "data": null
+    }
+  }
+}

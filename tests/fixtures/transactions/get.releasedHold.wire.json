@@ -1,0 +1,33 @@
+{
+  "capture": "1280",
+  "status": 200,
+  "body": {
+    "result": {
+      "totalTransaction": 1,
+      "transactions": [
+        {
+          "id": "5eed0000-0000-4000-8000-00000000000f",
+          "external_id": "hold-example-2",
+          "userId": "user-example-2",
+          "card_id": "5eed0000-0000-4000-8000-000000000010",
+          "cardNumber": "860000******0000",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "amount": 1000,
+          "amount_in_tiyin": 100000,
+          "status": "refunded",
+          "account": {},
+          "cancel_time": "2026-11-14 12:04:50",
+          "error_message": null,
+          "date": "2026-11-14 12:02:13",
+          "is_split": false,
+          "is_hold": true,
+          "is_a2c": false,
+          "transaction_type": "<transaction_type>",
+          "via_link": null,
+          "ofd": []
+        }
+      ]
+    },
+    "error": null
+  }
+}

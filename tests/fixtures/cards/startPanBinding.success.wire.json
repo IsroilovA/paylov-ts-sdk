@@ -1,0 +1,12 @@
+{
+  "capture": "025",
+  "status": 200,
+  "body": {
+    "result": {
+      "cid": "5eed0000-0000-4000-8000-000000000001",
+      "otpSentPhone": "+9989*****00",
+      "code": null
+    },
+    "error": null
+  }
+}

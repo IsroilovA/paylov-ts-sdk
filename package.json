@@ -1,0 +1,85 @@
+{
+  "name": "@isroilov_an/paylov",
+  "version": "0.0.1",
+  "description": "Unofficial server-side TypeScript SDK for the Paylov payment gateway (Uzbekistan). Not affiliated with Paylov.",
+  "keywords": [
+    "paylov",
+    "payments",
+    "payment-gateway",
+    "uzbekistan",
+    "uzcard",
+    "humo",
+    "ofd",
+    "fiscalization",
+    "typescript",
+    "sdk"
+  ],
+  "homepage": "https://github.com/IsroilovA/paylov-ts-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/IsroilovA/paylov-ts-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsroilovA/paylov-ts-sdk.git"
+  },
+  "license": "MIT",
+  "author": "quot3d",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24.13.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "docs/usage",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage && node scripts/checkCoverage.mjs",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "test:watch": "vitest",
+    "lint": "oxlint && oxfmt --check",
+    "format": "oxfmt",
+    "typecheck": "tsc -p tsconfig.build.json && tsc -p tsconfig.json",
+    "check:architecture": "node scripts/checkArchitecture.mjs",
+    "check:dependencies": "node scripts/checkDependencies.mjs",
+    "check:docs": "node scripts/checkDocSurface.mjs",
+    "check:secrets": "node scripts/checkSecrets.mjs",
+    "check:package": "node scripts/checkPackage.mjs",
+    "check": "npm run check:static && npm run check:runtime",
+    "check:static": "npm run lint && npm run check:secrets && npm run check:architecture && npm run check:dependencies && npm run check:docs && npm run typecheck",
+    "check:runtime": "npm run test:coverage && npm run build && npm run check:package"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
+    "oxc-parser": "^0.157.0",
+    "oxfmt": "^0.77.0",
+    "oxlint": "^1.92.0",
+    "oxlint-plugin-complexity": "^4.1.0",
+    "oxlint-tsgolint": "^7.0.2006",
+    "tsdown": "^0.23.7",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

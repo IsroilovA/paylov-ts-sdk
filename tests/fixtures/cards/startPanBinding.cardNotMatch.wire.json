@@ -1,0 +1,11 @@
+{
+  "capture": "032",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_not_match",
+      "message": "Card not match."
+    }
+  }
+}

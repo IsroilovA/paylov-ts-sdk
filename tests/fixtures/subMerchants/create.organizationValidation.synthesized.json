@@ -1,0 +1,13 @@
+{
+  "result": null,
+  "error": {
+    "code": "validation_error",
+    "message": "validation_error",
+    "data": {
+      "organization": {
+        "director_pinfl": ["EXAMPLE-DIRECTOR-PINFL-NOT-A-REAL-VALUE is not valid"]
+      },
+      "non_field_errors": ["At least one of TIN or PINFL must be provided"]
+    }
+  }
+}

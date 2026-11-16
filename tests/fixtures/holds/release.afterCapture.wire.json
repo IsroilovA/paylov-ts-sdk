@@ -1,0 +1,11 @@
+{
+  "capture": "197",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "hold_not_found",
+      "message": "The hold was not found."
+    }
+  }
+}

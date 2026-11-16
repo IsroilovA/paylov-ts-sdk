@@ -1,0 +1,10 @@
+{
+  "capture": "164",
+  "status": 200,
+  "body": {
+    "result": {
+      "rrn": "000000000000"
+    },
+    "error": null
+  }
+}

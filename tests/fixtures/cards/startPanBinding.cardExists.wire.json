@@ -1,0 +1,11 @@
+{
+  "capture": "030",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_exists",
+      "message": "The card is already added."
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "transactionId": "e2da46c6-8c89-400e-8bd9-037297b2e8b1",
+  "externalId": "EXAMPLE-RECEIPT-ID",
+  "terminalId": "EP000000000378",
+  "dateTime": "20250915143025",
+  "fiscalSign": "947030008479",
+  "qrCodeUrl": "https://ofd.soliq.uz/epi?t=EP000000000378&r=173723",
+  "receiptId": 173723
+}

@@ -1,0 +1,52 @@
+{
+  "capture": "055",
+  "status": 200,
+  "body": {
+    "result": {
+      "cards": [
+        {
+          "cardId": "5eed0000-0000-4000-8000-000000000002",
+          "userId": "user-example-1",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "cardName": "SDK HUMO",
+          "number": "986000******0000",
+          "balance": 19401865801108,
+          "expireDate": "EXPIRY-REDACTED",
+          "bankId": "10",
+          "bankName": "Asia Alliance Bank",
+          "vendor": "Humo",
+          "processing": "Humo",
+          "status": {
+            "result": {
+              "is_active": true,
+              "status_message": "active",
+              "sms_info": true
+            }
+          }
+        },
+        {
+          "cardId": "5eed0000-0000-4000-8000-000000000001",
+          "userId": "user-example-1",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "cardName": "SDK UZ",
+          "number": "860000******0000",
+          "balance": 19401865801108,
+          "expireDate": "EXPIRY-REDACTED",
+          "bankId": "38",
+          "bankName": "Paylov Bank",
+          "vendor": "Uzcard",
+          "processing": "Uzcard",
+          "status": {
+            "result": {
+              "is_active": true,
+              "status_message": "active",
+              "sms_info": true
+            }
+          }
+        }
+      ]
+    },
+    "error": null,
+    "is_cached": false
+  }
+}

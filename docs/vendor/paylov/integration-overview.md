@@ -1,0 +1,35 @@
+---
+source_url: https://developer.paylov.uz/integration-overview
+---
+
+# Integration overview
+
+Paylov Merchant API has two integration models. Choose the one that matches how your customer pays, then follow the flow below from left to right.
+
+Paylov Merchant API integration mapPaylov Merchant API[Checkout API](https://developer.paylov.uz/merchants/paylov-payment-gateway)[Create Payment Link](https://developer.paylov.uz/merchants/creating-payment-link)[transaction.check](https://developer.paylov.uz/merchants/transaction-check)[transaction.perform](https://developer.paylov.uz/merchants/transaction-perform)[OAuth2 Authorization](https://developer.paylov.uz/subscribe/authorization)[Subscribe API](https://developer.paylov.uz/subscribe/subscribe)One Time Payments API[Card Binding](https://developer.paylov.uz/subscribe/create-user-card)[Payment Without Registration](https://developer.paylov.uz/payment-without-registration/create-transaction)[Payment/AutoPay](https://developer.paylov.uz/subscribe/payment/create-transaction)[Hold Payment](https://developer.paylov.uz/subscribe/hold-payment/create)[Account2Card](https://developer.paylov.uz/a2c/perform-transaction)[confirmPayment API](https://developer.paylov.uz/payment-without-registration/confirm-payment)[Card Monitoring](https://developer.paylov.uz/subscribe/card-monitoring/get-card-history)[Service Payment](https://developer.paylov.uz/subscribe/service-payment/list)[Split Payment](https://developer.paylov.uz/subscribe/split-payment/create)[OFD-Fiscalization](https://developer.paylov.uz/subscribe/ofd/register)[QR Payments](https://developer.paylov.uz/qr-payments)[Didox](https://developer.paylov.uz/didox)
+
+## Which API should I use?
+
+### Checkout API
+
+Use Checkout when a customer pays on the Paylov-hosted payment page. Your backend creates a payment link, receives `transaction.check` and `transaction.perform` callbacks, then completes the order after a successful result.
+
+[Open the Checkout integration guide →](https://developer.paylov.uz/merchants/paylov-payment-gateway)
+
+### Subscribe API
+
+Use Subscribe when your product needs to register a customer card and make payments with that saved card. The customer confirms the card once by SMS; future merchant-initiated payments use the active `cardId`.
+
+[Open the Subscribe API guide →](https://developer.paylov.uz/subscribe/subscribe)
+
+Start with authentication
+
+Both flows require merchant access. Keep your credentials on the server and obtain an access token before calling protected endpoints.
+
+[Read the authentication guide →](https://developer.paylov.uz/subscribe/authorization)
+
+## Notes (extraction)
+
+- An inline SVG integration map carries the API flow relationships: Checkout leads through Create Payment Link, transaction.check and transaction.perform; OAuth2 Authorization leads to Subscribe API and One Time Payments API, with the linked operations shown in the diagram. It has no standalone image URL. Its text and links are retained in document order.
+- EN, RU and UZ agree on factual API content, fields, types, required flags, units, codes and example values; prose is localized.
+- Page link targets by language (including localized navigation within the content): EN: `https://developer.paylov.uz/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/merchants/creating-payment-link`, `https://developer.paylov.uz/merchants/transaction-check`, `https://developer.paylov.uz/merchants/transaction-perform`, `https://developer.paylov.uz/subscribe/authorization`, `https://developer.paylov.uz/subscribe/subscribe`, `https://developer.paylov.uz/subscribe/create-user-card`, `https://developer.paylov.uz/payment-without-registration/create-transaction`, `https://developer.paylov.uz/subscribe/payment/create-transaction`, `https://developer.paylov.uz/subscribe/hold-payment/create`, `https://developer.paylov.uz/a2c/perform-transaction`, `https://developer.paylov.uz/payment-without-registration/confirm-payment`, `https://developer.paylov.uz/subscribe/card-monitoring/get-card-history`, `https://developer.paylov.uz/subscribe/service-payment/list`, `https://developer.paylov.uz/subscribe/split-payment/create`, `https://developer.paylov.uz/subscribe/ofd/register`, `https://developer.paylov.uz/qr-payments`, `https://developer.paylov.uz/didox`, `https://developer.paylov.uz/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/subscribe/subscribe`, `https://developer.paylov.uz/subscribe/authorization`; RU: `https://developer.paylov.uz/ru/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/ru/merchants/creating-payment-link`, `https://developer.paylov.uz/ru/merchants/transaction-check`, `https://developer.paylov.uz/ru/merchants/transaction-perform`, `https://developer.paylov.uz/ru/subscribe/authorization`, `https://developer.paylov.uz/ru/subscribe/subscribe`, `https://developer.paylov.uz/ru/subscribe/create-user-card`, `https://developer.paylov.uz/ru/payment-without-registration/create-transaction`, `https://developer.paylov.uz/ru/subscribe/payment/create-transaction`, `https://developer.paylov.uz/ru/subscribe/hold-payment/create`, `https://developer.paylov.uz/ru/a2c/perform-transaction`, `https://developer.paylov.uz/ru/payment-without-registration/confirm-payment`, `https://developer.paylov.uz/ru/subscribe/card-monitoring/get-card-history`, `https://developer.paylov.uz/ru/subscribe/service-payment/list`, `https://developer.paylov.uz/ru/subscribe/split-payment/create`, `https://developer.paylov.uz/ru/subscribe/ofd/register`, `https://developer.paylov.uz/ru/qr-payments`, `https://developer.paylov.uz/ru/didox`, `https://developer.paylov.uz/ru/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/ru/subscribe/subscribe`, `https://developer.paylov.uz/ru/subscribe/authorization`; UZ: `https://developer.paylov.uz/uz/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/uz/merchants/creating-payment-link`, `https://developer.paylov.uz/uz/merchants/transaction-check`, `https://developer.paylov.uz/uz/merchants/transaction-perform`, `https://developer.paylov.uz/uz/subscribe/authorization`, `https://developer.paylov.uz/uz/subscribe/subscribe`, `https://developer.paylov.uz/uz/subscribe/create-user-card`, `https://developer.paylov.uz/uz/payment-without-registration/create-transaction`, `https://developer.paylov.uz/uz/subscribe/payment/create-transaction`, `https://developer.paylov.uz/uz/subscribe/hold-payment/create`, `https://developer.paylov.uz/uz/a2c/perform-transaction`, `https://developer.paylov.uz/uz/payment-without-registration/confirm-payment`, `https://developer.paylov.uz/uz/subscribe/card-monitoring/get-card-history`, `https://developer.paylov.uz/uz/subscribe/service-payment/list`, `https://developer.paylov.uz/uz/subscribe/split-payment/create`, `https://developer.paylov.uz/uz/subscribe/ofd/register`, `https://developer.paylov.uz/uz/qr-payments`, `https://developer.paylov.uz/uz/didox`, `https://developer.paylov.uz/uz/merchants/paylov-payment-gateway`, `https://developer.paylov.uz/uz/subscribe/subscribe`, `https://developer.paylov.uz/uz/subscribe/authorization`.

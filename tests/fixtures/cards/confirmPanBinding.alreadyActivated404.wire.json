@@ -1,0 +1,11 @@
+{
+  "capture": "028",
+  "status": 404,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_is_already_activated",
+      "message": "The card is already active."
+    }
+  }
+}

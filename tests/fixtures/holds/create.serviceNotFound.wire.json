@@ -1,0 +1,11 @@
+{
+  "capture": "208",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "service_not_found",
+      "message": "The service was not found."
+    }
+  }
+}

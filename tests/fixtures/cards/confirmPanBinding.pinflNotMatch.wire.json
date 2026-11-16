@@ -1,0 +1,11 @@
+{
+  "capture": "049",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "pinfl_not_match",
+      "message": "The PINFL does not match the card."
+    }
+  }
+}

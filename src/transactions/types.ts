@@ -1,0 +1,86 @@
+/** Parameters for `transactions.get`. */
+export interface GetTransactionParams {
+  readonly transactionId: string;
+}
+
+/** Parameters for `transactions.list`. */
+export interface ListTransactionsParams {
+  /** First day to include, `YYYY-MM-DD`, a calendar date in Tashkent time (UTC+5). */
+  readonly fromDate?: string;
+  /** Last day to include, `YYYY-MM-DD` in Tashkent time; the day itself is included. */
+  readonly toDate?: string;
+  /** 1-based page number; default 1. Pages held 20 rows on Paylov's test environment. */
+  readonly page?: number;
+}
+
+/** Parameters for `transactions.getRrn`. */
+export interface GetRrnParams {
+  readonly transactionId: string;
+}
+
+/**
+ * `created` (not yet paid), `held` (an uncaptured hold, as in `HoldStatus`), `paid` (a captured
+ * hold too), `failed` (declined; see `declineCode`) or `refunded`. A refunded sale reads
+ * `refunded`; so can an expired hold Paylov released, seen once with `isHold` true and no capture.
+ * `transfer` and `pending` are documented but were never observed. Other values pass through
+ * unchanged.
+ */
+export type TransactionStatus =
+  | 'created'
+  | 'held'
+  | 'paid'
+  | 'failed'
+  | 'refunded'
+  | 'transfer'
+  | 'pending'
+  | (string & {});
+
+/** A fiscal (OFD) receipt attached to a transaction. */
+export interface FiscalReceiptSummary {
+  readonly receiptId: number;
+  /** The tax authority's receipt page. */
+  readonly receiptUrl: string;
+  /** When it was issued: `YYYY-MM-DD HH:MM:SS` as sent; Paylov does not state its zone. */
+  readonly issuedAtRaw: string;
+  /** `true` for the receipt of a refund. */
+  readonly isRefund: boolean;
+}
+
+/** One gateway transaction: a receipt, PAN, hold or checkout payment. */
+export interface Transaction {
+  /** Gateway transaction id. */
+  readonly transactionId: string;
+  /**
+   * The external reference stored with the transaction: a hold's `externalId`, and possibly a
+   * value on checkout payments. `null` for receipt and PAN payments.
+   */
+  readonly externalId: string | null;
+  /** `null` for PAN and checkout payments, and for a receipt created without one until paid. */
+  readonly userId: string | null;
+  /** Card id; `null` until a card is attached. A PAN payment gets a new one each time. */
+  readonly cardId: string | null;
+  readonly maskedCardNumber: string | null;
+  /** For a captured hold, the captured amount. */
+  readonly amountTiyin: number;
+  readonly status: TransactionStatus;
+  /** The decline code of a `failed` transaction, e.g. `processing_error`; otherwise `null`. */
+  readonly declineCode: string | null;
+  /** The creation time, replaced by the payment or capture time once paid. */
+  readonly paidOrCreatedAt: Date;
+  /** When it was `refunded`; `null` otherwise. */
+  readonly cancelledAt: Date | null;
+  readonly isHold: boolean;
+  readonly isSplit: boolean;
+  readonly isA2c: boolean;
+  /** Paid through a checkout link. */
+  readonly isCheckout: boolean;
+  readonly fiscalReceipts: readonly FiscalReceiptSummary[];
+}
+
+/** One page of `transactions.list`. */
+export interface TransactionPage {
+  /** Matching transactions across all pages, not the length of this page. */
+  readonly total: number;
+  /** Paid transactions only, newest payment first. */
+  readonly transactions: readonly Transaction[];
+}

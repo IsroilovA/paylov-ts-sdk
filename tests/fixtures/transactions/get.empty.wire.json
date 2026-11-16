@@ -1,0 +1,11 @@
+{
+  "capture": "144",
+  "status": 200,
+  "body": {
+    "result": {
+      "totalTransaction": 0,
+      "transactions": []
+    },
+    "error": null
+  }
+}

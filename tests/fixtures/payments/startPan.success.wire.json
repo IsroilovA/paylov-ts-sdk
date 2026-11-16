@@ -1,0 +1,13 @@
+{
+  "capture": "166",
+  "status": 200,
+  "body": {
+    "result": {
+      "transactionId": "5eed0000-0000-4000-8000-000000000005",
+      "otpSentPhone": "+9989*****00",
+      "extId": "ext-example-1",
+      "code": null
+    },
+    "error": null
+  }
+}

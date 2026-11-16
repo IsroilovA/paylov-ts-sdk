@@ -1,0 +1,11 @@
+{
+  "capture": "188",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "invalid_amount",
+      "message": "The amount is invalid."
+    }
+  }
+}

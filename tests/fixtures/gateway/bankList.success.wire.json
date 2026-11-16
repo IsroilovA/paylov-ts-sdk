@@ -1,0 +1,191 @@
+{
+  "capture": "014",
+  "status": 200,
+  "body": [
+    {
+      "id": 1,
+      "name": "Hamkorbank",
+      "official_name": null
+    },
+    {
+      "id": 2,
+      "name": "Davr bank",
+      "official_name": null
+    },
+    {
+      "id": 3,
+      "name": "Aloqabank",
+      "official_name": null
+    },
+    {
+      "id": 4,
+      "name": "Kapital bank",
+      "official_name": null
+    },
+    {
+      "id": 5,
+      "name": "Universalbank",
+      "official_name": null
+    },
+    {
+      "id": 6,
+      "name": "Ipak Yuli Bank",
+      "official_name": null
+    },
+    {
+      "id": 7,
+      "name": "Ziraat Bank",
+      "official_name": null
+    },
+    {
+      "id": 8,
+      "name": "Turkistonbank",
+      "official_name": null
+    },
+    {
+      "id": 9,
+      "name": "Ravnaq Bank",
+      "official_name": null
+    },
+    {
+      "id": 10,
+      "name": "Asia Alliance Bank",
+      "official_name": null
+    },
+    {
+      "id": 11,
+      "name": "Hi-Tech Bank",
+      "official_name": null
+    },
+    {
+      "id": 12,
+      "name": "Orient Finans Bank",
+      "official_name": null
+    },
+    {
+      "id": 13,
+      "name": "NBU",
+      "official_name": null
+    },
+    {
+      "id": 14,
+      "name": "O`zsanoatqurilishbank",
+      "official_name": null
+    },
+    {
+      "id": 15,
+      "name": "Agrobank",
+      "official_name": null
+    },
+    {
+      "id": 16,
+      "name": "Mikrokreditbank",
+      "official_name": null
+    },
+    {
+      "id": 17,
+      "name": "Xalq Bank",
+      "official_name": null
+    },
+    {
+      "id": 18,
+      "name": "Savdogar Bank",
+      "official_name": null
+    },
+    {
+      "id": 19,
+      "name": "Qishloq Qurilish Bank",
+      "official_name": null
+    },
+    {
+      "id": 20,
+      "name": "Turon Bank",
+      "official_name": null
+    },
+    {
+      "id": 22,
+      "name": "Asaka Bank",
+      "official_name": null
+    },
+    {
+      "id": 23,
+      "name": "Trastbank",
+      "official_name": null
+    },
+    {
+      "id": 24,
+      "name": "Ipoteka bank",
+      "official_name": null
+    },
+    {
+      "id": 25,
+      "name": "O`zKDB bank",
+      "official_name": null
+    },
+    {
+      "id": 26,
+      "name": "Invest-Finans bank",
+      "official_name": null
+    },
+    {
+      "id": 27,
+      "name": "Madad Invest Bank",
+      "official_name": null
+    },
+    {
+      "id": 28,
+      "name": "O‘zagroeksportbank",
+      "official_name": null
+    },
+    {
+      "id": 29,
+      "name": "Saderat Bank",
+      "official_name": null
+    },
+    {
+      "id": 30,
+      "name": "Poytaxt Bank",
+      "official_name": null
+    },
+    {
+      "id": 31,
+      "name": "Payme CARD",
+      "official_name": null
+    },
+    {
+      "id": 32,
+      "name": "TengeBank",
+      "official_name": null
+    },
+    {
+      "id": 33,
+      "name": "TechnicalBank",
+      "official_name": null
+    },
+    {
+      "id": 34,
+      "name": "TBC Bank",
+      "official_name": null
+    },
+    {
+      "id": 35,
+      "name": "RavnaqVisa",
+      "official_name": null
+    },
+    {
+      "id": 36,
+      "name": "Markaziy Bank",
+      "official_name": null
+    },
+    {
+      "id": 37,
+      "name": "Anor Bank",
+      "official_name": null
+    },
+    {
+      "id": 38,
+      "name": "Paylov Bank",
+      "official_name": null
+    }
+  ]
+}

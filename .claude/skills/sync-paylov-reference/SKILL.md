@@ -1,0 +1,1 @@
+../../../.agents/skills/sync-paylov-reference/SKILL.md

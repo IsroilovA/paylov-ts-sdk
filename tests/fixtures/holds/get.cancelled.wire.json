@@ -1,0 +1,15 @@
+{
+  "capture": "199",
+  "status": 200,
+  "body": {
+    "result": {
+      "transactionId": "5eed0000-0000-4000-8000-000000000002",
+      "status": "cancelled",
+      "payedAt": null,
+      "cancelTime": "2026-11-12 16:00:21",
+      "amount": 3000,
+      "serviceId": "5eed0000-0000-4000-8000-0000000000aa"
+    },
+    "error": null
+  }
+}

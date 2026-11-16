@@ -1,0 +1,23 @@
+{
+  "token": "pR3x...kLq9",
+  "userId": "partner-user-10234",
+  "status": "confirmed",
+  "card": {
+    "cardId": "5eed0000-0000-4000-8000-0000000000c1",
+    "userId": "partner-user-10234",
+    "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+    "cardName": null,
+    "number": "860012******9012",
+    "balance": 1500000,
+    "expireDate": "EXPIRY-REDACTED",
+    "bankId": "7",
+    "bankName": "Ipoteka Bank",
+    "vendor": "uzcard",
+    "processing": "Uzcard",
+    "status": {
+      "is_active": true,
+      "status_message": "active",
+      "sms_info": true
+    }
+  }
+}

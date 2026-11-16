@@ -1,0 +1,11 @@
+{
+  "capture": "201",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "transaction_not_available_for_payment",
+      "message": "Transaction not available for payment."
+    }
+  }
+}

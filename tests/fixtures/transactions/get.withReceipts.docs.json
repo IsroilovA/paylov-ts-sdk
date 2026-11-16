@@ -1,0 +1,38 @@
+{
+  "result": {
+    "totalTransaction": 1,
+    "transactions": [
+      {
+        "id": "3667c3fb-68a5-4d1c-bd86-99df49c895d9",
+        "external_id": "order-12345",
+        "userId": null,
+        "card_id": "9a192005-f61c-4874-51a3-f3bf154d6feb",
+        "cardNumber": "986030******9999",
+        "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+        "amount": 1000.0,
+        "amount_in_tiyin": 100000,
+        "status": "payed",
+        "account": {
+          "order_id": "12345"
+        },
+        "cancel_time": null,
+        "error_message": null,
+        "date": "2026-04-01 06:38:38",
+        "is_split": false,
+        "is_hold": false,
+        "is_a2c": false,
+        "transaction_type": "To'lov",
+        "via_link": true,
+        "ofd": [
+          {
+            "receipt_id": 123456,
+            "qr_code_url": "https://ofd.soliq.uz/epi?t=EP000000000001&r=001&c=20060102000000&s=000000000001",
+            "date_time": "2026-04-01 06:38:38",
+            "is_refund": false
+          }
+        ]
+      }
+    ]
+  },
+  "error": null
+}

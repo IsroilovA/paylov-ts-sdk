@@ -1,0 +1,12 @@
+{
+  "capture": "202",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "field_not_valid",
+      "message": "The field is not valid.",
+      "data": "time"
+    }
+  }
+}

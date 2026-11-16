@@ -1,0 +1,12 @@
+{
+  "capture": "023",
+  "status": 405,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "method_not_allowed",
+      "message": "Method not allowed.",
+      "data": null
+    }
+  }
+}

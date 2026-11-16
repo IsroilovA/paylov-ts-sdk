@@ -1,0 +1,30 @@
+{
+  "capture": "052",
+  "status": 200,
+  "body": {
+    "result": {
+      "card": {
+        "cardId": "5eed0000-0000-4000-8000-000000000001",
+        "userId": "user-example-1",
+        "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+        "cardName": "SDK UZ",
+        "number": "860000******0000",
+        "balance": 1000000000,
+        "expireDate": "EXPIRY-REDACTED",
+        "bankId": "38",
+        "bankName": "Paylov Bank",
+        "vendor": "Uzcard",
+        "processing": "Uzcard",
+        "status": {
+          "result": {
+            "is_active": true,
+            "status_message": "active",
+            "sms_info": true
+          }
+        }
+      }
+    },
+    "error": null,
+    "is_cached": false
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "capture": "085",
+  "status": 200,
+  "body": {
+    "result": {
+      "state": "created",
+      "card": null
+    },
+    "error": null
+  }
+}

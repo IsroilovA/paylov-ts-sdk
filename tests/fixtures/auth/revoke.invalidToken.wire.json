@@ -1,0 +1,11 @@
+{
+  "capture": "375",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "invalid_token",
+      "message": "Token not found or already revoked"
+    }
+  }
+}

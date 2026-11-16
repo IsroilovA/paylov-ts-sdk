@@ -1,0 +1,11 @@
+{
+  "capture": "283",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "permission_denied",
+      "message": "This operation is not permitted."
+    }
+  }
+}

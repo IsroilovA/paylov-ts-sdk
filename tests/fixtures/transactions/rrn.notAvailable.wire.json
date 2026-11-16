@@ -1,0 +1,11 @@
+{
+  "capture": "163",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "receipt_not_available_for_operation",
+      "message": "Receipt not available for operation."
+    }
+  }
+}

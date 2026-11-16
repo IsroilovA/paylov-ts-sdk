@@ -1,0 +1,11 @@
+{
+  "capture": "053",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_not_found",
+      "message": "The card was not found."
+    }
+  }
+}

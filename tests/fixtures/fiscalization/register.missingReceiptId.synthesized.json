@@ -1,0 +1,9 @@
+{
+  "result": {
+    "ofd": {
+      "receiptUrl": "https://ofd.example.com/receipt/12345",
+      "terminalId": "T1",
+      "fiscalSign": "FS1"
+    }
+  }
+}

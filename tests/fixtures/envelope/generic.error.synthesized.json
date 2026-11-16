@@ -1,0 +1,7 @@
+{
+  "result": null,
+  "error": {
+    "code": "insufficient_funds",
+    "message": "There are insufficient funds on the card."
+  }
+}

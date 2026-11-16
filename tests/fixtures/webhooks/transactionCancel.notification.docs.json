@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "transaction.cancel",
+  "params": {
+    "transaction_id": "9b3bd7be-9327-4608-b886-4353e49df05f",
+    "status": "cancelled",
+    "account": {
+      "order_id": "12345"
+    },
+    "amount": 1500,
+    "amount_in_tiyin": 150000,
+    "cancel_time": 1767162243
+  }
+}

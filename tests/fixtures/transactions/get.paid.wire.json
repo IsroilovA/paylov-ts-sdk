@@ -1,0 +1,33 @@
+{
+  "capture": "089",
+  "status": 200,
+  "body": {
+    "result": {
+      "totalTransaction": 1,
+      "transactions": [
+        {
+          "id": "5eed0000-0000-4000-8000-000000000001",
+          "external_id": null,
+          "userId": "user-example-1",
+          "card_id": "5eed0000-0000-4000-8000-000000000002",
+          "cardNumber": "860000******0000",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "amount": 1000.0,
+          "amount_in_tiyin": 100000,
+          "status": "payed",
+          "account": {},
+          "cancel_time": null,
+          "error_message": null,
+          "date": "2026-11-12 20:52:31",
+          "is_split": false,
+          "is_hold": false,
+          "is_a2c": false,
+          "transaction_type": "To'lov",
+          "via_link": null,
+          "ofd": []
+        }
+      ]
+    },
+    "error": null
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1234567,
+  "method": "transaction.perform",
+  "params": {
+    "transaction_id": "9bd1a92b-5cce-47c8-a2df-99a20836ab9e",
+    "account": {
+      "order_id": 12
+    },
+    "amount": 500,
+    "amount_tiyin": 50000,
+    "currency": 860
+  }
+}

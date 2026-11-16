@@ -1,0 +1,12 @@
+{
+  "capture": "948",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_is_blocked",
+      "message": "Card is blocked try again later.",
+      "data": { "sec_to_retry": 297 }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "capture": "110",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "field_required",
+      "message": "field_required: userId"
+    }
+  }
+}

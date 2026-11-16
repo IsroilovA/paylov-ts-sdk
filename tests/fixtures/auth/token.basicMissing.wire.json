@@ -1,0 +1,11 @@
+{
+  "capture": "007",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "invalid_request",
+      "message": "Basic Authorization header required"
+    }
+  }
+}

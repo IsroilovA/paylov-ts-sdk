@@ -1,0 +1,11 @@
+{
+  "capture": "183",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "external_id_already_exists",
+      "message": "External id already exists."
+    }
+  }
+}

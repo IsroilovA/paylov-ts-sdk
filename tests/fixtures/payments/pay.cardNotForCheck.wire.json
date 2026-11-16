@@ -1,0 +1,11 @@
+{
+  "capture": "109",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "card_is_not_for_this_check",
+      "message": "Card is not for this check."
+    }
+  }
+}

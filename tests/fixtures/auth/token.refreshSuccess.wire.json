@@ -1,0 +1,11 @@
+{
+  "capture": "369",
+  "status": 200,
+  "body": {
+    "access_token": "EXAMPLE-ROTATED-ACCESS-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "refresh_token": "EXAMPLE-ROTATED-REFRESH-TOKEN-NOT-A-REAL-CREDENTIAL",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "refresh_expires_in": 2592000
+  }
+}

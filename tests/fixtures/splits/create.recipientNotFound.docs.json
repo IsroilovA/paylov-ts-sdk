@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "recipient_not_found",
+    "message": "One or more recipients not found.",
+    "data": {
+      "notFoundRecipientIds": ["<recipient_id>"]
+    }
+  }
+}
