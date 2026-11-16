@@ -18,7 +18,6 @@ if (transaction === null) {
   `held`, as in `holds.get`, until captured (`paid` here, `captured` in `holds.get`). An expired
   hold Paylov released has also read `refunded`, so for a hold `refunded` means only that the
   merchant keeps no money from it; read `holds.get` to tell a release from a capture.
-- `null` right after a failed call proves nothing.
 - Recovery per method: [errors.md](errors.md#recovery-after-an-ambiguous-failure).
 
 ## Settled sales

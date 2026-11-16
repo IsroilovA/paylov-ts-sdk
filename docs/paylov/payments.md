@@ -9,24 +9,52 @@ sources:
 
 # Payments
 
-Card payments without a hold. Grades follow the [reference index](README.md#evidence).
+Card payments without a hold. Vendor contracts:
+[create](../vendor/paylov/subscribe/payment/create-transaction.md),
+[pay](../vendor/paylov/subscribe/payment/confirm-payment.md),
+[PWR create](../vendor/paylov/payment-without-registration/create-transaction.md),
+[PWR confirm](../vendor/paylov/payment-without-registration/confirm-payment.md) and
+[cancel](../vendor/paylov/subscribe/cancel-payment.md). Grades: [evidence](README.md#evidence).
+Every success and error is the `{result, error}` envelope, and every business and validation failure
+is HTTP 400 (W c086, c090–c117).
+
+## Flow
 
 - **Saved card:** create a transaction (`receipts/create`; no money moves), then pay it with a card
   bound through [cards](cards.md) (`receipts/pay`; money moves, no OTP).
 - **Payment without registration (PWR):** send a full card number (`paymentWithoutRegistration/`);
-  the processing center sends an OTP; confirm it (`confirmPayment/`; money moves).
+  the processing center sends an OTP; confirm it (`confirmPayment/`; money moves). It becomes
+  `payed` after confirmation (W c168, c170).
 - **Cancel:** fully refund a paid transaction (`payment/cancel/`).
 
-Read any resulting transaction, and reconcile, through [transactions](transactions.md). Holds are on
-[holds](holds.md). The tester-only `payment/` flow is listed under
-[additional routes](README.md#surface-outside-the-sdk).
+Read and reconcile every result through [transactions](transactions.md); holds are on
+[holds](holds.md); the tester-only `payment/` flow is under
+[surface outside the SDK](README.md#surface-outside-the-sdk).
+
+A saved-card pay becomes `payed` and sets `date` to the payment time (W c089). A decline leaves one
+of two states, even for the same decline code (W):
+
+- `failed`, with the card attached and `processing_error` in `error_message` (W c134, c135, c630,
+  c631). It cannot be paid again: a later pay with either card answers
+  `transaction_not_available_for_payment` and it stays `failed` (W c632–c634). Create a new
+  transaction instead.
+- `created`, with `card_id: null` (W c615, c616). A later pay with another card succeeded, and a
+  further pay answered `transaction_already_payed` (W c617–c619).
+
+After an uncertain pay, read the transaction by id with backoff; a replay error alone does not
+establish the earlier outcome ([common rules](#common-rules)). Recovery assumption (M 2026-11-15):
+`payed` is done; `transfer`, `pending` and `waiting` are in progress, so keep reading; `failed`
+needs a new transaction. A status that stays `created` across backed-off reads means the pay did not
+take effect, so pay again with the same `transactionId`; a late first pay then answers
+`transaction_already_payed` (W c090) instead of charging twice. A new transaction would risk a
+second payment. Consumer steps:
+[usage/errors.md](../usage/errors.md#recovery-after-an-ambiguous-failure).
 
 ## Common rules
 
-- Every success and error is the `{result, error}` envelope, `receipts/create` included (W c086).
-  Every business and validation failure is HTTP 400 (W c090–c117).
-- Request `amount` is integer **SUM** on every endpoint here (W c086/c087, c166/c170). Unknown
-  request fields are ignored; numeric strings are coerced (W c095).
+Wire units: [amount units](README.md#amount-units-by-operation).
+
+- Unknown request fields are ignored; numeric strings are coerced (W c095).
 - `account` must be a JSON object wherever accepted; a string is `validation_error`
   `{"account": ["Input should be a valid dictionary"]}` (W c093, c173). REST reads return
   `account: {}` whatever was sent (W c087, c346) [OPEN Q87], although Paylov keeps the keys: for a
@@ -89,24 +117,11 @@ Charges the card for the amount fixed at create. No OTP.
 | `cardId`        | UUID   | Yes      | A card bound to `userId`                           | W (c108, c109) |
 | `userId`        | string | Yes      | Missing → `field_required`, not `validation_error` | W (c110)       |
 
-Success echoes `{"transactionId": ...}` (W c088). The transaction becomes `payed` and its `date`
-becomes the payment time (W c089). A decline leaves one of two states, even for the same decline
-code (W):
+Success echoes `{"transactionId": ...}` (W c088); decline states and recovery are under
+[flow](#flow).
 
-- `failed`, with the card attached and `processing_error` in `error_message` (W c134, c135, c630,
-  c631). It cannot be paid again: a later pay with either card answers
-  `transaction_not_available_for_payment` and it stays `failed` (W c632–c634). Create a new
-  transaction instead.
-- `created`, with `card_id: null` (W c615, c616). A later pay with another card succeeded, and a
-  further pay answered `transaction_already_payed` (W c617–c619).
-
-Ambiguous pay recovery (M 2026-11-15): read status with backoff. `payed` is done; `transfer`,
-`pending` and `waiting` are in progress, so keep reading; `failed` needs a new transaction. A status
-that stays `created` means the pay did not take effect: pay again with the same `transactionId`,
-since a paid transaction answers `transaction_already_payed` (W c090). Never create a new
-transaction for it: if the first pay lands late, that is a second payment. On DEV the HUMO test card
-paid 1, 2, 5 and 20 SUM and declined 50 and 1000 SUM with `insufficient_funds` (W c570–c585, c615,
-c623–c630); these are DEV test balances.
+On DEV the HUMO test card paid 1, 2, 5 and 20 SUM and declined 50 and 1000 SUM with
+`insufficient_funds` (W c570–c585, c615, c623–c630); these are DEV test balances.
 
 | Trigger                           | Code                                                                                                                 | Grade                   |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------- |
@@ -155,9 +170,8 @@ A one-off payment by full card number. No money moves until the OTP is confirmed
 }
 ```
 
-- OTP delivery follows [card binding](cards.md#create-user-card) (D).
-- `otpSentPhone` is masked as `+998` and one digit, five `*`, and the last two digits (W c166,
-  c178); D shows `********6466`.
+- OTP delivery and the `otpSentPhone` mask follow [card binding](cards.md#create-user-card) (W c166,
+  c178; D shows `********6466`).
 - `code` is undocumented and `null` in every capture, with or without `sms` (W c166, c178, c1365,
   c1368, c1371).
 - After confirmation the transaction has `userId: null` and a new `card_id` per payment, distinct
@@ -208,14 +222,15 @@ caused by card binding, PWR confirm still answered `invalid_otp` three times bef
 
 Fully refunds a paid transaction; there is no amount field and no partial refund. Cancelling a card
 payment also cancels its [fiscal receipt](fiscalization.md#refund-fiscal-receipt) (D). Release an
-uncaptured hold with [dismiss](holds.md) instead. On DEV cancel refunds neither a captured hold nor
-a PWR payment: a fully captured hold answered `processing_error` twice, 10 minutes apart, and stayed
-`payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment answered
-`transaction_not_available_for_cancel` and stayed `payed` (W c564–c566); production was not tried.
-Which payment kinds the API refunds is not documented; the documented cancel paths are the Paylov
-business panel and Paylov staff (D, [`transaction.cancel`](callbacks.md#transactioncancel)). The
-docs do not say whether an API cancel emits that webhook, so a refund is confirmed by
-`getTransactions`.
+uncaptured hold with [dismiss](holds.md#dismiss) instead.
+
+Which payment kinds the API refunds is not documented. On DEV, cancel refunds only saved-card
+payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and stayed
+`payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid checkout
+(W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Production was not
+tried. The other documented cancel paths are the Paylov business panel and Paylov staff, which emit
+[`transaction.cancel`](callbacks.md#transactioncancel) (D); whether an API cancel emits it is
+undocumented, so confirm a refund with a [transaction read](transactions.md#get-one-transaction).
 
 | Name            | Type | Required | Description | Grade          |
 | --------------- | ---- | -------- | ----------- | -------------- |
@@ -236,7 +251,7 @@ Success; `cancelTime` is `YYYY-MM-DD HH:MM:SS` in Tashkent time, UTC+05:00: the 
 ```
 
 The transaction then reads `status: "cancel"` with the same `cancel_time`, and unchanged `date` and
-`amount_in_tiyin` (W c113).
+`amount_in_tiyin` (W c113; [fields](transactions.md#fields-of-transactions)).
 
 | Trigger                                           | Code                                                           | Grade                  |
 | ------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
@@ -263,7 +278,8 @@ DEV live run 2026-11-12; no numbered capture.
 
 ## Deviations from vendor docs
 
-- `receipts/create`: the page shows a flat success; the gateway envelopes it (W c086).
+- `receipts/create` response-shape discrepancy: [errors](errors.md#deviations-from-vendor-docs) (W
+  c086).
 - `receipts/pay`: the page lists no codes. `payment/cancel`: the page lists only
   `permission_denied`, `transaction_not_found` and `transaction_not_available_for_cancel`. The
   tables above are W.

@@ -25,8 +25,6 @@ Some endpoints take whole SUM on the wire, so their amounts must be multiples of
 | `splits.create` recipients, fiscal item `priceTiyin` and `discountTiyin` | Tiyin                      | Amounts must add up to the transaction amount             |
 | `createCheckoutUrl`                                                      | Tiyin (UZS) or cents (USD) | Out-of-range amounts fail on the page, after the redirect |
 
-Amounts whose unit Paylov does not state are not exposed.
-
 ## Dates and times
 
 Fields ending in `At` are `Date` values. Paylov sends most timestamps without a zone; the SDK

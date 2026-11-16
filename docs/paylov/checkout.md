@@ -15,25 +15,28 @@ sources:
 # Checkout (hosted payment link and internal checkout)
 
 A checkout link sends the customer to Paylov's hosted payment page. The merchant builds it locally
-with no API call: a form-encoded query, base64-encoded and appended to a fixed URL. The page then
-runs the internal-checkout GraphQL mutations described below. Here **L** is the checkout page
-bundle: its route guard `Mce`, which parses the link, and the `internalCheckoutCreate` mutation it
-calls.
+with no API call: a form-encoded query, base64-encoded and appended to a fixed URL. The page runs
+the internal-checkout GraphQL mutations described below. Here **L** is the checkout page bundle: its
+route guard `Mce`, which parses the link, and the `internalCheckoutCreate` mutation it calls. Vendor
+contracts: [link](../vendor/paylov/creating-payment-link.md),
+[conversion](../vendor/paylov/merchants/creating-payment-link.md) and
+[gateway flow](../vendor/paylov/merchants/paylov-payment-gateway.md). Grades:
+[evidence](README.md#evidence).
 
-| Step | Action                                                                                      | Direction                                                                    |
-| ---- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 1    | Merchant registers callback URL and Basic Auth credentials                                  | Merchant → Paylov (dashboard)                                                |
-| 2    | Merchant generates the link                                                                 | Merchant → Customer                                                          |
-| 3    | Customer opens the link; the page creates the check (`internalCheckoutCreate`)              | Customer → Paylov                                                            |
-| 4    | Customer enters the card and the OTP (`internalCheckoutPayment`, `internalCheckoutConfirm`) | Customer → Paylov                                                            |
-| 5    | Paylov validates the transaction                                                            | Paylov → Merchant ([`transaction.check`](callbacks.md#transactioncheck))     |
-| 6    | Paylov performs the transaction                                                             | Paylov → Merchant ([`transaction.perform`](callbacks.md#transactionperform)) |
-| 7    | Customer is redirected to `return_url`                                                      | Paylov → Customer                                                            |
+## Flow
 
-The sandbox bundle's internal-checkout page says "Paylov sends two webhook calls to your server
-during this flow" and shows a check request and a perform request whose `transaction_id` is the
-check id (S; [callbacks](callbacks.md)). No callback was observed live: the DEV merchant has no
-registered callback URL and still completes internal checkout (W c1159–c1165; confirm c1163).
+1. The merchant has Paylov register its callback URL and Basic credentials (gateway STEP 1, D;
+   [callbacks](callbacks.md#delivery-contract)).
+2. The merchant builds the [link](#link) and sends the customer to it.
+3. The page creates the check (`internalCheckoutCreate`); it reads `created` and charges nothing (W
+   c346, c352).
+4. The customer enters the card (`internalCheckoutPayment`, which sends an OTP) and the OTP
+   (`internalCheckoutConfirm`); the check reads `payed` (W c346, c352).
+5. Paylov calls [`transaction.check`](callbacks.md#transactioncheck) and
+   [`transaction.perform`](callbacks.md#transactionperform) (D, S). The DEV merchant has no callback
+   URL and still completes internal checkout, so no callback was observed (W c1159–c1165; confirm
+   c1163).
+6. The customer returns to `return_url` (L).
 
 > **Security:** the link is **not signed** (L). The page reads plain fields with no signature or
 > hash parameter and takes `amount` and `account` as they arrive. Anyone who sees the link can
@@ -41,18 +44,26 @@ registered callback URL and still completes internal checkout (W c1159–c1165; 
 > only tamper control: re-validate amount, currency and account against the merchant's order.
 
 > **Return redirect:** the customer returns to `return_url` verbatim, with no status or transaction
-> ID appended (L). Take the outcome from `transaction.perform` or a status call.
+> ID appended (L). Take the outcome from `transaction.perform` or a status read.
+
+`check.id` **is the REST transaction id**: reconcile with a
+[transaction read](transactions.md#get-one-transaction), which returns it with `via_link: true` (W
+c346, c352). A paid check cannot be refunded through the API
+([cancel](payments.md#cancel-refund-payment)) and has no [RRN](transactions.md#get-rrn) (W c358,
+c589); refund it from the Paylov business panel or through Paylov staff (D,
+[`transaction.cancel`](callbacks.md#transactioncancel)). [Business errors](#error-model) arrive at
+HTTP 200. A repeated card step keeps the earlier `cid` valid ([payment](#internalcheckoutpayment)),
+and check expiry is not enforced on DEV ([create](#internalcheckoutcreate)).
 
 ## Merchant setup
 
-Configured with Paylov, not through the API. Callback registration is gateway STEP 1 (D); the other
-items come only from the last content of `/merchant-configuration`, which serves no body (see
-sources):
+Configured with Paylov, not through the API. Besides the callback registration, the last content of
+`/merchant-configuration`, which serves no body (see sources), lists these; their current
+applicability is unverified:
 
 - Organization name, merchant name, merchant category, merchant logo (PNG).
 - Accepted amount limits: minimum 500 SUM, maximum 100,000,000 SUM.
 - Merchant requisites: fields shown on the customer's receipt (for example an `order_id` label).
-- For check/perform callbacks: callback URL plus Basic Auth username and password.
 
 ## Link
 
@@ -60,17 +71,15 @@ sources):
 GET https://my.paylov.uz/checkout/create/{base64_encoded_query}
 ```
 
-The docs name only this host (D); the page runs against the production GraphQL endpoint (L), and DEV
-checks report their `checkoutUrl` on this host too (W c792), so no DEV checkout page is known. Its
-backend, the internal-checkout mutations, also runs on DEV (W c340–c345), so the check, payment and
-confirm steps can be exercised there without the page.
+Hosts: [README](README.md#hosts). No DEV checkout page is known, but the internal-checkout mutations
+run on DEV without it (W c340–c345).
 
 | Name            | Type             | Required             | Description                                                                                                                                                                                                                                                                      |
 | --------------- | ---------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | merchant_id     | UUID             | Yes                  | Merchant ID. The mutation declares `merchantId: UUID!`, so a non-UUID value fails when the page loads (W c349).                                                                                                                                                                  |
 | account.<key>   | string           | Yes (D)              | Merchant order fields, flattened as `account.<key>=<value>`. They reach the mutation (`AccountType`) and the callbacks as strings, even where the docs show numbers. The mutation itself accepts an empty account (W c347).                                                      |
 | amount          | integer          | Yes                  | SUM by default; minor units of the currency (tiyin for 860, cents for 840) when `amount_in_tiyin` is `True`. Parsed with `Number()` and sent as `BigInt!`, so a fractional SUM such as `1200.50` cannot be expressed: use minor units. `0` fails with `invalid_amount` (W c350). |
-| amount_in_tiyin | `True` / `False` | No (default `False`) | Parsed case-insensitively with `JSON.parse(value.toLowerCase())`; `1` breaks the parse.                                                                                                                                                                                          |
+| amount_in_tiyin | `True` / `False` | No (default `False`) | Parsed with `JSON.parse(value.toLowerCase())`; `1` produces a number rather than the GraphQL Boolean the mutation requires (L).                                                                                                                                                  |
 | currency_id     | int              | No (default `860`)   | `860` UZS, `840` USD. The docs' Visa/Mastercard USD variant sends `amount_in_tiyin=True` with `currency_id=840`.                                                                                                                                                                 |
 | convert_to      | int              | No                   | `860` or `840`; the page forwards it as `convertTo: Int` (L). Converted at the Central Bank of Uzbekistan rate current when the transaction is generated (D).                                                                                                                    |
 | return_url      | URL              | Yes in practice      | Where the customer returns. Percent-encode it.                                                                                                                                                                                                                                   |
@@ -80,7 +89,8 @@ confirm steps can be exercised there without the page.
 The page runs `atob` on the path segment, splits the result on `&`, splits each pair on `=` keeping
 only the first two parts, and **never percent-decodes**. Consequences:
 
-- **Base64:** standard alphabet, appended raw, padding optional. base64url makes `atob` throw.
+- **Base64:** standard alphabet, appended raw, padding optional. The base64url characters `-` and
+  `_` make `atob` throw.
 - **`return_url`:** must be percent-encoded. A raw `=` or `&` truncates it
   (`https://returnurl/?a=1&b=2` arrives as `https://returnurl/?a`). The encoded form survives
   because the router decodes the redirect query once.
@@ -119,14 +129,13 @@ Content-Type: application/json
 {"operationName": "...", "query": "mutation ...", "variables": {...}}
 ```
 
-DEV is `https://dev.app.paylov.uz/graphql/` (W c340); the production endpoint the checkout page is
-configured with is listed under [hosts](README.md#hosts) (L). The three checkout mutations need **no
+Endpoints: [hosts](README.md#hosts) (L, W c340). The three checkout mutations need **no
 authentication**: the requests carried only `Accept` and `Content-Type` (W c340–c357). The public
 merchant id is the only input, so anyone can create a check for any merchant.
 
 `internalCheckoutPayment` takes a full card number and `internalCheckoutConfirm` the cardholder's
-OTP. A merchant server that calls them receives and transmits cardholder data and is in PCI DSS
-scope, unlike a merchant that sends customers to the hosted page.
+OTP. A merchant server that calls them receives and transmits cardholder data, unlike one that sends
+customers to the hosted page.
 
 ### Error model
 
@@ -197,23 +206,18 @@ Success (W c340):
 A plain UZS create returns `visaMasterLink: null`, `check.isExpired: false` and `check.checkoutUrl`
 `https://my.paylov.uz/checkout/<check id>` (W c792, c1401). On the DEV merchant no conversion and no
 USD check succeeds (W c793–c798, c1402–c1404). Which currencies and conversions a merchant gets is
-merchant setup with Paylov (M 2026-11-15). After a conversion, the check and perform callbacks still
+merchant setup with Paylov (M 2026-11-15). After a conversion the check and perform callbacks still
 carry their own `currency` and `amount_tiyin` (D); with `convert_to` "the transaction will be
 generated in the specified currency" (D), so they carry that currency at the converted amount (M
-2026-11-15).
+2026-11-15), not a verified callback observation.
 
 Codes: `merchant_not_found` (W c348), `invalid_amount` (W c350), `currency_not_supported` (W c793),
 `server_error` (W c795). Behavior below or above the merchant's amount limits was not observed; 500
 SUM succeeded (W c347).
 
-`check.id` **is the REST transaction id**: `getTransactions` returns it with `via_link: true`,
-status `created` before payment and `payed` after (W c346, c352). The `account` reads back as `{}`
-although keys were sent, in the create response, `getCheck` and REST reads alike (W c346,
-c1159–c1165). A paid checkout transaction cannot be cancelled through `payment/cancel/`: it answers
-`transaction_not_available_for_cancel` and stays `payed`, although `getCheck` reports
-`canCancel: true` (W c358, c1407, c1410, c1411), and it has no RRN (W c589). Refund it from the
-Paylov business panel or through Paylov staff, the documented cancel paths (D,
-[`transaction.cancel`](callbacks.md#transactioncancel)).
+The `account` reads back as `{}` although keys were sent, in the create response, `getCheck` and
+REST reads alike (W c346, c1159–c1165). `getCheck` reports `canCancel: true` although
+`payment/cancel/` refuses the paid check (W c358, c1407, c1410, c1411).
 
 Check expiry is not enforced on DEV. Checks were paid 10 and 30 minutes after creation (W c414,
 c715, c716; c415, c930, c931). A fresh unpaid check read `isExpired: false` and `state: 0` at every
@@ -227,19 +231,9 @@ and `internalCheckoutConfirm` paid it (`message: "paid"`); it then read `state: 
 
 Sends an OTP to the card's phone.
 
-```graphql
-mutation InternalCheckoutPayment($checkId: UUID!, $cardNumber: String!, $expiry: String!) {
-  internalCheckoutPayment(checkId: $checkId, cardNumber: $cardNumber, expiry: $expiry) {
-    success
-    message
-    cid
-    otpSentMaskedPhone
-    errors {
-      code
-      message
-    }
-  }
-}
+```text
+internalCheckoutPayment(checkId: UUID!, cardNumber: String!, expiry: String!)
+  → { success, message, cid, otpSentMaskedPhone, errors { code, message } }
 ```
 
 | Variable     | Type      | Description                                              | Grade          |
@@ -263,17 +257,8 @@ c804–c807).
 
 ### internalCheckoutConfirm
 
-```graphql
-mutation InternalCheckoutConfirm($checkId: UUID!, $cid: UUID!, $otp: String!) {
-  internalCheckoutConfirm(checkId: $checkId, cid: $cid, otp: $otp) {
-    success
-    message
-    errors {
-      code
-      message
-    }
-  }
-}
+```text
+internalCheckoutConfirm(checkId: UUID!, cid: UUID!, otp: String!) → { success, message, errors { code, message } }
 ```
 
 Success (W c343): `{"success":true,"message":"paid","errors":null}`; `message` is the only state
@@ -292,12 +277,6 @@ a second confirm (W c344); `insufficient_funds` for a declined card (W c357).
 - `internalCheckoutMasterPayment(cardNumber, checkId, cvv, expiry, isMastercard = true)` returns
   `{isMastercard, masterUrl, success, errors, message, checkId}` (W c783). It takes a CVV and was
   never called.
-
-### GraphQL account sign-in
-
-`checkPhone`, `register`, `activate`, `login`, `confirm`, `refreshToken` and `me` (S) authenticate
-an end-user Paylov app account with a phone, password and SMS OTP, not the merchant. No merchant
-operation needs their token.
 
 ## Observed behavior
 
@@ -320,7 +299,8 @@ DEV live run 2026-11-12; no numbered capture.
   description reads "860 - UZS" and the Required cell "840 - USD", losing the optional flag and the
   `860` default that en and uz state.
 - The docs show account values as numbers; L shows strings.
-- `return_url` is missing from the docs' parameter table although every example uses it.
+- The two link pages omit `return_url` from their parameter tables although their examples use it;
+  the gateway integration page lists it.
 - The docs' step-1 prose lists an unencoded `return_url`, which the step-2 base64 omits; the
   encoding rules apply instead.
 - The unsigned-link warning, the encoding rules and the bare return redirect come from L, not from

@@ -22,7 +22,6 @@ await paylov.payments.pay({ transactionId, cardId, userId: 'user-42' });
 
 - Store the `transactionId` with your order before calling `pay`: it is the key for reconciliation
   and for any repeat.
-- `account` is optional. Keep your own order data: `transactions.get` does not return it.
 - After a decline, read the transaction: `failed` can never be paid again; `created` can be paid
   with another card.
 
@@ -49,9 +48,8 @@ await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, 
 
 - Always the full amount; it also cancels the payment's fiscal receipt. The transaction then reads
   `refunded` and drops out of `transactions.list`.
-- Paylov may refuse an API refund for some payment kinds: checkout and PAN payments answer
-  `transaction_not_available_for_cancel`, and a captured hold answered `processing_error` on
-  Paylov's test environment. Then refund from the Paylov business panel or through Paylov support,
+- Checkout and PAN payments cannot be refunded through the API, and Paylov's test environment
+  refused captured holds too: refund those from the Paylov business panel or through Paylov support,
   and confirm with `transactions.get`. Before capture, release a hold instead.
 - Keep refunds an admin action: Paylov documents no fee terms.
 

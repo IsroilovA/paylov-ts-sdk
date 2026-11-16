@@ -152,11 +152,9 @@ createServer((req, res) => {
 ## Pitfalls
 
 - **Check the currency.** The checkout link is unsigned, so a customer can change its currency: an
-  amount that matches in the wrong currency is not a match. Only the integer minor-unit amount is
-  read; the whole-currency `amount` is ignored.
-- **Narrow `account` yourself.** It passes through as received. Callbacks carry the keys sent when
-  the transaction was created, but `transactions.get` does not return them, so keep your own mapping
-  from order to link or check.
+  amount that matches in the wrong currency is not a match.
+- **Narrow `account` yourself.** It passes through as received; keep your own order mapping
+  ([checkout.md](checkout.md#hosted-checkout-link)).
 - **Persist `card.bind` before answering.** Paylov never retries it and it carries only `cardId`;
   confirm the card with `paylov.cards.get` from a job ([cards.md](cards.md#card-bind)).
 - **Deduplicate** on the keys in the table: Paylov retries `transaction.cancel` and

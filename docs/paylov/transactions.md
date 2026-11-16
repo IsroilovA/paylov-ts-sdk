@@ -6,15 +6,28 @@ sources:
 # Transactions
 
 `getTransactions` reads one transaction by id or lists paid transactions; `getTransactions/rrn`
-reads a paid transaction's RRN. Grades follow the [reference index](README.md#evidence).
+reads a transaction's RRN where one exists. Vendor contract:
+[transaction status](../vendor/paylov/subscribe/payment/transaction-status.md). Grades:
+[evidence](README.md#evidence).
+
+## Flow
+
+Every payment flow ends in a transaction with one id ([statuses](#fields-of-transactions)): a
+receipt, PWR payment or checkout starts `created`, a hold `waiting`; payment or capture makes it
+`payed`; a declined saved-card pay can make it `failed`; a refund `cancel`, and a hold released
+after an expired charge `refunded` [OPEN Q86] (W c087, c113, c135, c187, c346, c352, c1280).
+
+Reconcile by the [id read](#get-one-transaction), which returns every state; the
+[list](#list-transactions) holds only `payed` rows (W c136, c346). REST reads return `account: {}`
+[OPEN Q87], so they cannot rebuild the merchant's order metadata. An [RRN](#get-rrn) exists for
+saved-card payments and holds, not for PWR or checkout, and does not prove completion.
 
 ## Get one transaction
 
 `GET {BASE_URL}/merchant/getTransactions/?id=<transactionId>`
 
-Returns any transaction in any status: receipts, PWR, holds and checkout payments (W c087, c170,
-c187, c352). This is the read for reconciliation; the list hides every unpaid or refunded
-transaction.
+Reads receipts, PWR, holds and checkout payments in any status, unpaid and refunded included (W
+c087, c113, c170, c187, c352, c1280).
 
 | Query | Type | Description                                                                | Grade    |
 | ----- | ---- | -------------------------------------------------------------------------- | -------- |
@@ -55,7 +68,8 @@ Success, a paid saved-card payment (W c089, redacted):
 ```
 
 An unknown `id` is not an error: `{"totalTransaction": 0, "transactions": []}` (W c144). Without
-`id` the endpoint lists instead (below), so a reader must check that the row is the requested one.
+`id` the endpoint lists instead ([list mode](#list-transactions)), so check that the row's `id` is
+the requested one.
 
 ### Fields of `transactions[]`
 
@@ -81,19 +95,19 @@ Every key is present in every captured row (W c087, c089, c113, c135, c170, c187
 | `via_link`                      | boolean \| null | `true` for checkout links and internal checkout; `null`, not `false`, otherwise                                                                                                                                                                                                                                                  | W (c352, c089)                                                              |
 | `ofd`                           | array           | Fiscal receipts: `receipt_id` (int), `qr_code_url`, `date_time` (`YYYY-MM-DD HH:MM:SS`, zone unknown), `is_refund` (boolean). Empty in every capture                                                                                                                                                                             | W (c087, c346), D                                                           |
 
-The Tashkent zone of `date`: a receipt created at 20:52:19 local time read `20:52:20` (W c086,
-c087), and a hold captured at `16:00:11` UTC (hold charge `payedAt`) read `21:00:11` (W c194, c346).
-Uzbekistan has no daylight saving time.
+The Tashkent zone of `date` ([timestamps](README.md#timestamps-by-operation)): a receipt created at
+20:52:19 local time read `20:52:20` (W c086, c087), and a hold captured at `16:00:11` UTC (hold
+charge `payedAt`) read `21:00:11` (W c194, c346).
 
-| Status                | Meaning                                                                                                                                                                         | Grade          |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `created`             | Receipt or checkout not yet paid; PWR not yet confirmed                                                                                                                         | W (c087, c352) |
-| `waiting`             | Uncaptured hold                                                                                                                                                                 | W (c187)       |
-| `payed`               | Paid; a captured hold too                                                                                                                                                       | W (c089, c346) |
-| `failed`              | Declined `receipts/pay`, with `error_message`                                                                                                                                   | W (c135)       |
-| `cancel`              | Refunded by `payment/cancel`                                                                                                                                                    | W (c113)       |
-| `refunded`            | A 1-minute hold released after expiry, once a charge answered `hold_time_expired`; `cancel_time` is set and `is_hold` stays `true`. Not observed for a refunded sale [OPEN Q86] | W (c1280)      |
-| `transfer`, `pending` | Documented, never observed                                                                                                                                                      | D              |
+| Status                | Meaning                                                                                                                                                                         | Grade                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `created`             | Receipt or checkout not yet paid; PWR not yet confirmed                                                                                                                         | W (c087, c352, c952) |
+| `waiting`             | Uncaptured hold                                                                                                                                                                 | W (c187)             |
+| `payed`               | Paid; a captured hold too                                                                                                                                                       | W (c089, c346)       |
+| `failed`              | Declined `receipts/pay`, with `error_message`                                                                                                                                   | W (c135)             |
+| `cancel`              | Refunded by `payment/cancel`                                                                                                                                                    | W (c113)             |
+| `refunded`            | A 1-minute hold released after expiry, once a charge answered `hold_time_expired`; `cancel_time` is set and `is_hold` stays `true`. Not observed for a refunded sale [OPEN Q86] | W (c1280)            |
+| `transfer`, `pending` | Documented, never observed                                                                                                                                                      | D                    |
 
 ## List transactions
 
@@ -165,9 +179,9 @@ DEV live run 2026-11-12; no numbered capture.
   transactions (W c136). The page's `field_required` for a missing `id` and `field_not_valid` for an
   unknown query key do not occur (W c136, c141, c145).
 - The page has no field table; its only example is a paid checkout row with a fiscal receipt. The
-  table above is W: card fields are `null` before a card is attached, `via_link` is `null` outside
-  checkout, and `cancel_time` is a Tashkent time after a refund (W c087, c113). The page's example
-  stays the only source of a non-empty `ofd`.
+  table above combines W and D: card fields are `null` before a card is attached, `via_link` is
+  `null` outside checkout, and `cancel_time` is a Tashkent time after a refund (W c087, c113). The
+  page's example stays the only source of a non-empty `ofd`.
 - The RRN route has no docs page.
 - The page's example row echoes `account` as `{"order_id": "12345"}`; REST reads return `{}`
   whatever was sent (W c087, c346).

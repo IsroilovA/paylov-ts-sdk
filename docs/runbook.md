@@ -8,9 +8,9 @@ Use the Node version from `package.json` and run `npm ci`.
 
 ## Sandbox credentials
 
-1. Onboard only with maintainer approval; it is a one-time operator step outside the SDK. Verify the
-   single-use onboarding token Paylov issues and set the merchant `username` and `password`
-   ([onboarding](paylov/authentication.md#onboarding)). Paylov returns `consumer_key` and
+1. Onboard only with maintainer approval, once, through [`PaylovOnboarding`](usage/onboarding.md):
+   verify the single-use onboarding token Paylov issues and set the merchant `username` and
+   `password` ([onboarding](paylov/authentication.md#onboarding)). Paylov returns `consumer_key` and
    `consumer_secret` once; they are unrecoverable. Paylov may instead issue sandbox credentials
    directly.
 2. Ask Paylov to activate the account; until then every token request fails.
@@ -82,11 +82,11 @@ version's `CHANGELOG.md` section. Never tag or publish by hand.
 1. On `dev`, set the version and move `Unreleased` `CHANGELOG.md` entries under a dated
    `## [X.Y.Z] - YYYY-MM-DD` heading with its `[X.Y.Z]:` release link; `check:changelog` fails
    without them.
-2. Run `npm run check`; review the packed consumer result and the complete release diff.
-3. Confirm the package contains built JavaScript and declarations, usage docs, README, CHANGELOG and
-   LICENSE, and nothing else.
-4. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`.
-5. Let that run's `release` job finish before the next fast-forward. Runs on `main` queue one at a
+2. Run `npm run check` and review the complete release diff and the packed file list: built
+   JavaScript and declarations, usage docs, `package.json`, README, CHANGELOG and LICENSE, and
+   nothing else.
+3. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`.
+4. Let that run's `release` job finish before the next fast-forward. Runs on `main` queue one at a
    time and a newer push replaces a queued one, so a version raised only in the replaced push is
    never published.
 
@@ -96,7 +96,6 @@ trust is missing or names another repository or workflow.
 
 ## Troubleshooting
 
-- Node below the package minimum: select the supported runtime before installing or checking.
 - `sdk_config_error` on `baseUrl`: pass the bare origin, without `/merchant`.
 - Live auth failures: check the four credentials and the account activation, then the token
   lifecycle. Use metadata-only logger hooks; never print credentials or responses.

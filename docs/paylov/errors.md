@@ -7,13 +7,28 @@ sources:
 
 # Errors
 
-How Paylov shapes responses and reports errors, and the code catalogue. Grades follow the
-[reference index](README.md#evidence).
+Response shapes, HTTP statuses and the code catalogue. Grades: [evidence](README.md#evidence).
+
+## Failure handling
+
+Branch on `error.code`; `message` is display text, not for parsing (D). The HTTP status separates
+causes that share a code: rejected Bearer authentication is 401, a feature Paylov must enable is 400
+or 403, rate limiting is 429 ([HTTP status](#http-status)). Neither status nor body alone marks
+success: GraphQL business errors arrive at HTTP 200 ([checkout](checkout.md#error-model), W c342,
+c348, c349, c351), and `card_not_found` can be a 404.
+
+Recovery depends on the operation. Correct invalid fields before resending: validation and request
+errors fail the same way again. A token 429 carries its delay
+([authentication](authentication.md#rate-limit), W c904). Payment declines and refund eligibility
+live with their [payment operations](payments.md). A money-moving request without a usable response
+is reconciled by [transaction read](transactions.md#get-one-transaction), or for holds by
+[hold status](holds.md#status), since the transaction list hides unpaid rows (W c136, c553, c554).
 
 ## Response shapes
 
-Every REST response, errors included, is `Content-Type: application/json` from `nginx`; no HTML
-error page occurs, even for 404, 405, 413, 429 and 500 (W c012, c020, c024, c246, c336).
+Every captured REST response, 404, 405, 413, 429 and 500 included, is
+`Content-Type: application/json` from `nginx`; none is an HTML error page (W c012, c020, c024, c246,
+c336).
 
 ### Success shape by endpoint
 
@@ -24,17 +39,17 @@ error page occurs, even for 404, 405, 413, 429 and 500 (W c012, c020, c024, c246
 | `array`    | A bare JSON array                          | `bankList/`                                                              | W (c014)                                  |
 | `raw`      | GraphQL `{"data": …}` or `{"errors": […]}` | `https://<graphql host>/graphql/`                                        | W (c340–c357)                             |
 
-Envelope details:
-
 - `result` may be a primitive: `true` on `deleteUserCard/` (W c324). No captured success has
   `result: null`.
 - Extra keys appear: top-level `"is_cached": false` on `getCard/` and `getAllUserCards/` (W c052,
   c055, c056).
-- Both `result` and `error` are present in every captured success and error (W, 80 successes).
+- Every captured enveloped success and error carries both `result` and `error` (W, 80 successes).
 
 ### Error envelope
 
-Every error, on every shape except GraphQL, is the envelope with a null `result`:
+Every REST error, flat endpoints included, is the envelope with a null `result`: token (W
+c003–c013), revoke (W c374–c393) and onboarding (W c359–c361, c365). GraphQL errors follow the
+[checkout error model](checkout.md#error-model).
 
 ```json
 {
@@ -46,13 +61,6 @@ Every error, on every shape except GraphQL, is the envelope with a null `result`
 }
 ```
 
-Flat endpoints answer errors this way too: token (W c003–c013), revoke (W c374–c393) and onboarding
-(W c359–c361, c365). Branch on `error` being non-null, never on the HTTP status: a 200 carries
-GraphQL business errors and a 404 carries `card_not_found`.
-
-GraphQL shapes and failures: [checkout error model](checkout.md#error-model) (W c342, c348, c349,
-c351).
-
 ### Error object
 
 | Field     | Type              | Description                                                      |
@@ -63,15 +71,15 @@ c351).
 
 Messages that carry detail:
 
-| Code                  | Message                                                                                                              | Grade                           |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `invalid_grant`       | The grant failure reason, e.g. "Invalid consumer secret"; the full list is in [authentication.md](authentication.md) | W (c003–c006, c010, c370, c371) |
-| `field_required`      | `field_required: <field>`                                                                                            | W (c110)                        |
-| `rate_limit_exceeded` | `Too many requests. Retry after <N>s.`                                                                               | W (c012, c904)                  |
+| Code                  | Message                                                                                                       | Grade                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `invalid_grant`       | The grant failure reason, e.g. "Invalid consumer secret" ([token failures](authentication.md#token-failures)) | W (c003–c006, c010, c370, c371) |
+| `field_required`      | `field_required: <field>`                                                                                     | W (c110)                        |
+| `rate_limit_exceeded` | `Too many requests. Retry after <N>s.`                                                                        | W (c012, c904)                  |
 
-`validation_error` messages are generic validator text ("This field is required.", "String should
-have at least 14 characters") and never echo a request value (W, all 114 captured `validation_error`
-responses).
+`validation_error` messages and `data` details are generic validator text ("This field is
+required.", "String should have at least 14 characters") and never echo a request value (W, all 114
+captured `validation_error` responses).
 
 ### `data` shapes
 
@@ -89,36 +97,32 @@ responses).
 | `{"sec_to_retry": <seconds>}`                        | `card_is_blocked` on card and PWR confirm                                                                                                                                                                                                        | W (c937, c948)             |
 | Code-specific details                                | `card_temporarily_blocked` (`blocked_until`, `reason`), `card_not_active` (`is_active`, `status_message`, `sms_info`), `ofd_commitent_or_subcommission_not_active` (`itemIndex`, `tin`, `pinfl`), `recipient_not_found` (`notFoundRecipientIds`) | D                          |
 
-Paylov documents `message` as display text, not for parsing (D).
-
 ## HTTP status
 
-| HTTP | Codes                                                                                                                                                                                             | Grade                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| 200  | Every success; every GraphQL business error                                                                                                                                                       | W                                |
-| 201  | Sub-merchant create success                                                                                                                                                                       | D                                |
-| 400  | Validation and business errors; `permission_denied` for a feature the merchant lacks; `invalid_request`, `unsupported_grant_type`, `invalid_token`, `invalid_or_expired`; GraphQL variable errors | W                                |
-| 401  | `permission_denied`, `invalid_grant`; [authentication](authentication.md)                                                                                                                         | W (c003, c015–c019, c389, c400)  |
-| 404  | `not_found`; [routing](authentication.md#bearer-failures)                                                                                                                                         | W (c021, c160, c243)             |
-| 404  | `card_not_found`, `card_is_already_activated`; [cards](cards.md)                                                                                                                                  | W (c028, c034, c036, c048, c325) |
-| 405  | `method_not_allowed`                                                                                                                                                                              | W (c013, c023, c058)             |
-| 413  | `payload_too_large` for a body over 64 KB                                                                                                                                                         | W (c336)                         |
-| 429  | `rate_limit_exceeded`: [token limit](authentication.md#rate-limit)                                                                                                                                | W (c012, c904)                   |
-| 429  | `rate_limit_exceeded`: [sub-merchant limit](sub-merchants.md)                                                                                                                                     | D; W (c1455–c1469)               |
-| 500  | `server_error`                                                                                                                                                                                    | W (c246, c253)                   |
+| HTTP | Codes                                                                                                                                                                                             | Grade                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 200  | Captured successes; GraphQL business errors                                                                                                                                                       | W                                                  |
+| 201  | Sub-merchant create success                                                                                                                                                                       | D                                                  |
+| 400  | Validation and business errors; `permission_denied` for a feature the merchant lacks; `invalid_request`, `unsupported_grant_type`, `invalid_token`, `invalid_or_expired`; GraphQL variable errors | W                                                  |
+| 401  | `permission_denied`, `invalid_grant` ([authentication](authentication.md))                                                                                                                        | W (c003, c015–c019, c389, c400)                    |
+| 404  | `not_found` ([routing](authentication.md#bearer-failures)); `card_not_found`, `card_is_already_activated` ([cards](cards.md))                                                                     | W (c021, c028, c034, c036, c048, c160, c243, c325) |
+| 405  | `method_not_allowed`                                                                                                                                                                              | W (c013, c023, c058)                               |
+| 413  | `payload_too_large` for a body over 64 KB                                                                                                                                                         | W (c336)                                           |
+| 429  | `rate_limit_exceeded`: [token limit](authentication.md#rate-limit); [sub-merchant limit](sub-merchants.md#create-sub-merchant)                                                                    | W (c012, c904); sub-merchant D, W (c1455–c1469)    |
+| 500  | `server_error`                                                                                                                                                                                    | W (c246, c253)                                     |
 
 Status-dependent codes:
 
 | Code                | Statuses   | Meaning                                                         |
 | ------------------- | ---------- | --------------------------------------------------------------- |
-| `permission_denied` | 401        | The Bearer token was rejected; a new token fixes it             |
+| `permission_denied` | 401        | The Bearer token is missing or rejected                         |
 | `permission_denied` | 400, 403   | The merchant lacks the feature; only Paylov can enable it       |
 | `card_not_found`    | 404 or 400 | Same meaning on every endpoint; the status differs per endpoint |
 
 ## Error code catalogue
 
-New codes may appear. Endpoint pages own triggers; this catalogue groups codes and links to those
-operations. Unless stated, HTTP status is 400. D-only codes are unobserved on DEV.
+New codes may appear. Endpoint pages own triggers; this catalogue groups codes and links to them.
+HTTP status is 400 unless stated. D-only codes are unobserved on DEV.
 
 ### Credentials and access
 
@@ -130,12 +134,10 @@ operations. Unless stated, HTTP status is 400. D-only codes are unobserved on DE
 | `unsupported_grant_type` | 400             | [Token failures](authentication.md#token-failures)                                           | W (c008)                                                          |
 | `invalid_token`          | 400             | [Revocation](authentication.md#revoke-tokens)                                                | W (c375, c378, c380, c388)                                        |
 | `invalid_or_expired`     | 400             | [Onboarding](authentication.md#onboarding)                                                   | W (c365)                                                          |
-| `permission_denied`      | 401 / 400 / 403 | See [status-dependent codes](#http-status)                                                   | W (c015, c064, c294)                                              |
+| `permission_denied`      | 401 / 400 / 403 | [Status-dependent](#http-status)                                                             | W (c015, c064, c294)                                              |
 | `ip_not_allowed`         | 403             | The caller IP is not allowlisted; the token endpoint reports this as `invalid_grant` instead | D                                                                 |
 
 ### Request validation
-
-These signal an integration bug; resending the same request fails the same way.
 
 | Code                 | HTTP | Meaning / endpoint triggers                                                                             | Grade                |
 | -------------------- | ---- | ------------------------------------------------------------------------------------------------------- | -------------------- |
@@ -155,36 +157,25 @@ These signal an integration bug; resending the same request fails the same way.
 
 ### Card
 
-| Code                                   | HTTP      | Meaning / endpoint triggers                                                                    | Grade                                        |
-| -------------------------------------- | --------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `card_not_found`                       | 404 / 400 | [Cards](cards.md), [payments](payments.md), [holds](holds.md)                                  | W (c034, c048, c053, c108, c175, c207, c325) |
-| `card_not_match`                       | 400       | [PAN binding](cards.md#create-user-card)                                                       | W (c032)                                     |
-| `card_exists`                          | 400       | [PAN binding](cards.md#create-user-card)                                                       | W (c030)                                     |
-| `card_is_already_activated`            | 404       | [Confirmation](cards.md#confirm-user-card)                                                     | W (c028)                                     |
-| `card_is_not_for_this_check`           | 400       | [Saved-card payment](payments.md#pay-with-a-saved-card)                                        | W (c109)                                     |
-| `phone_not_match`                      | 400       | [Phone check](cards.md#check-phone-match)                                                      | W (c041, c060)                               |
-| `pinfl_not_match`                      | 400 / 403 | The PINFL does not match the cardholder                                                        | W (c049); 403 D                              |
-| `link_expired`                         | 400       | [Card Bind](cards.md#card-bind)                                                                | W (c081)                                     |
-| `link_already_used`                    | 400       | [Hosted bind page](cards.md#hosted-bind-page)                                                  | W (c1059), D                                 |
-| `card_is_blocked`                      | 400       | [Card OTP](cards.md#otp-behavior), [PWR OTP](payments.md#confirm-payment-without-registration) | W (c937, c948)                               |
-| `card_expired`                         | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_is_blocked_in_processing_center` | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_temporarily_blocked`             | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_not_active`                      | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_is_not_supported`                | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_not_found_in_processing_center`  | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `balance_refresh_error`                | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `invalid_card`                         | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `invalid_card_token`                   | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `pan_not_valid`                        | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `lost_card`                            | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `stolen_card`                          | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_captured`                        | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `restricted_card`                      | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `error_create_card`                    | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `sms_not_active`                       | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_phone_not_linked`                | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
-| `card_has_no_phone`                    | 400       | Issuer or processing-center refusals and card-state problems, as named                         | D                                            |
+| Code                         | HTTP      | Meaning / endpoint triggers                                                                    | Grade                                        |
+| ---------------------------- | --------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `card_not_found`             | 404 / 400 | [Cards](cards.md), [payments](payments.md), [holds](holds.md)                                  | W (c034, c048, c053, c108, c175, c207, c325) |
+| `card_not_match`             | 400       | [PAN binding](cards.md#create-user-card)                                                       | W (c032)                                     |
+| `card_exists`                | 400       | [PAN binding](cards.md#create-user-card)                                                       | W (c030)                                     |
+| `card_is_already_activated`  | 404       | [Confirmation](cards.md#confirm-user-card)                                                     | W (c028)                                     |
+| `card_is_not_for_this_check` | 400       | [Saved-card payment](payments.md#pay-with-a-saved-card)                                        | W (c109)                                     |
+| `phone_not_match`            | 400       | [Phone check](cards.md#check-phone-match)                                                      | W (c041, c060)                               |
+| `pinfl_not_match`            | 400 / 403 | The PINFL does not match the cardholder                                                        | W (c049); 403 D                              |
+| `link_expired`               | 400       | [Card Bind](cards.md#card-bind)                                                                | W (c081)                                     |
+| `link_already_used`          | 400       | [Hosted bind page](cards.md#hosted-bind-page)                                                  | W (c1059), D                                 |
+| `card_is_blocked`            | 400       | [Card OTP](cards.md#otp-behavior), [PWR OTP](payments.md#confirm-payment-without-registration) | W (c937, c948)                               |
+
+Issuer or processing-center refusals and card-state problems, each as named (D): `card_expired`,
+`card_is_blocked_in_processing_center`, `card_temporarily_blocked`, `card_not_active`,
+`card_is_not_supported`, `card_not_found_in_processing_center`, `balance_refresh_error`,
+`invalid_card`, `invalid_card_token`, `pan_not_valid`, `lost_card`, `stolen_card`, `card_captured`,
+`restricted_card`, `error_create_card`, `sms_not_active`, `card_phone_not_linked`,
+`card_has_no_phone`.
 
 ### OTP and PIN
 
@@ -193,45 +184,36 @@ These signal an integration bug; resending the same request fails the same way.
 | `invalid_otp`           | 400  | [Card OTP](cards.md#otp-behavior), [PWR OTP](payments.md#confirm-payment-without-registration), [checkout](checkout.md#internalcheckoutconfirm) | W (c026, c167, c342) |
 | `otp_expired`           | 400  | [Card OTP](cards.md#otp-behavior), [PWR OTP](payments.md#confirm-payment-without-registration)                                                  | W (c169, c788, c789) |
 | `otp_code_already_sent` | 400  | [Card OTP](cards.md#otp-behavior)                                                                                                               | W (c741)             |
-| `try_new_otp`           | 400  | As named                                                                                                                                        | D                    |
-| `incorrect_pin`         | 400  | As named                                                                                                                                        | D                    |
-| `pin_attempts_exceeded` | 400  | As named                                                                                                                                        | D                    |
-| `too_many_attempts`     | 400  | As named                                                                                                                                        | D                    |
+
+As named (D): `try_new_otp`, `incorrect_pin`, `pin_attempts_exceeded`, `too_many_attempts`.
 
 ### Funds and declines
 
-| Code                             | HTTP | Meaning / endpoint triggers                                                                                     | Grade                            |
-| -------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `insufficient_funds`             | 400  | [Payments](payments.md), [holds](holds.md), [checkout](checkout.md#internalcheckoutconfirm)                     | W (c127, c131, c357, c602, c615) |
-| `invalid_amount`                 | 400  | [Payments](payments.md), [holds](holds.md), [checkout](checkout.md#internalcheckoutcreate), [splits](splits.md) | W (c177, c188, c335, c350)       |
-| `processing_error`               | 400  | [Payment declines](payments.md#pay-with-a-saved-card) and [refunds](payments.md#cancel-refund-payment)          | W (c134, c135, c559)             |
-| `limit_exceeded`                 | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `daily_limit_used_for_this_card` | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `insufficient_deposit`           | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `do_not_honor`                   | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `call_issuer`                    | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `transaction_not_permitted`      | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `duplicate_transaction`          | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `issuer_unavailable`             | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `invalid_merchant`               | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `merchant_not_available`         | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `error_at_pay`                   | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
-| `unknown_error`                  | 400  | Issuer, limit, deposit and merchant-configuration refusals, as named                                            | D                                |
+| Code                 | HTTP | Meaning / endpoint triggers                                                                                     | Grade                            |
+| -------------------- | ---- | --------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `insufficient_funds` | 400  | [Payments](payments.md), [holds](holds.md), [checkout](checkout.md#internalcheckoutconfirm)                     | W (c127, c131, c357, c602, c615) |
+| `invalid_amount`     | 400  | [Payments](payments.md), [holds](holds.md), [checkout](checkout.md#internalcheckoutcreate), [splits](splits.md) | W (c177, c188, c335, c350)       |
+| `processing_error`   | 400  | [Payment declines](payments.md#pay-with-a-saved-card) and [refunds](payments.md#cancel-refund-payment)          | W (c134, c135, c559)             |
+
+Issuer, limit, deposit and merchant-configuration refusals, each as named (D): `limit_exceeded`,
+`daily_limit_used_for_this_card`, `insufficient_deposit`, `do_not_honor`, `call_issuer`,
+`transaction_not_permitted`, `duplicate_transaction`, `issuer_unavailable`, `invalid_merchant`,
+`merchant_not_available`, `error_at_pay`, `unknown_error`.
 
 ### Transaction state and lookup
 
-| Code                                    | HTTP | Meaning / endpoint triggers                                                                        | Grade                                                        |
-| --------------------------------------- | ---- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `transaction_not_found`                 | 400  | [Payments](payments.md), [holds](holds.md), [fiscalization](fiscalization.md), [splits](splits.md) | W (c106, c115, c210, c211, c255)                             |
-| `transaction_already_payed`             | 400  | [Saved-card payment](payments.md#pay-with-a-saved-card)                                            | W (c090)                                                     |
-| `already_confirmed`                     | 400  | `confirmPayment/` on a saved-card `payment/` already confirmed or cancelled                        | W (c124, c130)                                               |
-| `transaction_not_available_for_payment` | 400  | [Payments](payments.md), [holds](holds.md#charge), [RRN](transactions.md#get-rrn)                  | W (c118, c162, c193, c196, c201, c589, c632)                 |
-| `transaction_not_available_for_cancel`  | 400  | [Refunds](payments.md#cancel-refund-payment)                                                       | W (c112, c114, c358, c565)                                   |
-| `receipt_not_available_for_operation`   | 400  | [RRN](transactions.md#get-rrn), [fiscalization](fiscalization.md)                                  | W (c163); OFD D                                              |
-| `external_id_already_exists`            | 400  | [Hold creation](holds.md#create), [receipt attachment](fiscalization.md#set-fiscal-receipt)        | W (c183); set-receipt D                                      |
-| `hold_not_found`                        | 400  | [Dismiss](holds.md#dismiss)                                                                        | W (c197, c200, c339)                                         |
-| `hold_time_expired`                     | 400  | [Charge](holds.md#charge)                                                                          | D; live run 2026-11-12 ([holds](holds.md#observed-behavior)) |
-| `bank_not_found`                        | 400  | Unknown bank                                                                                       | D                                                            |
+| Code                                    | HTTP | Meaning / endpoint triggers                                                                        | Grade                                                                   |
+| --------------------------------------- | ---- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `transaction_not_found`                 | 400  | [Payments](payments.md), [holds](holds.md), [fiscalization](fiscalization.md), [splits](splits.md) | W (c106, c115, c210, c211, c255)                                        |
+| `transaction_already_payed`             | 400  | [Saved-card payment](payments.md#pay-with-a-saved-card)                                            | W (c090)                                                                |
+| `already_confirmed`                     | 400  | `confirmPayment/` on a saved-card `payment/` already confirmed or cancelled                        | W (c124, c130)                                                          |
+| `transaction_not_available_for_payment` | 400  | [Payments](payments.md), [holds](holds.md#charge), [RRN](transactions.md#get-rrn)                  | W (c118, c162, c193, c196, c201, c589, c632)                            |
+| `transaction_not_available_for_cancel`  | 400  | [Refunds](payments.md#cancel-refund-payment)                                                       | W (c112, c114, c358, c565)                                              |
+| `receipt_not_available_for_operation`   | 400  | [RRN](transactions.md#get-rrn), [fiscalization](fiscalization.md)                                  | W (c163); OFD D                                                         |
+| `external_id_already_exists`            | 400  | [Hold creation](holds.md#create), [receipt attachment](fiscalization.md#set-fiscal-receipt)        | W (c183); set-receipt D                                                 |
+| `hold_not_found`                        | 400  | [Dismiss](holds.md#dismiss)                                                                        | W (c197, c200, c339)                                                    |
+| `hold_time_expired`                     | 400  | [Charge](holds.md#charge)                                                                          | D; W (c1276); live run 2026-11-12 ([holds](holds.md#observed-behavior)) |
+| `bank_not_found`                        | 400  | Unknown bank                                                                                       | D                                                                       |
 
 ### Fiscalization
 
@@ -246,26 +228,21 @@ These signal an integration bug; resending the same request fails the same way.
 
 ### Splits and sub-merchants
 
-| Code                              | HTTP | Meaning / endpoint triggers                        | Grade           |
-| --------------------------------- | ---- | -------------------------------------------------- | --------------- |
-| `split_already_done`              | 400  | [Split creation](splits.md#create-split-payment)   | D               |
-| `split_not_found`                 | 400  | [Split status](splits.md#get-split-payment-status) | D               |
-| `recipient_not_found`             | 400  | [Split creation](splits.md#create-split-payment)   | D               |
-| `receipt_not_available_for_split` | 400  | The transaction cannot be split                    | D (legacy enum) |
-| `sub_merchant_already_created`    | 400  | [Sub-merchants](sub-merchants.md)                  | D               |
+| Code                              | HTTP | Meaning / endpoint triggers                           | Grade           |
+| --------------------------------- | ---- | ----------------------------------------------------- | --------------- |
+| `split_already_done`              | 400  | [Split creation](splits.md#create-split-payment)      | D               |
+| `split_not_found`                 | 400  | [Split status](splits.md#get-split-payment-status)    | D               |
+| `recipient_not_found`             | 400  | [Split creation](splits.md#create-split-payment)      | D               |
+| `receipt_not_available_for_split` | 400  | The transaction cannot be split                       | D (legacy enum) |
+| `sub_merchant_already_created`    | 400  | [Sub-merchants](sub-merchants.md#create-sub-merchant) | D               |
 
-### Gateway setup
+### Gateway setup and holds
 
 | Code                      | HTTP | Meaning / endpoint triggers                                                                | Grade          |
 | ------------------------- | ---- | ------------------------------------------------------------------------------------------ | -------------- |
 | `gateway_not_working`     | 400  | The merchant has no working gateway for the operation, such as an upstream fiscal provider | W (c318, c322) |
 | `terminal_does_not_exist` | 400  | No terminal is available for the operation                                                 | W (c241)       |
-
-### Holds
-
-| Code                | HTTP | Meaning / endpoint triggers      | Grade    |
-| ------------------- | ---- | -------------------------------- | -------- |
-| `service_not_found` | 400  | [Hold creation](holds.md#create) | W (c208) |
+| `service_not_found`       | 400  | [Hold creation](holds.md#create)                                                           | W (c208)       |
 
 ## Codes outside the SDK
 
@@ -279,7 +256,7 @@ Codes for [additional surfaces](README.md#surface-outside-the-sdk).
 
 ### Internal checkout (GraphQL)
 
-Arrive in `errors[0].message` at HTTP 200. The mutations also return the shared codes
+These arrive in `errors[0].message` at HTTP 200. The mutations also return the shared codes
 `invalid_amount`, `card_not_found`, `invalid_otp`, `insufficient_funds` and `server_error` (W c342,
 c350, c353, c357, c795).
 
@@ -293,25 +270,23 @@ c350, c353, c357, c795).
 
 ## Deviations from vendor docs
 
+Endpoint-specific shape deviations live on their pages: onboarding errors and `token_required` on
+[authentication](authentication.md#deviations-from-vendor-docs), the `validation_error` card example
+on [cards](cards.md#deviations-from-vendor-docs).
+
 - The changelog envelopes every response except `oauth2/token/`, `oauth2/revoke/` and `onboarding/`.
   Live, `status/` is also flat, `bankList/` is a bare array, and `receipts/create/` is enveloped
   although its page shows a flat success (W c001, c014, c086).
-- The docs show onboarding errors flat (`{"error": "invalid_or_expired"}`); live they are enveloped
-  (W c365).
-- Several examples omit `error` on success or `result` on failure; every captured response carries
-  both.
+- Several examples omit `error` on success or `result` on failure; every captured enveloped response
+  carries both.
 - The docs make only `not_found` a 404 and every other business error a 400. Live, `card_not_found`
-  (on create, confirm and delete) and `card_is_already_activated` are also 404 (W c028, c034, c048,
-  c325).
+  is 404 on card create, confirm and delete and 400 on get and the checks, and
+  `card_is_already_activated` is 404 (W c028, c034, c048, c053, c325).
 - The docs give `permission_denied` as 401 or 400; live it is also 403 on card monitoring (W c294).
 - The docs give `pinfl_not_match` as 403; on card confirm it is 400 (W c049).
 - The docs give `data` as `{field}` for `field_required` and `field_not_valid`. Live,
   `field_required` has no `data` and names the field in its message (W c110); `field_not_valid` has
   `{"field": …}` or a bare string (W c096, c202).
-- The docs' `validation_error` example `{"cardNumber": ["invalid_card_number"]}` was never observed;
-  live messages are generic validator text.
-- The ru and uz quick references list `token_required` for onboarding without a token; live that
-  request is a `validation_error` (W c360). The code is not catalogued.
 - The sub-merchant page tells clients to honor a `Retry-After` header; the token endpoint's 429
   sends one too, beside the delay in the message (W c904).
 - The legacy page's error example has an inline `//` comment and a trailing `#` line (en, ru; uz

@@ -6,11 +6,28 @@ sources:
 
 # Split payments
 
-Splits a paid transaction among recipients: each recipient receives a sub-transaction with its
-amount, and the transaction is marked as split (D). Recipient ids come from Paylov (D).
+Allocates a paid transaction among Paylov recipients (D). Vendor contracts:
+[create](../vendor/paylov/subscribe/split-payment/create.md),
+[status](../vendor/paylov/subscribe/split-payment/status.md). Grades:
+[evidence](README.md#evidence).
 
-Validation runs before the permission gate. Both endpoints answer `400 permission_denied` without
-`data` for a merchant without split payments, also for an unknown recipient (W c213, c214, c217).
+## Flow
+
+1. Paylov supplies recipient ids. The merchant submits the paid parent transaction and one
+   allocation per recipient; allocations must total the transaction amount
+   ([units](README.md#amount-units-by-operation), D).
+2. Paylov creates a sub-transaction per recipient and marks the parent as split (D). A repeated
+   create answers `split_already_done` (D).
+3. The merchant [reads status](#get-split-payment-status) by the parent id. Each recipient reads
+   `paid`, `cancelled` or `check`; transitions and recovery are undocumented (D).
+
+Optional [items](fiscalization.md#item-object) per recipient start an asynchronous OFD submission;
+where its result appears and when `resendOFD: true` is safe is [OPEN Q59]. Whether recipient ids are
+[sub-merchant ids](sub-merchants.md) is undocumented.
+
+Validation runs before the split-permission gate. On DEV both endpoints answer
+`400 permission_denied` without `data`, also for a paid transaction or an unknown recipient, so no
+successful allocation or recipient lookup was observed (W c213, c214, c217, c1451, c1452).
 
 ## Create split payment
 
@@ -21,7 +38,7 @@ Validation runs before the permission gate. Both endpoints answer `400 permissio
 | `transactionId`            | string (UUID)                                  | Yes      | The paid transaction; "transactionId must be a valid UUID".                                                                  | W (c212, c221)            |
 | `recipients`               | array                                          | Yes      | At least 1 item ("List should have at least 1 item after validation, not 0"); a string fails "Input should be a valid list". | W (c215, c221)            |
 | `recipients[].recipientId` | string                                         | Yes      | Recipient id issued by Paylov; the docs example is not a valid UUID.                                                         | W (c220), D               |
-| `recipients[].amount`      | integer                                        | Yes      | Amount in **tiyin** (en, ru example comment). The amounts must add up to the transaction amount.                             | W (c220) required; D unit |
+| `recipients[].amount`      | integer                                        | Yes      | Amount in tiyin ([units](README.md#amount-units-by-operation)); recipients must total the transaction amount.                | W (c220) required; D unit |
 | `recipients[].items`       | array of [items](fiscalization.md#item-object) | No       | Fiscal receipt items for this recipient; sending them starts OFD fiscalization.                                              | W (c220), D               |
 | `resendOFD`                | boolean                                        | No       | Resend the split to the OFD; "maybe" fails "Input should be a valid boolean".                                                | W (c220), D               |
 
@@ -64,12 +81,9 @@ Success, D ([fixture](../../tests/fixtures/splits/create.success.docs.json)):
 }
 ```
 
-The docs do not say whether the returned `transactionId` equals the parent transaction; split status
-takes the parent transaction id (W c218).
-
-The OFD submission is asynchronous and may be delayed. The page says to resend with
-`resendOFD: true` when "the response does not include OFD data", yet the documented success carries
-none ([OPEN Q59]). Split create answers `permission_denied` on the DEV merchant (W c213, c1452).
+The docs do not say whether the returned `transactionId` equals the parent transaction (D). The OFD
+submission is asynchronous and may be delayed; the page says to resend with `resendOFD: true` when
+"the response does not include OFD data", yet the documented success carries none ([OPEN Q59]).
 
 | Code                                        | Description                                                                                                                                                                                        | Grade                            |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
@@ -79,13 +93,13 @@ none ([OPEN Q59]). Split create answers `permission_denied` on the DEV merchant 
 | `split_already_done`                        | The transaction was already split                                                                                                                                                                  | D                                |
 | `invalid_amount`                            | The recipient amounts do not add up to the transaction amount                                                                                                                                      | D                                |
 | `recipient_not_found`                       | A recipient does not exist; `data.notFoundRecipientIds` lists them ([fixture](../../tests/fixtures/splits/create.recipientNotFound.docs.json))                                                     | D                                |
-| `ofd_commitent_or_subcommission_not_active` | An item's TIN or PINFL has no active OFD contract; `data`: `itemIndex`, `tin`, `pinfl`                                                                                                             | D                                |
+| `ofd_commitent_or_subcommission_not_active` | An item's TIN or PINFL has no active OFD contract; `data`: `itemIndex`, `tin`, `pinfl` ([register](fiscalization.md#register-fiscal-receipt))                                                      | D                                |
 
 ## Get split payment status
 
 `GET {BASE_URL}/merchant/splitPayment/status/?transactionId=<transactionId>`
 
-`transactionId` (string, required, W c218) is the parent transaction.
+`transactionId` (string, required, W c218) is the parent transaction id (D).
 
 Success, D ([fixture](../../tests/fixtures/splits/get.success.docs.json)); `result` is an array with
 one entry per recipient:
@@ -103,15 +117,12 @@ one entry per recipient:
 }
 ```
 
-| Field         | Type    | Description                                                     |
-| ------------- | ------- | --------------------------------------------------------------- |
-| `recipientId` | string  | Recipient id.                                                   |
-| `amount`      | integer | Recipient amount in **tiyin** (en, ru example comment).         |
-| `status`      | string  | `paid`, `cancelled` or `check`; the page does not explain them. |
-| `createdAt`   | string  | `YYYY-MM-DD HH:MM:SS`; time zone unstated.                      |
-
-The docs do not say whether `recipientId` is a sub-merchant id. Split status and sub-merchant create
-answer `permission_denied` on the DEV merchant (W c1451, c1453).
+| Field         | Type    | Description                                                               |
+| ------------- | ------- | ------------------------------------------------------------------------- |
+| `recipientId` | string  | Recipient id.                                                             |
+| `amount`      | integer | Recipient amount in tiyin ([units](README.md#amount-units-by-operation)). |
+| `status`      | string  | `paid`, `cancelled` or `check`; the page does not explain them.           |
+| `createdAt`   | string  | `YYYY-MM-DD HH:MM:SS`; time zone unstated.                                |
 
 | Code                    | Description                                                                                                                                                                       | Grade           |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
@@ -124,10 +135,11 @@ answer `permission_denied` on the DEV merchant (W c1451, c1453).
 ## Deviations from vendor docs
 
 - The create and status examples carry `#in tiyn` and `# tin or pinfl` comments, making them invalid
-  JSON (en, ru; uz drops them along with the unit hint); removed, with the unit kept in the tables.
+  JSON (en, ru; uz drops them along with the unit hint); removed, with the unit kept in the
+  [units table](README.md#amount-units-by-operation) (D).
 - The create table marks item `discount` required; the validator does not require it (W c220). The
-  example above leaves it out and sends one of `tin` and `pinfl`, as the item rule requires.
+  shared [item rules](fiscalization.md#item-object) apply.
 - The status example's second `recipientId` (`...26dv9fefb111`) is not a valid UUID; recipient ids
-  are treated as opaque strings.
+  have no documented UUID requirement (D).
 - The sandbox bundle's create shape and its `POST` status with `splitId` are wrong: they return
   `validation_error` and `405` (W c216, c219).

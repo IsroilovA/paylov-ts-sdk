@@ -24,8 +24,7 @@ if (session.isBound) await userCards.saveOnce(storedBindToken, session.card.card
 ```
 
 - One link binds one card and expires after about 20 minutes; create one per card.
-- Open `bindUrl` exactly as returned; its host differs between environments. It embeds the token:
-  keep both out of logs.
+- Open `bindUrl` exactly as returned; its host differs between environments.
 - Only the webhook or the session read carries the result, never the webview or `returnUrl`. Paylov
   never retries the webhook, so when it has not arrived, read `getBindSession` after the webview
   closes, then periodically until `expiresAt`.
@@ -55,10 +54,6 @@ await userCards.save('user-42', card.cardId);
   code.
 - A card without SMS notifications receives no OTP: offer Card Bind or another card instead of
   waiting.
-- A confirmed card can read `isActive: false`, with the reason in `processingStatus`; offer another
-  card then.
-- `sms` on `startPanBinding`, `startPanPayment` and `confirmPanPayment` is forwarded unchanged;
-  Paylov does not document what it changes.
 - Store `cardId`, never the card number; keep card numbers, expiries and OTPs out of your logs.
 - After a wrong code, re-prompt; after `otp_expired`, `try_new_otp` or `too_many_attempts`, start
   again. Stop prompting after the third wrong code: the fourth blocks the card for about five
@@ -66,8 +61,8 @@ await userCards.save('user-42', card.cardId);
 
 ## Saved cards
 
-- Check `card.isActive` before charging; `isSmsEnabled: false` means no OTP can reach the
-  cardholder.
+- Check `card.isActive` before charging, also on the card `confirmPanBinding` returns; offer another
+  card when it is `false`.
 - After `delete`, `cards.list` and `cards.get` can still return the card for a few seconds: neither
   proves the delete failed. A repeated delete answering `card_not_found` means it is gone.
 - `checkPhone` is unreliable on the development gateway (`phone_not_match` for every phone); test it

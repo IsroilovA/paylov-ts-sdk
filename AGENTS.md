@@ -15,12 +15,9 @@ Server-side TypeScript SDK for the Paylov payment gateway.
 
 ## Ownership
 
-- [`src/`](src/): the package source. [`tests/`](tests/): unit, type, and live suites with fixtures.
-- [`docs/`](docs/): Paylov reference, consumer usage guides, architecture, and the runbook.
 - [`scripts/`](scripts/): repository checks and DEV probe tooling; never shipped.
 - [`examples/`](examples/): runnable consumer examples, typechecked and packed by
   `scripts/checkPackage.mjs`.
-
 - Code and configuration own exact details; documents link to them instead of restating them.
   [`docs/AGENTS.md`](docs/AGENTS.md) maps which document owns the rest.
 
@@ -65,10 +62,10 @@ Server-side TypeScript SDK for the Paylov payment gateway.
 
 - Create no branch, commit, issue, PR, tag, or push without authorization.
 - Use Conventional Commits and `feat/<topic>`, `fix/<topic>`, or `refactor/<topic>` branches.
-- Base branches and PRs on `dev`; prefer squash merges into it. Never commit directly to `main`;
-  fast-forward `dev` into it with `git push origin origin/dev:main`.
+- Base branches and PRs on `dev`; prefer squash merges into it.
 - A push to `main` is a release: CI publishes an unpublished `package.json` version to npm, then
-  tags and releases it. Fast-forward `main` only for an approved release; never tag or publish by
-  hand ([runbook](docs/runbook.md#release)).
+  tags and releases it. Never commit to `main`; for an approved release only, fast-forward it with
+  `git push origin origin/dev:main`. Never tag or publish by hand
+  ([runbook](docs/runbook.md#release)).
 - Report only phase changes, blockers, consequential findings, and needed decisions. Final responses
   state outcome, changed paths, verification, and unresolved items.

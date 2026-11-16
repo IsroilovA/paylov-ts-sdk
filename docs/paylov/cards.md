@@ -14,25 +14,37 @@ sources:
 
 # Cards (Subscribe API)
 
-A merchant binds a card to its own user id and later charges it by `cardId` through
-[payments](payments.md) or [holds](holds.md). Grades follow the
-[reference index](README.md#evidence); error codes are catalogued in [errors](errors.md#card). Every
-path here is Bearer-authenticated and starts with `/merchant/`.
+A merchant binds a card to its own user id, without charging it, and later charges it by `cardId`
+through [payments](payments.md) or [holds](holds.md). Every path is Bearer-authenticated
+([authentication](authentication.md)) and starts with `{BASE_URL}/merchant/userCard/` (D). Error
+codes: [catalogue](errors.md#card). Grades: [evidence](README.md#evidence).
 
-Two binding paths exist:
+## Flow
+
+The merchant chooses one of two paths (D):
 
 1. **Card Bind:** the merchant creates a one-time link; the cardholder enters the card and SMS code
    on a Paylov page; the merchant learns the `cardId` from the
-   [webhook](callbacks.md#card-bind-webhook) or a session read. The PAN never reaches the merchant.
-2. **PAN binding:** the merchant backend sends the PAN and expiry (`createUserCard/`), the card's
-   processing center sends an SMS OTP, and the merchant confirms with it (`confirmUserCardCreate/`).
-   The PAN passes through the merchant.
+   [webhook](callbacks.md#card-bind-webhook) or a [session read](#bind-session-status). The PAN
+   never reaches the merchant. The session moves through `created`, `card_pending` and `confirmed`,
+   and expires with the link, after which it cannot show whether a card was bound (W c1058, c1068,
+   c1079).
+2. **PAN binding:** the merchant backend sends the PAN and expiry
+   ([`createUserCard/`](#create-user-card)), the card's processing center sends an SMS OTP, and the
+   merchant confirms with it ([`confirmUserCardCreate/`](#confirm-user-card)); the `cid` returned
+   first becomes the permanent `cardId` (W c025, c027). The PAN passes through the merchant. A
+   rejected OTP can be corrected while it is valid; expiry and the per-card block follow the
+   [OTP rules](#otp-behavior) (W c026–c029, c788, c937, c940).
+
+[Card reads](#read-and-remove) expose issuer status and balance
+([unit](README.md#amount-units-by-operation)). Deletion stops payments at once, but cached reads
+return the card for a few seconds (W c327, c328, c1074, c1084–c1088).
 
 ## Card Bind
 
 ### Create bind link
 
-`POST /merchant/userCard/createBindLink/`
+`POST {BASE_URL}/merchant/userCard/createBindLink/`
 
 | Field       | Type   | Required | Notes                                                                         | Grade          |
 | ----------- | ------ | -------- | ----------------------------------------------------------------------------- | -------------- |
@@ -52,11 +64,11 @@ Unknown keys are ignored (W c083). Success (W c082):
 }
 ```
 
-| Field       | Notes                                                                                                                                                                                                                                           | Grade          |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `token`     | 43 base64url characters (`-` and `_` occur), embedded verbatim in `bindUrl`; identifies the session in the webhook and the status read                                                                                                          | W (c082–c084)  |
-| `bindUrl`   | DEV returns the host `https://paylov.uz`; the docs show `https://my.paylov.uz`. That page completes binds against the production gateway only ([hosted page](#hosted-bind-page)). Needs no other credential, so it is as sensitive as the token | W (c082), L, D |
-| `expiresAt` | ISO 8601 with microseconds and `+05:00`, creation plus 20 minutes; the docs show `+00:00` without a fraction                                                                                                                                    | W (c082), D    |
+| Field       | Notes                                                                                                                                                                                              | Grade          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `token`     | 43 base64url characters (`-` and `_` occur), embedded verbatim in `bindUrl`; identifies the session in the webhook and the status read                                                             | W (c082–c084)  |
+| `bindUrl`   | Host per [README](README.md#hosts); the page completes binds against the production gateway only ([hosted page](#hosted-bind-page)). Needs no other credential, so it is as sensitive as the token | W (c082), L, D |
+| `expiresAt` | ISO 8601 with microseconds and `+05:00`, creation plus 20 minutes                                                                                                                                  | W (c082), D    |
 
 A link is single-use and binds one card. The page may redirect to `returnUrl`; redirect parameters
 are undocumented, and the docs name the webhook, not the webview, as the result source (D). `{}`
@@ -65,9 +77,10 @@ returns `validation_error` on `userId` (W c080); a merchant without Card Bind ge
 
 ### Bind session status
 
-`GET /merchant/userCard/bindSession/{token}/status/`
+`GET {BASE_URL}/merchant/userCard/bindSession/{token}/status/`
 
-The fallback when the webhook does not arrive; Paylov never retries the webhook (D).
+The fallback when the [Card Bind webhook](callbacks.md#card-bind-webhook), which Paylov never
+retries, does not arrive (D).
 
 | `state`        | `card`                                                    | Grade        |
 | -------------- | --------------------------------------------------------- | ------------ |
@@ -116,7 +129,7 @@ only through the DEV calls above.
 
 ### Create user card
 
-`POST /merchant/userCard/createUserCard/`
+`POST {BASE_URL}/merchant/userCard/createUserCard/`
 
 | Field         | Type   | Required | Notes                                                                                                                                                                                                                                                   | Grade                         |
 | ------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
@@ -154,19 +167,19 @@ the message. A card without SMS notifications (`sms_info: false`) receives no OT
 recommend telling the cardholder before asking for the code, for example: "The confirmation code
 will be sent by Uzcard/Humo to the phone number linked to your card: `********0000`."
 
-| Code                                                                                                                                                                                                                                                                                        | HTTP | Trigger                                                                                     | Grade                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- | -------------------------- |
-| `card_exists`                                                                                                                                                                                                                                                                               | 400  | PAN already active for the same `userId`                                                    | W (c030)                   |
-| `card_not_found`                                                                                                                                                                                                                                                                            | 404  | Bad Luhn digit, unknown BIN, Visa PAN                                                       | W (c034, c036)             |
-| `card_not_match`                                                                                                                                                                                                                                                                            | 400  | Well-formed but wrong or expired expiry                                                     | W (c032)                   |
-| `phone_not_match`                                                                                                                                                                                                                                                                           | 400  | `phoneNumber` differs from the card's SMS phone                                             | W (c041, c042)             |
-| `validation_error`                                                                                                                                                                                                                                                                          | 400  | `expireDate` not `YYMM` or longer than 4; `cardNumber` under 16; missing fields             | W (c031, c033, c035, c037) |
-| `otp_code_already_sent`                                                                                                                                                                                                                                                                     | 400  | The same user and PAN while the previous OTP is still valid ([OTP behavior](#otp-behavior)) | W (c741)                   |
-| `card_is_not_supported`, `card_not_active` (data `is_active`, `status_message`, `sms_info`), `sms_not_active`, `card_has_no_phone`, `card_phone_not_linked`, `daily_limit_used_for_this_card`, `card_temporarily_blocked` (data `blocked_until`, `reason`), `invalid_card`, `pan_not_valid` | 400  | As named                                                                                    | D                          |
+| Code                                                                                                                                                                                                      | HTTP | Trigger                                                                                     | Grade                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| `card_exists`                                                                                                                                                                                             | 400  | PAN already active for the same `userId`                                                    | W (c030)                   |
+| `card_not_found`                                                                                                                                                                                          | 404  | Bad Luhn digit, unknown BIN, Visa PAN                                                       | W (c034, c036)             |
+| `card_not_match`                                                                                                                                                                                          | 400  | Well-formed but wrong or expired expiry                                                     | W (c032)                   |
+| `phone_not_match`                                                                                                                                                                                         | 400  | `phoneNumber` differs from the card's SMS phone                                             | W (c041, c042)             |
+| `validation_error`                                                                                                                                                                                        | 400  | `expireDate` not `YYMM` or longer than 4; `cardNumber` under 16; missing fields             | W (c031, c033, c035, c037) |
+| `otp_code_already_sent`                                                                                                                                                                                   | 400  | The same user and PAN while the previous OTP is still valid ([OTP behavior](#otp-behavior)) | W (c741)                   |
+| `card_is_not_supported`, `card_not_active`, `sms_not_active`, `card_has_no_phone`, `card_phone_not_linked`, `daily_limit_used_for_this_card`, `card_temporarily_blocked`, `invalid_card`, `pan_not_valid` | 400  | See [card errors](errors.md#card) and [error data](errors.md#data-shapes)                   | D                          |
 
 ### Confirm user card
 
-`POST /merchant/userCard/confirmUserCardCreate/`
+`POST {BASE_URL}/merchant/userCard/confirmUserCardCreate/`
 
 | Field      | Type   | Required | Notes                                    | Grade          |
 | ---------- | ------ | -------- | ---------------------------------------- | -------------- |
@@ -177,7 +190,7 @@ will be sent by Uzcard/Humo to the phone number linked to your card: `********00
 
 Success is `{"result": {"card": <card>}}` with a flat `status` (W c027, c045, c051, c962, c1354,
 c1357, c1360). The docs say the status "might include error response" without a shape (D). Read with
-the [get card](#get-card) example "Success response when card status not active"
+the [get card](#get-single-card) example "Success response when card status not active"
 (`is_active: false`, `status_message: "stolen_card_capture"`, D), that error is an inactive status
 in the same flat shape, the reason in `status_message` (M 2026-11-15). Every observed success
 carried an active status, and every observed failure was the error envelope (below).
@@ -229,7 +242,7 @@ Confirm, get, list, the confirmed bind session and the bind webhook return this 
 | `owner`      | string         | Cardholder name from the processing center; personal data                              | W (c027)                |
 | `cardName`   | string \| null | `""` when none was given; `null` in the Card Bind docs                                 | W (c027, c051), D       |
 | `number`     | string         | Masked, first 6 and last 4 digits; the sandbox bundle shows 4 + 4                      | W (c027, c045), S       |
-| `balance`    | int            | Tiyin; DEV returns arbitrary values up to about 2 × 10^13                              | W (c052, c055), D       |
+| `balance`    | int            | [Unit](README.md#amount-units-by-operation); DEV values reach about 2 × 10^13          | W (c052, c055), D       |
 | `expireDate` | string         | `YYMM`                                                                                 | W (c027)                |
 | `bankId`     | string         | Numeric-looking string                                                                 | W (c027)                |
 | `bankName`   | string         | Present on confirm, get and list; absent from the docs' confirm, get and list examples | W (c027, c052, c055), D |
@@ -253,11 +266,11 @@ Confirm, get, list, the confirmed bind session and the bind webhook return this 
 
 ### Get single card
 
-`GET /merchant/userCard/getCard/{cardId}/`
+`GET {BASE_URL}/merchant/userCard/getCard/{cardId}/`
 
-Returns `{"result": {"card": <card>}}` with a refreshed balance, a nested `status` and an ignored
-top-level `"is_cached": false` (W c052). An inactive card is a success with `is_active: false` and
-the reason in `status_message` (D).
+Returns `{"result": {"card": <card>}}` with a refreshed balance, a nested `status` and top-level
+`"is_cached": false` (W c052). An inactive card is a success with `is_active: false` and the reason
+in `status_message` (D).
 
 A read right after `deleteUserCard/` still returned the deleted card, with `"is_cached": true` (W
 c1074); 30 s later it answered `card_not_found` (W c1076). `getAllUserCards/` caches the same way,
@@ -271,7 +284,7 @@ but for less time (see [Get user's cards](#get-users-cards)).
 
 ### Get user's cards
 
-`GET /merchant/userCard/getAllUserCards/?userId={userId}`
+`GET {BASE_URL}/merchant/userCard/getAllUserCards/?userId={userId}`
 
 Returns `{"result": {"cards": [<card>, …]}}` with nested statuses (W c055); an unknown user returns
 `{"cards": []}` (W c056). A missing `userId` is `validation_error` (W c057). The docs list no
@@ -283,19 +296,20 @@ earlier list made after the delete was already empty (W c1075).
 
 ### Delete user card
 
-`DELETE /merchant/userCard/deleteUserCard/?userCardId={cardId}`
+`DELETE {BASE_URL}/merchant/userCard/deleteUserCard/?userCardId={cardId}`
 
 Success is `{"result": true, "error": null}` (W c324); `false` was never observed. A deleted or
 unknown card returns 404 `card_not_found` (W c325); a missing or non-UUID `userCardId` is
-`validation_error` (W c329, c330). After a delete, `getCard/` and payments with the card return
-`card_not_found` (W c326–c328). A card that was never confirmed can be deleted, also after its OTP
+`validation_error` (W c329, c330). After a delete, payments with the card return `card_not_found` (W
+c327, c328). `getCard/` also returns `card_not_found` (W c326), subject to the
+[read cache](#get-single-card). A card that was never confirmed can be deleted, also after its OTP
 expired (W c719–c721).
 
 ## Ownership checks
 
 ### Check phone match
 
-`POST /merchant/userCard/checkPhoneMatch/`
+`POST {BASE_URL}/merchant/userCard/checkPhoneMatch/`
 
 | Field         | Type   | Required | Notes                                                                                            | Grade                |
 | ------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ | -------------------- |
@@ -344,22 +358,22 @@ DEV live runs 2026-11-12 and 2026-11-14; no numbered capture.
 - The docs list `link_already_used` for the status read; the read answered a used link with
   `confirmed`, then `link_expired` (W c1058, c1079).
 - `checkPhoneMatch/` requires `phoneNumber`; the docs name the field `phone` (W c059).
-- `card_not_found` is 404 on create, confirm and delete, and 400 on get and the checks;
-  `card_is_already_activated` is 404 (W c028, c034, c048, c053, c325). `pinfl_not_match` is 400 on
-  confirm (W c049).
-- `bindUrl` points at `https://paylov.uz` on DEV, not `https://my.paylov.uz` (W c082); `expiresAt`
-  carries microseconds and `+05:00` (W c082).
+- `card_not_found`, `card_is_already_activated` and `pinfl_not_match` statuses differ from the docs:
+  [errors](errors.md#deviations-from-vendor-docs) (W c028, c034, c048, c049, c053, c325).
+- `bindUrl` points at `https://paylov.uz` on DEV, not `https://my.paylov.uz`; `expiresAt` carries
+  microseconds and `+05:00`, not `+00:00` without a fraction (W c082).
 - `createUserCard/` returns an undocumented `result.code: null` (W c025); `getCard/` and
   `getAllUserCards/` an undocumented top-level `is_cached`, `true` when the answer comes from a
   cache that still holds a deleted card (W c052, c055, c1074, c1085).
 - The docs' `validation_error` example `{"cardNumber": ["invalid_card_number"]}` was not reproduced:
   an invalid PAN is `card_not_found` (W c034).
+- The
+  [get-single-card error table](../vendor/paylov/subscribe/get-single-card.md#error-codes-of-the-method)
+  puts the `card_is_blocked` description in the Message column; moved to the trigger.
 - PAN, PINFL, expiry, phone and bind-token literals are replaced with placeholders; masked PANs
   stay. Invalid JSON is fixed (trailing commas, `#` comments, the `# tiyn` comment);
   `Bearer < ACCESS_TOKEN >` spacing is normalized.
-- The get-single-card error table puts the `card_is_blocked` description in the Message column;
-  moved to the trigger.
-- ru renders the `active` and `unknown` status values as Russian prose; en and uz keep the codes.
 - The webview code samples and the webhook receiver example are omitted.
+- ru renders the `active` and `unknown` status values as Russian prose; en and uz keep the codes.
 - The sandbox bundle (S) shows a different mock card shape (`id`, a 4 + 4 `pan`, `isActive`) and
   labels the expiry MMYY while its own test data is YYMM. It is not contract.

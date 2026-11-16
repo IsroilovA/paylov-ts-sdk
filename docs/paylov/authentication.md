@@ -6,21 +6,36 @@ sources:
 
 # Authentication
 
-Onboarding, OAuth2 tokens, revocation, Bearer failures, and the two utility endpoints `status/` and
-`bankList/`. Grades follow the [reference index](README.md#evidence); hosts are listed there too.
+Merchant credentials, OAuth2 tokens, revocation, Bearer failures, and the utility endpoints
+`status/` and `bankList/`. Grades: [evidence](README.md#evidence); hosts: [README](README.md#hosts).
+
+## Flow
 
 Four credentials stay server-side: the merchant-chosen `username` and `password` and the
 Paylov-issued `consumer_key` and `consumer_secret` (D). The secret is shown once; report exposure to
 Paylov for revocation (D).
 
-Every REST call except onboarding, token, revoke and `status/` sends
-`Authorization: Bearer <ACCESS_TOKEN>` (W c014, c015). No other API header, such as `api-key`, is
-documented, and no REST call sends a `merchant_id`: the token identifies the merchant (D).
+1. Paylov supplies a single-use onboarding token; the merchant sets a username and password and
+   receives the consumer key and secret ([onboarding](#onboarding)).
+2. Paylov activates the account; before that the password grant fails (D).
+3. The merchant exchanges the four credentials, under Basic authorization, for an access and a
+   refresh token ([token](#get-access-token)). Every REST call except onboarding, token, revoke and
+   `status/` sends `Authorization: Bearer <ACCESS_TOKEN>` (W c014, c015). No other API header, such
+   as `api-key`, is documented, and no REST call sends a `merchant_id`: the token identifies the
+   merchant (D).
+4. A refresh replaces the pair: the old refresh token fails at once, the old access token may too
+   ([refresh](#refresh-token)).
+5. Revocation targets an access token only; DEV acknowledges it without stopping access
+   ([revoke](#revoke-tokens)).
+
+Activation, allowlist and account-lock failures need Paylov; wrong credentials need correction; a
+429 carries its retry delay ([token failures](#token-failures)). Repeated failed password grants
+lock the account at an undocumented threshold (D).
 
 ## Onboarding
 
 A one-time operator step without authentication (W c359–c361, c365, c1100, c1101). Every failure is
-the standard error envelope ([errors.md](errors.md#error-envelope)).
+the [error envelope](errors.md#error-envelope).
 
 ### Verify the token
 
@@ -54,11 +69,9 @@ the standard error envelope ([errors.md](errors.md#error-envelope)).
   }
   ```
 
-- The token is single-use and `consumer_secret` is shown only once (D).
 - The success shape and password-composition error are unobserved (D only).
-
-The account stays inactive until Paylov activates it. Until then the password grant returns 401
-`invalid_grant` "this account not activated" (D).
+- The account stays inactive until Paylov activates it; until then the password grant returns 401
+  `invalid_grant` "this account not activated" (D).
 
 ## Get access token
 
@@ -76,8 +89,8 @@ Content-Type: application/json
 }
 ```
 
-Success is HTTP 200 with exactly these flat keys, identical in every captured grant; lifetimes are
-seconds (W c002, c367, c369, c381, c383, c385, c390, c391, c397, c398, c403):
+Every captured grant returns HTTP 200 with exactly these flat keys; lifetimes are seconds (W c002,
+c367, c369, c381, c383, c385, c390, c391, c397, c398, c403):
 
 ```json
 {
@@ -142,9 +155,6 @@ All token failures are enveloped (W c003–c013).
 | 405  | `method_not_allowed`     | Method not allowed.                             | `GET`; `data` `null`                                                                   | W (c013)       |
 | 429  | `rate_limit_exceeded`    | Too many requests. Retry after <N>s.            | Rate limit (below); `data` `null`; the same delay in a `Retry-After` header            | W (c012, c904) |
 
-Failed password attempts lock the account after an undocumented threshold (D); keep token attempts
-few.
-
 ## Rate limit
 
 - The token endpoint limited the 11th POST of two bursts with 429. The 11th request within 17 s,
@@ -158,8 +168,8 @@ few.
 - A `GET` to the token endpoint one second after the 429 got 405, not 429 (W c013). At up to 8 token
   calls per 60 s nothing was limited (W c362–c403), and no other endpoint was limited in about 400
   calls (W).
-- The limit's window and key (source IP or credential), and whether failed grants count differently,
-  are undocumented. Neither docs baseline documents a limit for this endpoint.
+- The docs document no limit for this endpoint; its window, key (source IP or credential) and
+  treatment of failed grants are unknown (D).
 
 ## Revoke tokens
 
@@ -180,10 +190,9 @@ few.
 - Revoking an access token leaves its refresh token valid until a refresh rotates it or it expires.
   This reads "Only an `access_token` can be revoked" (D); the docs revoke a refresh token only on
   rotation, and leaked credentials only through Paylov support (D).
-- The header outcome is not stable. Header-less revokes succeeded (W c395, c407), and every revoke
-  sent with a Bearer or Basic header failed with `invalid_token` (W c376, c378–c380, c384, c386,
-  c388, c393). Revokes with a Bearer header carrying the same token and with the Basic header also
-  succeeded (W c502, c510), so the header alone does not cause `invalid_token`.
+- The header outcome is not stable. Header-less revokes succeeded (W c395, c407). Revokes with a
+  Bearer or Basic header failed with `invalid_token` (W c376, c378–c380, c384, c386, c388, c393),
+  but also succeeded (W c502, c510), so the header alone does not cause `invalid_token`.
 
 | HTTP       | Code                                                                | Cause                                    | Grade                      |
 | ---------- | ------------------------------------------------------------------- | ---------------------------------------- | -------------------------- |
@@ -260,14 +269,12 @@ DEV live run 2026-11-12; no numbered capture.
 - The docs show onboarding token failures flat (`{"error": "invalid_or_expired"}`); live they are
   enveloped (W c365), and a short or missing token is `validation_error` (W c359, c360).
 - The ru and uz quick references list `token_required` for onboarding without a token; en omits it,
-  and live that case is `validation_error` (W c360).
+  and live that case is `validation_error` (W c360). The code is not catalogued.
 - The docs say a revoked token can no longer be used; on DEV a revoked access token keeps working (W
   c396, c408, c925).
 - The sandbox bundle's revoke tester sends a Bearer header and shows the success as
   `{"status": "revoked"}` (S); live success is `{"status": "success"}` (W c502).
 - The docs use `GET /merchant/status/` as a Bearer example; it needs no token and validates none (W
   c022, c399).
-- The changelog calls only token, revoke and onboarding flat; `status/` is flat too and `bankList/`
-  is a bare array (W c001, c014).
 - Credential literals use safe placeholders; the reusable password examples are omitted and the
   composition rules kept.

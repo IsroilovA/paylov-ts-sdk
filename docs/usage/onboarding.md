@@ -24,7 +24,5 @@ await secretManager.store('paylov', { ...credentials, password: merchantPassword
   before anything else.
 - Then ask Paylov to activate the account. Until it does, every `PaylovClient` call fails with
   `invalid_grant`, the same code as wrong credentials.
-- Passwords need at least 8 characters with a lowercase and an uppercase letter, a digit and a
-  special character; Paylov answers `validation_error` otherwise.
 - After an ambiguous failure of `complete`, call `checkToken`: `true` means `complete` can run
   again; `false` means the token was used, so ask Paylov to reissue the credentials.

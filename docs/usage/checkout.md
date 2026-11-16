@@ -25,9 +25,6 @@ await orders.saveCheckoutAccount('A-1001', { order_id: 'A-1001' });
 - **Keep your own order mapping.** Send at least one `account` entry so `transaction.check` has a
   key to match. The check and perform webhooks carry the keys you sent; `transactions.get` does not
   return them.
-- **`convertTo`** converts at the Central Bank rate when the check is created. Paylov says the
-  transaction is then generated in the `convertTo` currency; the SDK assumes the webhooks carry that
-  currency at the converted amount, not the order's original amount. Each webhook states its own
-  currency, so check it. Use `convertTo` only if you can accept the converted amount, and agree the
-  currencies and conversions you get with Paylov.
-- Unknown merchants and out-of-range amounts fail on the page, after the redirect.
+- **`convertTo`**: the SDK assumes the webhooks then carry the converted currency and amount, not
+  the order's original ones. Use it only if you can accept the converted amount, and agree the
+  currencies and conversions with Paylov.

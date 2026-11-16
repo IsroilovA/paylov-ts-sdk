@@ -56,8 +56,8 @@ The guides ship in the package under `docs/usage/`. Method contracts are in the 
 - [Webhooks](docs/usage/webhooks.md): receiving and answering Paylov callbacks.
 - [Testing](docs/usage/testing.md): the in-memory gateway and webhook requests.
 
-Paylov issues sandbox credentials; see the [Paylov sandbox](https://sandbox.paylov.uz/) and the
-[Paylov developer docs](https://developer.paylov.uz/).
+Paylov's own references: the [sandbox](https://sandbox.paylov.uz/) and the
+[developer docs](https://developer.paylov.uz/).
 
 ## Status
 

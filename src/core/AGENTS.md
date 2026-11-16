@@ -1,6 +1,5 @@
-Transport, authentication, lifecycle, envelope, errors, decoding, readers, call helpers, money, and
-time primitives. [Architecture](../../docs/architecture.md#transport) owns the rationale for these
-policies.
+Shared runtime primitives. [Architecture](../../docs/architecture.md#transport) owns the rationale
+for these policies.
 
 - Failure retries stay GET-only, and the single re-authentication replay stays limited to an
   enveloped 401 `permission_denied`. Never broaden either policy.
@@ -15,8 +14,8 @@ policies.
 - Logger hooks run synchronously and may close the client or abort the call. Recheck both after the
   request hook, immediately before fetch, and register a shared grant before starting work that can
   run a hook, so `close()` always awaits it.
-- Exceptions thrown by caller getters or proxies propagate unchanged; do not reintroduce read
-  hardening for them.
+- Exceptions thrown by caller getters or proxies propagate unchanged; add no read hardening for
+  them.
 - Keep regression coverage for token generations, single-flight, refresh fallback, the password
   latch, cool-down, close, deadlines, and secret safety when changing those paths.
 - Discard arbitrary transport errors and gateway diagnostic data. Logger events and public errors

@@ -36,18 +36,15 @@ try {
   and `phoneNumber`.
 - Store every `receiptId` (a number) with its `transactionId` or `externalId`: refunds and recovery
   need it.
-- Use `count: 1` per item, with any `discountTiyin` on that item. Paylov does not document whether
+- Use `count: 1` per item, with any `discountTiyin` on that item: Paylov does not document whether
   `priceTiyin` is the unit price or the line total, or whether a discount applies per unit or to the
-  line; with `count: 1` every reading gives the same total. Verify any other count on the
-  development gateway first.
-- Paylov states no unit for the discount. The SDK sends `discountTiyin` as tiyin, the unit of the
-  price it may not exceed.
+  line, and with `count: 1` every reading gives the same total. Verify any other count on the
+  development gateway first. Paylov states no unit for the discount; the SDK sends tiyin.
 - Paylov does not document which payments it fiscalizes itself; agree it with Paylov as part of your
   merchant setup. `attachReceipt` needs client-side fiscalization. The SDK cannot tell which
   applies: read `getReceipt` before registering.
 - Pass `isRefund` explicitly to `getReceipt`; which receipt comes back without it is undocumented.
-- `null` from `getReceipt` means no receipt yet for that `transactionId` or `externalId`; the OFD
-  may register one later. An unknown `transactionId` throws `transaction_not_found`.
+- `null` from `getReceipt` is not final: the OFD may register a receipt later.
 
 ## Refund receipts
 
@@ -60,7 +57,6 @@ try {
 
 `checkActivityType` may answer a negative result as `gateway_not_working` instead of
 `isConfirmed: false`: treat it as not confirmed, and retry later if the tax service may have been
-down. Paylov's examples do not define which answer field carries the result; `isConfirmed` is the
-SDK's reading of them.
+down.
 
 Recovery: [errors.md](errors.md#recovery-after-an-ambiguous-failure).

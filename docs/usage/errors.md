@@ -42,11 +42,8 @@ export async function chargeOrder(order: Order): Promise<ChargeResult> {
 - Branch on `code`, never on `httpStatus` or `message`: one code arrives under different statuses,
   and Paylov's messages are display text.
 - Unknown gateway codes still arrive as `PaylovApiError`; keep a default branch.
-- `sdk_client_closed` arrives during shutdown, also for a request in flight when `close()` revoked
-  its token ([setup.md](setup.md#create-the-client)). Answer it as a temporary unavailability, not
-  as a bad request.
-- A `connection` error with `isSent: false` is an abort that fired before anything was sent, so its
-  outcome is known.
+- Answer `sdk_client_closed` as a temporary unavailability, not a bad request: it arrives during
+  shutdown, also for a request in flight ([setup.md](setup.md#create-the-client)).
 - `fields` on validation errors holds the gateway's wire names (`service_id`, `items.0.title`), not
   SDK parameter names, and may be absent.
 
@@ -87,12 +84,11 @@ money is retried automatically. Then:
 - A read that finds nothing, or still shows `created`, is not proof that the call did not run: read
   again with backoff before repeating.
 - After `payments.pay`, keep reading while the status is `transfer`, `pending` or `held`; `failed`
-  needs a new transaction. Paylov does not document whether a pay can still land while the status
-  reads `created`. The SDK assumes a status that stays `created` across those reads means the pay
-  did not take effect: pay again with the same `transactionId`, never a new transaction, so a pay
-  that landed late answers `transaction_already_payed` instead of charging twice.
-- A repeated call may fail with the code in the last column; it means what the column says, and the
-  read confirms it.
+  needs a new transaction. A status that stays `created` across those reads means, by the SDK's
+  assumption, that the pay did not take effect (Paylov does not document it): pay again with the
+  same `transactionId`, so a pay that landed late answers `transaction_already_payed` instead of
+  charging twice.
+- A repeated call may fail with the code in the last column; the read confirms what it means.
 
 | Method                                                                 | Read next                                                            | Code on a repeated call                                                                                      |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |

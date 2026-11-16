@@ -24,7 +24,6 @@ const shares = await paylov.splits.get({ transactionId });
 ```
 
 - Splitting moves money to the recipients; amounts must add up to the transaction amount.
-- Recipient ids come from Paylov.
 - A recipient's `items` ([fiscalization.md](fiscalization.md)) start OFD fiscalization of its share
   in the background; Paylov does not document how the receipt is reported. `resendOfd: true` asks
   Paylov to resend the split to the fiscal system; Paylov does not say when that is needed.

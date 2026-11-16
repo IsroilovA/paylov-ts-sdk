@@ -6,10 +6,19 @@ sources:
 
 # Sub-merchants
 
-Creates a child merchant under the calling merchant. Paylov staff activate it afterwards; no
-endpoint reads or lists sub-merchants (D). Vendor pages:
+Creates a child merchant under the calling merchant (D). Vendor pages:
 [en](../vendor/paylov/sub_process/sub_merchant.md),
-[uz](../vendor/paylov/uz/subscribe/sub_merchant_create.md).
+[uz](../vendor/paylov/uz/subscribe/sub_merchant_create.md). Grades: [evidence](README.md#evidence).
+
+## Flow
+
+The parent merchant submits the child's name and tax identity, using the parent's organization or a
+new one (D). A `201` returns the child's id and name; Paylov staff then activate it, and no endpoint
+reads, lists or reports the activation of sub-merchants (D). Creation moves no money; OFD settings
+describe the child (D). Whether the id is a [split recipient id](splits.md) is undocumented. A
+duplicate within the same parent answers `sub_merchant_already_created`, with no documented way to
+find the existing child (D). On DEV the permission gate prevents a successful create (W c301,
+c1453).
 
 ## Create sub-merchant
 
@@ -28,9 +37,10 @@ endpoint reads or lists sub-merchants (D). Vendor pages:
 | `SPIC`                    | string  | No          | SPIC (IKPU) code, up to 64 characters. The key is uppercase.                                                           | D           |
 | `spic_package_code`       | string  | No          | SPIC package code, up to 20 characters.                                                                                | D           |
 
-At least one of `tin` and `pinfl` is required, and both may be sent together. With
-`create_new_organization: true`, `tin` and `organization` are required (D). Rule failures arrive in
-`data.non_field_errors`; organization field failures in `data.organization.<field>` (D).
+At least one of `tin` and `pinfl` is required, and both may be sent together, unlike
+[receipt items](fiscalization.md#item-object). With `create_new_organization: true`, `tin` and
+`organization` are required (D). Rule failures arrive in `data.non_field_errors`; organization field
+failures in `data.organization.<field>` (D).
 
 ### Organization object
 
@@ -77,8 +87,6 @@ Success: HTTP `201`, D ([fixture](../../tests/fixtures/subMerchants/create.succe
 | `method_not_allowed`           | 405  | `GET` instead of `POST`                                                                                                                                                                             | W (c305)                       |
 | `sub_merchant_already_created` | 400  | A sub-merchant of the same parent has the same `name`, `tin`, `pinfl` or `external_id` ([fixture](../../tests/fixtures/subMerchants/create.alreadyCreated.docs.json))                               | D                              |
 | `rate_limit_exceeded`          | 429  | More than 100 requests per 60 seconds; the page says to wait the seconds in the `Retry-After` header and shows no body. On DEV, 15 concurrent `{}` bodies all answered `validation_error`, none 429 | D; W (c1455–c1469)             |
-
-Duplicates are checked only among the sub-merchants of the same parent merchant (D).
 
 ## Deviations from vendor docs
 

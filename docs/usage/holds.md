@@ -44,11 +44,11 @@ if (booking.visited) {
   which Paylov's test environment refuses for captured holds; the fallback is the Paylov business
   panel or Paylov support. Capture only the final amount so refunds stay rare.
 - **Track the deadline yourself.** An expired hold can still read `held`; capture then fails with
-  `hold_time_expired`, and release has both failed and succeeded. Stop capturing a hold at creation
-  time plus `durationMinutes`, and release every hold you will not capture, also after it expires.
-  Release is the only documented way to free a hold, so the SDK reads `hold_not_found` then as
-  nothing left to release; Paylov does not document release after expiry. For a date beyond 28 days,
-  create the hold when the date enters the window.
+  `hold_time_expired`, and release has been seen both to fail and to succeed. Stop capturing a hold
+  at creation time plus `durationMinutes`, and release every hold you will not capture, also after
+  it expires. Release is the only documented way to free a hold, so the SDK reads `hold_not_found`
+  then as nothing left to release; Paylov does not document release after expiry. For a date beyond
+  28 days, create the hold when the date enters the window.
 - **Poll to reconcile.** Paylov sends no hold webhook: read `holds.get({ externalId })` for every
   open booking. `transactions.get` uses other words for a hold: `paid` once captured, and an expired
   hold Paylov released has read `refunded` there, like a refunded sale.

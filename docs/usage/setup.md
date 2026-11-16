@@ -31,18 +31,15 @@ export const paylov = new PaylovClient({
 
 - `baseUrl` is a bare origin: development `https://dev.gw.paylov.uz`, production
   `https://gw2.paylov.uz`. The `.../merchant` URL the dashboard shows is rejected. Paylov does not
-  document how production differs from development in test cards or limits.
+  document how production differs in test cards or limits.
 - Keep one long-lived client per credential set per process; tokens are not shared between
   processes.
 - Wrong credentials surface on the first authenticated call as `invalid_grant`
   ([errors.md](errors.md#credentials-and-access)).
-- Call `close()` on shutdown, after your own requests have settled. It revokes the access token.
-  Paylov documents that a revoked token can no longer be used, and the SDK assumes that holds at
-  once on production; on the development gateway a revoked token keeps working. Later calls, and a
-  request still in flight, may fail with `PaylovClientClosedError` (`sdk_client_closed`); such a
-  call had no effect. `close()` resolves once the client is closed, even when revocation fails or
-  its `signal` aborts; the revoke attempt's logger events report the outcome, and a failed
-  revocation leaves the token valid until it expires.
+- Call `close()` on shutdown, after your own requests have settled: it revokes the access token, and
+  a request still in flight may then fail with `sdk_client_closed`, without effect. On the
+  development gateway a revoked token keeps working. `close()` resolves even when revocation fails;
+  only the logger events report that, and the token then stays valid until it expires.
 - `close()` does not invalidate the refresh token, which stays valid for up to 30 days. If a
   credential or token leaks, notify Paylov support, which revokes the credentials.
 
@@ -82,9 +79,7 @@ try {
   development gateway), calls rethrow it without I/O until `retryAfterSeconds` (60 s if none) has
   passed.
 - **Redirects** are not followed.
-- **Logger.** `logger.onRequest` and `logger.onResponse` receive one event per attempt, token
-  requests included: metadata only, never credentials, tokens, card data, OTPs or personal data. An
-  attempt without a response reports `httpStatus` 0. Hooks are not awaited and their failures are
-  discarded.
+- **Logger.** `onRequest` and `onResponse` receive metadata for every attempt, token requests
+  included. Hooks are not awaited and their failures are discarded.
 - **`fetch`.** Inject a `fetch` to route through a proxy or for tests ([testing.md](testing.md)).
   `PaylovOnboarding` takes the same `timeoutMs`, `fetch` and `logger`.

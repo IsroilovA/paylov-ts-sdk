@@ -38,9 +38,8 @@ description:
 
 ## Verify and report
 
-- Dependency changes are shared tooling: run `npm run check` (lint, typecheck, coverage, docs,
-  architecture, secrets, build, packed consumer). Formatter upgrades also reformat the tree with
-  `npm run format`.
+- Dependency changes are shared tooling: run `npm run check`. Formatter upgrades also reformat the
+  tree with `npm run format`.
 - Distinguish code failures from download, environment, and upstream problems.
 - Report changed versions, intentional holds, simplifications, checks, and gaps. Record
   consumer-visible changes (Node floor, emitted output) in `CHANGELOG.md`.

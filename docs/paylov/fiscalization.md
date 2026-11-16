@@ -9,12 +9,29 @@ sources:
 
 # Fiscalization (OFD)
 
-Registers, reads, attaches and refunds fiscal receipts in the Uzbek fiscal system (OFD), and checks
-a person's activity type with the tax service. Automatic fiscalization is [OPEN Q32]: no page states
-automatic fiscalization (D), and a paid payment of the DEV merchant, which has no fiscalization, has
-an empty `ofd` array (W c125, c1300). Set receipt implies per-merchant modes: it needs "client-side
-fiscalization" and otherwise answers `permission_denied` (D). The mode is merchant setup agreed with
-Paylov (M 2026-11-15).
+Fiscal receipts in the Uzbek fiscal system (OFD) for a transaction, and tax-service activity-type
+checks. No money moves here. Grades: [evidence](README.md#evidence).
+
+## Flow
+
+- **Register:** the merchant has Paylov send a card transaction (by `transactionId`) or a cash
+  payment (by `externalId` and `phoneNumber`) with its [items](#item-object) to OFD
+  ([register](#register-fiscal-receipt), D).
+- **Set receipt:** the merchant fiscalizes itself and attaches the receipt
+  ([set receipt](#set-fiscal-receipt)); this needs client-side fiscalization, otherwise
+  `permission_denied` (D). The mode is merchant setup agreed with Paylov (M 2026-11-15).
+- **Read:** [status](#get-fiscal-receipt-status) by transaction or receipt id. A known transaction
+  without a receipt returns `success: false`, which does not mean the payment failed; unknown ids
+  return errors (W c274, c866, c1308).
+- **Refund:** cancel a fiscalized card payment with
+  [`payment/cancel`](payments.md#cancel-refund-payment), which also cancels its fiscalization, then
+  read the refund receipt; the [direct refund](#refund-fiscal-receipt) is for when status shows none
+  (D).
+
+Which payments Paylov fiscalizes itself is [OPEN Q32]: no page states automatic fiscalization (D),
+and a paid payment of the DEV merchant, which has no fiscalization, has an empty `ofd` array (W
+c125, c1300). How item amounts total is [OPEN Q80]. [Activity types](#activity-types) are
+independent of receipts.
 
 Validation runs before the permission gate (W c269, c270 versus c271; c1310 versus c1301). Register,
 set-receipt, refund and activity types answer `400 permission_denied` without `data` for a merchant
@@ -43,28 +60,29 @@ both together still reached the permission gate (W c1309).
 
 Split payments use the same item object ([splits.md](splits.md)).
 
-| Name           | Type    | Required | Description                                                                  | Grade                     |
-| -------------- | ------- | -------- | ---------------------------------------------------------------------------- | ------------------------- |
-| `title`        | string  | Yes      | Item name.                                                                   | W (c270)                  |
-| `price`        | integer | Yes      | Price before discount, in **tiyin**; unit price or line total is [OPEN Q80]. | W (c270) required; D unit |
-| `discount`     | integer | No       | Discount in **tiyin**, at most `price`; per unit or per line is [OPEN Q80].  | W (c270) optional; M unit |
-| `count`        | integer | Yes      | Quantity, at least 1.                                                        | W (c270, c272)            |
-| `code`         | string  | Yes      | Unique item code (IKPU).                                                     | W (c270)                  |
-| `vat_percent`  | integer | Yes      | VAT percentage.                                                              | W (c270)                  |
-| `package_code` | string  | Yes      | Package type code.                                                           | W (c270)                  |
-| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                       | D, W (c886)               |
-| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                              | D, W (c886)               |
+| Name           | Type    | Required | Description                                                                                                  | Grade                     |
+| -------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| `title`        | string  | Yes      | Item name.                                                                                                   | W (c270)                  |
+| `price`        | integer | Yes      | Pre-discount price ([unit](README.md#amount-units-by-operation)); unit price or line total is [OPEN Q80].    | W (c270) required; D unit |
+| `discount`     | integer | No       | Discount ([unit](README.md#amount-units-by-operation)), at most `price`; per unit or per line is [OPEN Q80]. | W (c270) optional; M unit |
+| `count`        | integer | Yes      | Quantity, at least 1.                                                                                        | W (c270, c272)            |
+| `code`         | string  | Yes      | Unique item code (IKPU).                                                                                     | W (c270)                  |
+| `vat_percent`  | integer | Yes      | VAT percentage.                                                                                              | W (c270)                  |
+| `package_code` | string  | Yes      | Package type code.                                                                                           | W (c270)                  |
+| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                                                       | D, W (c886)               |
+| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                                                              | D, W (c886)               |
 
-The docs give no unit for `discount`, only that it "Cannot exceed the price" (D, all locales); a
-comparison with the tiyin `price` holds only in tiyin, so `discount` is tiyin (M 2026-11-15).
+The [vendor item table](../vendor/paylov/subscribe/ofd/register.md#item-object-inside-items) gives
+no `discount` unit, only that it "Cannot exceed the price" (D, all locales); a comparison with the
+tiyin `price` holds only in tiyin, so `discount` is tiyin (M 2026-11-15).
 
 Each item carries exactly one of `pinfl` and `tin` (D). An otherwise valid item with neither got
 `validation_error`
 `{"items": {"0": {"non_field_errors": ["Either 'pinfl' or 'tin' must be provided."]}}}`, and the
 same item with `tin` reached the permission gate (W c886, c890); items with field errors did not
-report it (W c270, c272). Their format is not validated: an item with `tin: "12"` and `pinfl: "1"`
-together drew only its `count` error (W c272); a later business check may still reject them. ru
-names the `title` field `титул` in its table; every example uses `title`.
+report it (W c270, c272). An item with `tin: "12"` and `pinfl: "1"` together drew only its `count`
+error (W c272), so the validator does not check tax-id formats; a later business check may. ru names
+the `title` field `титул` in its table; every example uses `title`.
 
 Request (the vendor card-payment example without the undocumented fields; see Deviations):
 
@@ -118,7 +136,7 @@ Success, D ([fixture](../../tests/fixtures/fiscalization/register.success.docs.j
 | `receipt_not_available_for_operation`       | The transaction is not eligible for a fiscal receipt.                                                                                                                                                                                                       | D                    |
 | `field_required`                            | Required field missing (e.g. `items`).                                                                                                                                                                                                                      | D                    |
 | `ofd_check_already_generated`               | The transaction already has a fiscal receipt.                                                                                                                                                                                                               | D                    |
-| `ofd_commitent_or_subcommission_not_active` | An item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue. `data`: `itemIndex`, `tin`, `pinfl` ([fixture](../../tests/fixtures/fiscalization/register.commitentNotActive.docs.json), built from the catalogue entry). | D                    |
+| `ofd_commitent_or_subcommission_not_active` | An item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue; `data`: `itemIndex`, `tin`, `pinfl` ([fixture](../../tests/fixtures/fiscalization/register.commitentNotActive.docs.json), built from the catalogue entry). | D                    |
 | `invalid_amount`                            | The items' total does not match the transaction amount.                                                                                                                                                                                                     | D                    |
 | `ofd_error`                                 | OFD processing failed.                                                                                                                                                                                                                                      | D                    |
 | `fiscal_receipt_not_generated`              | The receipt was not generated.                                                                                                                                                                                                                              | D                    |
@@ -204,7 +222,7 @@ and uz name it `CLIENT_SIDE`).
 | `qrCodeUrl`     | string        | Yes      | Receipt URL, HTTPS on `ofd.soliq.uz`.             | W (c278) required; D format |
 | `receiptId`     | integer       | Yes      | OFD receipt ID, greater than 0.                   | W (c278, c280)              |
 
-The `dateTime` format and the `qrCodeUrl` host are business checks, not validator rules:
+The documented `dateTime` and `qrCodeUrl` constraints are not enforced before the permission gate:
 `"2026-11-12"` and `http://example.com` passed validation (W c280). The vendor request example is
 the [request fixture](../../tests/fixtures/fiscalization/attachReceipt.request.docs.json).
 
@@ -278,8 +296,8 @@ request:
 | `validation_error`  | `receiptId` missing                           | W (c276) |
 | `permission_denied` | Fiscalization is not enabled for the merchant | W (c277) |
 
-The page documents no business codes; likely catalogue candidates are `ofd_check_not_found`,
-`ofd_check_already_generated` and `ofd_error`.
+The [refund page](../vendor/paylov/subscribe/ofd/refund-receipt.md) documents no business error
+codes (D).
 
 ## Activity types
 

@@ -8,16 +8,30 @@ sources:
 
 # Holds
 
-Reserve funds on a bound card, then capture them with **charge** or release them with **dismiss**.
-**Status** finds a hold by `transactionId` or `externalId`. No OTP step and no hold webhook exist.
-Grades follow the [reference index](README.md#evidence).
-
-Every success and error is the `{result, error}` envelope; every failure below is HTTP 400 (W
+Reserve funds on a bound card, then capture them with **charge** or release them with **dismiss**;
+**status** finds a hold by `transactionId` or `externalId`. No OTP step or hold webhook is
+documented (D). Vendor contracts: [create](../vendor/paylov/subscribe/hold-payment/create.md),
+[charge](../vendor/paylov/subscribe/hold-payment/charge.md),
+[dismiss](../vendor/paylov/subscribe/hold-payment/dismiss.md) and
+[status](../vendor/paylov/subscribe/hold-payment/status.md). Grades: [evidence](README.md#evidence).
+Every success and error is the `{result, error}` envelope, and every failure below is HTTP 400 (W
 c180–c211). Amounts are whole SUM in both directions (W c181, c187, c194, c195, c346).
 
-Open: service settlement [OPEN Q10].
+## Flow
 
-No second service is available on DEV ([OPEN Q10]).
+The merchant creates a hold against a bound card, then captures it with charge or releases it with
+dismiss (D). Hold status reads `hold`, `paid` and `cancelled`; the transaction read of the same id
+reads `waiting`, then `payed` (W c187, c346;
+[transactions](transactions.md#fields-of-transactions)). Whether a non-default `serviceId` changes
+who settles the funds is [OPEN Q10]; DEV has no second service.
+
+Charge captures once, possibly partially ([charge](#charge)). Refunding a captured hold failed on
+DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` (W c561, c887).
+
+Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
+only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`.
+After an uncertain create, look the hold up by its `externalId`; a duplicate-id error proves only
+that the hold exists, not that it still reserves funds ([create](#create), W c1284, c1285).
 
 ## Create
 
@@ -73,9 +87,9 @@ On DEV the HUMO test card held 10 SUM twice and declined 100 to 1 000 000 000 SU
 between 10^9 and 5 × 10^10 SUM (W c606, c611). `external_id_already_exists` proves only that a hold
 with that `externalId` exists: after a release the lookup by `externalId` still finds it,
 `cancelled` (W c1284, c1285). The create, charge and dismiss pages list no codes; a
-processing-center decline of any card operation is one of the unified decline codes of the
-[error catalogue](errors.md), such as `insufficient_funds`, `card_expired`, `limit_exceeded` or
-`do_not_honor` (D, changelog).
+processing-center decline is one of the unified decline codes of the
+[error catalogue](errors.md#funds-and-declines), such as `insufficient_funds`, `card_expired`,
+`limit_exceeded` or `do_not_honor` (D, changelog).
 
 ## Charge
 
@@ -86,13 +100,10 @@ processing-center decline of any card operation is one of the unified decline co
 | `transactionId` | UUID | Yes      | The hold from create           | W (c191)                   |
 | `amount`        | int  | Yes      | SUM, 10 ≤ amount ≤ held amount | W (c188, c189, c194, c346) |
 
-Charge works once. A smaller amount is a partial capture: it succeeds, the status then reports the
-captured amount, a second charge fails and dismiss of the remainder fails (W c194–c197). The docs
-say nothing about the remainder (D). Paylov and the card's bank release it to the cardholder, on
-their schedule (M 2026-11-15). A captured hold cannot be refunded through `payment/cancel/` on DEV:
-a full capture answered `processing_error` twice, 10 minutes apart, and the hold status stayed
-`paid` (W c557, c559, c561, c887). Production was not tried; refund fallbacks are on the
-[payments page](payments.md#cancel-refund-payment).
+Charge works once. A smaller amount is a partial capture: it succeeds, status then reports the
+captured amount, and a second charge and a dismiss of the remainder both fail (W c194–c197). The
+docs say nothing about the remainder (D); Paylov and the card's bank release it to the cardholder on
+their schedule (M 2026-11-15).
 
 Success; `payedAt` is `YYYY-MM-DD HH:MM:SS` in UTC, the same instant `getTransactions` reports in
 Tashkent time (W c194, c346):
@@ -195,7 +206,7 @@ DEV live run 2026-11-12; no numbered capture.
   `hold`. Charge then answered `400 hold_time_expired` and dismiss `400 hold_not_found`, the
   sequence W c1274–c1278 records with the reads between them; no `expired` status appeared.
 - A partial charge of 400 of 1000 SUM left status `paid` with `amount` 400, and `getTransactions`
-  reported the transaction `paid`, consistent with W c194, c195.
+  reported the transaction `payed`, consistent with W c194, c195, c346.
 - Charge `payedAt` and status `payedAt`/`cancelTime` decoded as UTC fell within a minute of the
   local clock, consistent with W c194, c199.
 

@@ -1,8 +1,6 @@
 # Architecture
 
-Consequential decisions and the rationale that prevents a wrong fix. Code owns signatures, fields,
-defaults, and module inventories; [usage](usage/INDEX.md) owns consumer-visible behavior;
-[paylov/](paylov/README.md) owns wire facts.
+Consequential decisions and the rationale that prevents a wrong fix.
 
 ## Package boundary
 
@@ -19,7 +17,7 @@ defaults, and module inventories; [usage](usage/INDEX.md) owns consumer-visible 
   sent values in SDK units without wire names; it never keeps passwords and never puts requests in
   errors.
 - Consumer guides ship with the package, so integrators work from types, JSDoc and usage guides
-  without the internal Paylov reference. The README links only to shipped files.
+  without the internal Paylov reference.
 
 ## Scope
 
@@ -45,9 +43,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 ## Layers
 
 - Features never import each other or the auth modules, and use only the call helpers and pure core,
-  so none can build a transport that bypasses authentication or `close()`. Pure core (types, errors,
-  errorCodes, money, decoding, time, params, fake) imports only pure core; `shared/`, the checkout
-  link and the webhook receiver use only pure core, so they stay transport-free.
+  so none can build a transport that bypasses authentication or `close()`. Pure core (no I/O,
+  credentials or client state) imports only itself; `shared/`, the checkout link and the webhook
+  receiver use only pure core, so they stay transport-free.
 - Fakes load only from other fakes and the testing surface, so no fake encoder reaches production
   code paths. Only `core/http.ts` calls the platform `fetch`.
 - Transports are separate so authentication cannot recurse or leak: the token manager's transport
@@ -55,7 +53,7 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   `close()`. `gateway.getStatus` uses an anonymous transport. `PaylovOnboarding` uses a
   credential-free transport and never touches the token manager.
 - [checkArchitecture.mjs](../scripts/checkArchitecture.mjs) and the oxlint `fetch` restriction
-  enforce these rules.
+  enforce these rules and own the module lists.
 
 ## Responses and errors
 
@@ -155,11 +153,11 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   release (M, [holds](paylov/holds.md#dismiss)). No expiry-based release is inferred from status
   reads, which kept reporting expired holds as held on DEV.
 - Nothing that moves money is retried automatically. After an ambiguous failure callers reconcile
-  through a read and retry with the same `externalId` ([usage/errors.md](usage/errors.md)).
+  through a read and retry with the same `externalId` or `transactionId`
+  ([usage/errors.md](usage/errors.md#recovery-after-an-ambiguous-failure)).
 - A reconciliation read returns `null` only on its verified not-found code; every other miss throws.
-  `fiscalization.getReceipt` returns `null` for a known transaction without a receipt and for an
-  unknown `externalId`, which names the receipt itself; an unknown `transactionId` throws.
-  `splits.get` throws on a miss because no not-found code is verified.
+  `fiscalization.getReceipt` also returns `null` for an unknown `externalId`, because that id names
+  the receipt itself; an unknown `transactionId` still throws.
 - A refund receipt comes from `payments.refund`, which cancels the payment's fiscalization;
   `refundReceipt` runs only when `getReceipt({ isRefund: true })` then shows none. The docs reserve
   the direct refund for that case ([fiscalization](paylov/fiscalization.md#refund-fiscal-receipt)),
