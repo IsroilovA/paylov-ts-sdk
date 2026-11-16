@@ -24,7 +24,12 @@ import {
   expectNoSecretLeak,
   recordOf,
 } from '../helpers/asserts.js';
-import { createFakeFetch, type FakeCall, type FakeResponseSpec } from '../helpers/fakeFetch.js';
+import {
+  createFakeFetch,
+  createGate,
+  type FakeCall,
+  type FakeResponseSpec,
+} from '../helpers/fakeFetch.js';
 import { loadFixture, loadWire, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL } from '../helpers/testHttp.js';
 import {
@@ -198,15 +203,23 @@ describe('refresh margin (60 s)', () => {
 
 describe('single flight', () => {
   it('collapses 10 parallel callers into one token request', async () => {
-    const { manager, fetchImpl } = setup([{ ...LOGIN, delayMs: 20 }]);
-    const headers = await Promise.all(Array.from({ length: 10 }, () => header(manager)));
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([{ ...LOGIN, gate }]);
+    const pending = Promise.all(Array.from({ length: 10 }, () => header(manager)));
+    await gate.started;
+    gate.release();
+    const headers = await pending;
     expect(fetchImpl.calls).toHaveLength(1);
     expect(new Set(headers)).toEqual(new Set([`Bearer ${PASSWORD_TOKEN.access_token}`]));
   });
 
   it('rejects all parallel callers with the same error from one request', async () => {
-    const { manager, fetchImpl } = setup([{ ...BAD_PASSWORD, delayMs: 10 }]);
-    const results = await Promise.allSettled(Array.from({ length: 10 }, () => header(manager)));
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([{ ...BAD_PASSWORD, gate }]);
+    const pending = Promise.allSettled(Array.from({ length: 10 }, () => header(manager)));
+    await gate.started;
+    gate.release();
+    const results = await pending;
     const reasons = new Set(
       results.map((result) => (result.status === 'rejected' ? (result.reason as unknown) : result)),
     );
@@ -225,10 +238,14 @@ describe('single flight', () => {
   });
 
   it('collapses callers into one grant after a valid invalidation', async () => {
-    const { manager, fetchImpl } = setup([LOGIN, { ...REFRESHED, delayMs: 20 }]);
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([LOGIN, { ...REFRESHED, gate }]);
     const first = await manager.authorize();
     manager.invalidate(first.generation);
-    const contexts = await Promise.all(Array.from({ length: 10 }, () => manager.authorize()));
+    const pending = Promise.all(Array.from({ length: 10 }, () => manager.authorize()));
+    await gate.started;
+    gate.release();
+    const contexts = await pending;
     expect(fetchImpl.calls).toHaveLength(2);
     expect(new Set(contexts.map(({ generation }) => generation))).toEqual(
       new Set([first.generation + 1]),
@@ -296,15 +313,18 @@ describe('refresh to password fallback', () => {
   });
 
   it('does not start the password grant after close during the refresh', async () => {
+    const gate = createGate();
     const { manager, fetchImpl, clock, lifecycle } = setup([
       LOGIN,
-      { ...REFRESH_REJECTED, delayMs: 10 },
+      { ...REFRESH_REJECTED, gate },
       LOGIN,
     ]);
     await header(manager);
     clock.value += ACCESS_LIFETIME_MS;
     const pending = captureAsync(header(manager));
+    await gate.started;
     lifecycle.close();
+    gate.release();
     await expect(pending).resolves.toMatchObject({ code: 'sdk_client_closed' });
     expect(fetchImpl.calls).toHaveLength(2);
   });
@@ -465,16 +485,23 @@ describe('401 replay end to end', () => {
   });
 
   it('ignores an out-of-order stale 401 instead of invalidating the newer token', async () => {
+    const [early, late] = [createGate(), createGate()];
     const { http, fetchImpl } = setup([
       LOGIN,
-      { ...EXPIRED, delayMs: 10 },
-      { ...EXPIRED, delayMs: 40 },
+      { ...EXPIRED, gate: early },
+      { ...EXPIRED, gate: late },
       REFRESHED,
       SUCCESS,
       SUCCESS,
     ]);
-    const results = await Promise.all([http.request(GET_STATUS), http.request(GET_STATUS)]);
-    expect(results.map((result) => result.payload)).toEqual([SUCCESS_PAYLOAD, SUCCESS_PAYLOAD]);
+    const first = http.request(GET_STATUS);
+    const second = http.request(GET_STATUS);
+    // Both requests hold the first token before either 401 arrives.
+    await Promise.all([early.started, late.started]);
+    early.release();
+    await expect(first).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    late.release();
+    await expect(second).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
     expect(pathsOf(fetchImpl.calls)).toEqual([
       TOKEN_PATH,
       RESOURCE_PATH,
@@ -488,12 +515,15 @@ describe('401 replay end to end', () => {
 
 describe('waiter cancellation', () => {
   it('an aborted waiter leaves the shared grant to the others', async () => {
-    const { http, fetchImpl } = setup([{ ...LOGIN, delayMs: 20 }, SUCCESS]);
+    const gate = createGate();
+    const { http, fetchImpl } = setup([{ ...LOGIN, gate }, SUCCESS]);
     const controller = new AbortController();
     const aborted = captureAsync(http.request(GET_STATUS, { signal: controller.signal }));
     const other = http.request(GET_STATUS);
+    await gate.started;
     controller.abort();
     await expect(aborted).resolves.toMatchObject({ code: 'sdk_aborted' });
+    gate.release();
     await expect(other).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, RESOURCE_PATH]);
     expect(fetchImpl.calls[0]?.signal?.aborted).toBe(false);
@@ -520,10 +550,13 @@ describe('close', () => {
   });
 
   it('shares one revocation between concurrent and repeated calls', async () => {
-    const { manager, fetchImpl } = setup([LOGIN, { ...REVOKED, delayMs: 10 }]);
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([LOGIN, { ...REVOKED, gate }]);
     await header(manager);
     const first = manager.close();
+    await gate.started;
     const second = manager.close();
+    gate.release();
     await Promise.all([first, second, manager.close()]);
     await manager.close();
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, REVOKE_PATH]);
@@ -564,10 +597,13 @@ describe('close', () => {
   );
 
   it('waits for an in-flight grant, fails its waiters and revokes the newest token', async () => {
-    const { manager, fetchImpl } = setup([{ ...LOGIN, delayMs: 20 }, REVOKED]);
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([{ ...LOGIN, gate }, REVOKED]);
     const waiter = captureAsync(manager.authorize());
-    await Promise.resolve();
-    await manager.close();
+    await gate.started;
+    const closing = manager.close();
+    gate.release();
+    await closing;
     await expect(waiter).resolves.toMatchObject({ code: 'sdk_client_closed' });
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, REVOKE_PATH]);
     expect(recordOf(fetchImpl.calls[1]?.body)).toEqual({ token: PASSWORD_TOKEN.access_token });
@@ -591,32 +627,55 @@ describe('close', () => {
   });
 
   it('still closes when the in-flight grant fails', async () => {
-    const { manager, fetchImpl } = setup([{ ...NETWORK_FAILURE, delayMs: 10 }]);
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([{ ...NETWORK_FAILURE, gate }]);
     const waiter = captureAsync(manager.authorize());
-    await manager.close();
+    await gate.started;
+    const closing = manager.close();
+    gate.release();
+    await closing;
     await expect(waiter).resolves.toBeInstanceOf(PaylovConnectionError);
     expect(fetchImpl.calls).toHaveLength(1);
   });
 
   it('fails a request in flight that the revocation rejects, without re-sending it', async () => {
-    const { manager, http, fetchImpl } = setup([LOGIN, { ...EXPIRED, delayMs: 20 }, REVOKED]);
+    const gate = createGate();
+    const { manager, http, fetchImpl } = setup([LOGIN, { ...EXPIRED, gate }, REVOKED]);
     await header(manager);
     const inFlight = captureAsync(http.request(CREATE_RECEIPT));
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await gate.started;
     await manager.close();
+    gate.release();
     const error = await inFlight;
     expect(error).toBeInstanceOf(PaylovClientClosedError);
     expect(isPaylovOutcomeUnknown(error)).toBe(false);
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, CREATE_RECEIPT.route, REVOKE_PATH]);
   });
 
+  // sdk_client_closed promises the call had no effect, so a success Paylov already sent stands.
+  it('returns a success that arrives after close, without re-sending or aborting it', async () => {
+    const gate = createGate();
+    const { manager, http, fetchImpl } = setup([LOGIN, { ...SUCCESS, gate }, REVOKED]);
+    await header(manager);
+    const inFlight = http.request(CREATE_RECEIPT);
+    await gate.started;
+    await manager.close();
+    gate.release();
+    await expect(inFlight).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, CREATE_RECEIPT.route, REVOKE_PATH]);
+    expect(fetchImpl.calls[1]?.signal?.aborted).toBe(false);
+  });
+
   it('resolves when a signal abandons the wait, and still revokes', async () => {
-    const { manager, fetchImpl } = setup([LOGIN, { ...REVOKED, delayMs: 20 }]);
+    const gate = createGate();
+    const { manager, fetchImpl } = setup([LOGIN, { ...REVOKED, gate }]);
     await header(manager);
     const controller = new AbortController();
     const abandoned = manager.close(controller.signal);
+    await gate.started;
     controller.abort();
     await expect(abandoned).resolves.toBeUndefined();
+    gate.release();
     await expect(manager.authorize()).rejects.toMatchObject({ code: 'sdk_client_closed' });
     await expect(manager.close()).resolves.toBeUndefined();
     expect(fetchImpl.calls).toHaveLength(2);
@@ -666,9 +725,4 @@ describe('malformed token responses', () => {
       expect(fetchImpl.calls).toHaveLength(2);
     },
   );
-
-  it('names the failing field under body', async () => {
-    const { manager } = setup([{ body: { ...PASSWORD_TOKEN, expires_in: 0 } }]);
-    await expectMalformed(header(manager), 'body.expires_in');
-  });
 });

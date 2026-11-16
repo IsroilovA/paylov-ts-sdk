@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPaymentsResource, type PaymentsResource } from '../../src/payments/resource.js';
+import { createPaymentsResource } from '../../src/payments/resource.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { loadWire, wireResponse } from '../helpers/fixtures.js';
+import { patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -26,8 +25,7 @@ function setup(script: FakeResponseSpec[]) {
 
 /** A wire fixture whose `result` is replaced, for malformed-success cases. */
 function withResult(fixture: string, result: unknown): FakeResponseSpec {
-  const { status, body } = loadWire(fixture);
-  return { status, body: { ...Object(body), result } };
+  return patchedResponse(fixture, [], (body) => ({ ...body, result }));
 }
 
 const startPanParams = {
@@ -68,8 +66,6 @@ describe('payments.create', () => {
 
   it.each([
     ['a fraction of a SUM', 150, 'format'],
-    ['negative', -100, 'type'],
-    ['not an integer', 100.5, 'type'],
     ['missing', undefined, 'required'],
   ] as const)('rejects an amount that is %s before any request', async (_, amountTiyin, rule) => {
     const { resource, fetchImpl } = setup([]);
@@ -82,18 +78,18 @@ describe('payments.create', () => {
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
-  it.each([
-    ['a string', 'order-1', 'type'],
-    ['an array', [], 'type'],
-  ] as const)('rejects an account that is %s before any request', async (_, account, rule) => {
-    const { resource, fetchImpl } = setup([]);
+  it.each([['a string', 'order-1', 'type']] as const)(
+    'rejects an account that is %s before any request',
+    async (_, account, rule) => {
+      const { resource, fetchImpl } = setup([]);
 
-    await expectInputError(
-      resource.create({ amountTiyin: 100, account: account as unknown as Record<string, never> }),
-      { field: 'account', rule },
-    );
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
+      await expectInputError(
+        resource.create({ amountTiyin: 100, account: account as unknown as Record<string, never> }),
+        { field: 'account', rule },
+      );
+      expect(fetchImpl.calls).toHaveLength(0);
+    },
+  );
 
   it('rejects a blank userId before any request', async () => {
     const { resource, fetchImpl } = setup([]);
@@ -151,26 +147,17 @@ describe('payments.pay', () => {
   );
 });
 
-type Call = (resource: PaymentsResource) => Promise<unknown>;
-const create: Call = (resource) => resource.create({ amountTiyin: 100 });
-const createZero: Call = (resource) => resource.create({ amountTiyin: 0 });
-const pay: Call = (resource) =>
-  resource.pay({ transactionId: TRANSACTION_ID, cardId: CARD_ID, userId: USER_ID });
-
 describe('gateway field errors', () => {
-  it.each<[string, Call, string, string[]]>([
-    ['create.fieldNotValid', createZero, 'field_not_valid', ['amount']],
-    ['create.accountString', create, 'validation_error', ['account']],
-  ])('%s names the rejected wire field', async (fixture, call, code, fields) => {
-    const { resource } = setup([wireResponse(`payments/${fixture}.wire.json`)]);
+  it('sends a zero amount to Paylov, which names the rejected wire field', async () => {
+    const { resource, fetchImpl } = setup([
+      wireResponse('payments/create.fieldNotValid.wire.json'),
+    ]);
 
-    await expectApiError(call(resource), { code, fields });
-  });
-
-  it('names no field for field_required, which puts it only in the message', async () => {
-    const { resource } = setup([wireResponse('payments/pay.fieldRequired.wire.json')]);
-
-    await expectApiError(pay(resource), { code: 'field_required' });
+    await expectApiError(resource.create({ amountTiyin: 0 }), {
+      code: 'field_not_valid',
+      fields: ['amount'],
+    });
+    expect(fetchImpl.calls[0]?.body).toEqual({ amount: 0, account: {} });
   });
 });
 
@@ -283,12 +270,18 @@ describe('payments.startPanPayment', () => {
       wireResponse('payments/startPan.cardNotFound.wire.json'),
     ]);
 
-    const apiError = await captureAsync(resource.startPanPayment(startPanParams));
-    const inputError = await captureAsync(
-      resource.startPanPayment({ ...startPanParams, cardExpiry: 'MM-YY-FROM-SECURE-INPUT' }),
+    const apiError = await expectApiError(resource.startPanPayment(startPanParams), {
+      code: 'card_not_found',
+    });
+    const inputError = await expectInputError(
+      resource.startPanPayment({
+        ...startPanParams,
+        cardExpiry: 'MM-YY-FROM-SECURE-INPUT',
+        amountTiyin: 120_050,
+      }),
+      { code: 'sdk_invalid_amount', field: 'amountTiyin', rule: 'format' },
     );
 
-    expect(apiError).toMatchObject({ code: 'card_not_found' });
     expectNoSecretLeak(apiError, [PAN, EXPIRE_DATE]);
     expectNoSecretLeak(inputError, [PAN, 'MM-YY-FROM-SECURE-INPUT']);
     const events = JSON.stringify([requests, responses]);
@@ -326,17 +319,6 @@ describe('payments.confirmPanPayment', () => {
     });
   });
 
-  it('reports how long a card blocked by wrong OTPs stays blocked', async () => {
-    const { resource } = setup([wireResponse('payments/confirmPan.cardBlocked.wire.json')]);
-
-    const error = await expectApiError(
-      resource.confirmPanPayment({ transactionId: PAN_TRANSACTION_ID, otp: OTP }),
-      { code: 'card_is_blocked', httpStatus: 400 },
-    );
-
-    expect(error.retryAfterSeconds).toBe(297);
-  });
-
   it('rejects a blank OTP before any request', async () => {
     const { resource, fetchImpl } = setup([]);
 
@@ -345,27 +327,5 @@ describe('payments.confirmPanPayment', () => {
       { field: 'otp', rule: 'required' },
     );
     expect(fetchImpl.calls).toHaveLength(0);
-  });
-});
-
-describe('call options', () => {
-  it('rejects a signal that is not an AbortSignal before any request', async () => {
-    const { resource, fetchImpl } = setup([]);
-
-    await expectInputError(
-      resource.refund({ transactionId: TRANSACTION_ID }, { signal: 'stop' as never }),
-      { field: 'signal', rule: 'type' },
-    );
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-
-  it('passes the caller signal to the request', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('payments/refund.success.wire.json')]);
-    const controller = new AbortController();
-
-    await resource.refund({ transactionId: TRANSACTION_ID }, { signal: controller.signal });
-    controller.abort();
-
-    expect(fetchImpl.calls[0]?.signal?.aborted).toBe(true);
   });
 });

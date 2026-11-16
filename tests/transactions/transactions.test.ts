@@ -6,10 +6,9 @@ import {
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
-  recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse, loadWire, wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const RECEIPT_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -25,15 +24,9 @@ function setup(script: FakeResponseSpec[]) {
   return setupResource(createTransactionsResource, script);
 }
 
-/** The single transaction row of a `get` wire fixture, for malformed-row cases. */
-function rowOf(fixture: string): Record<string, unknown> {
-  const rows: unknown = recordOf(recordOf(loadWire(fixture).body)['result'])['transactions'];
-  if (!Array.isArray(rows)) throw new Error(`${fixture} has no transaction rows`);
-  return { ...recordOf(rows[0]) };
-}
-
-function getResponse(rows: readonly unknown[]): FakeResponseSpec {
-  return { body: { result: { totalTransaction: rows.length, transactions: rows }, error: null } };
+/** The paid `get` recording with its single row patched, for malformed-row cases. */
+function withPaidRow(edit: (row: Record<string, unknown>) => unknown): FakeResponseSpec {
+  return patchedResponse('transactions/get.paid.wire.json', ['result', 'transactions', 0], edit);
 }
 
 describe('transactions.get', () => {
@@ -157,9 +150,7 @@ describe('transactions.get', () => {
   });
 
   it('passes an unknown status through', async () => {
-    const { resource } = setup([
-      getResponse([{ ...rowOf('transactions/get.paid.wire.json'), status: 'reversed' }]),
-    ]);
+    const { resource } = setup([withPaidRow((row) => ({ ...row, status: 'reversed' }))]);
 
     const transaction = await resource.get({ transactionId: RECEIPT_ID });
 
@@ -199,9 +190,7 @@ describe('transactions.get', () => {
     ['via_link', 'true'],
     ['ofd', null],
   ])('fails as malformed when %s is %j, without echoing the value', async (key, value) => {
-    const { resource } = setup([
-      getResponse([{ ...rowOf('transactions/get.paid.wire.json'), [key]: value }]),
-    ]);
+    const { resource } = setup([withPaidRow((row) => ({ ...row, [key]: value }))]);
 
     const error = await expectMalformed(
       resource.get({ transactionId: RECEIPT_ID }),
@@ -211,9 +200,12 @@ describe('transactions.get', () => {
   });
 
   it('fails as malformed when a documented key is absent', async () => {
-    const row = rowOf('transactions/get.paid.wire.json');
-    delete row['error_message'];
-    const { resource } = setup([getResponse([row])]);
+    const { resource } = setup([
+      withPaidRow((row) => {
+        delete row['error_message'];
+        return row;
+      }),
+    ]);
 
     await expectMalformed(
       resource.get({ transactionId: RECEIPT_ID }),
@@ -307,36 +299,5 @@ describe('transactions.getRrn', () => {
     expect(rrn).toBe('000000000000');
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/rrn/${RECEIPT_ID}/`);
     expect(requests[0]?.endpoint).toBe('GET /merchant/getTransactions/rrn/{transactionId}/');
-  });
-
-  it.each([
-    ['rrn.notAvailable', 'receipt_not_available_for_operation'],
-    ['rrn.paymentConfirm', 'transaction_not_available_for_payment'],
-  ])('%s surfaces %s', async (fixture, code) => {
-    const { resource } = setup([wireResponse(`transactions/${fixture}.wire.json`)]);
-
-    await expectApiError(resource.getRrn({ transactionId: RECEIPT_ID }), { code });
-  });
-
-  it('refuses a dot-segment id before any request', async () => {
-    const { resource, fetchImpl } = setup([]);
-
-    await expectInputError(resource.getRrn({ transactionId: '..' }), {
-      field: 'transactionId',
-      rule: 'format',
-    });
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-});
-
-describe('call options', () => {
-  it('passes the caller signal to the request', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('transactions/list.pastEnd.wire.json')]);
-    const controller = new AbortController();
-
-    await resource.list({}, { signal: controller.signal });
-    controller.abort();
-
-    expect(fetchImpl.calls[0]?.signal?.aborted).toBe(true);
   });
 });

@@ -113,8 +113,8 @@ export function wireResponse(
  * fixture. Recordings must go through `wireResponse`, which also replays their status.
  *
  * @example
- * const { resource } = setupResource(createCardsResource, [
- *   fixtureResponse('cards/getBindSession.linkAlreadyUsed.synthesized.json', { status: 400 }),
+ * const { resource } = setupResource(createSplitsResource, [
+ *   fixtureResponse('splits/create.recipientNotFound.docs.json', { status: 400 }),
  * ]);
  */
 export function fixtureResponse(
@@ -125,4 +125,46 @@ export function fixtureResponse(
     throw new Error(`${relativePath} is a recording; replay it with wireResponse()`);
   }
   return { body: loadFixture(relativePath), ...overrides };
+}
+
+/** Keys and array indexes from a fixture body's root down to the record a test patches. */
+export type BodyPath = readonly (string | number)[];
+
+function replaceAt(
+  value: unknown,
+  path: BodyPath,
+  edit: (record: Record<string, unknown>) => unknown,
+): unknown {
+  const [key, ...rest] = path;
+  if (key === undefined && isPlainObject(value)) return edit({ ...value });
+  if (typeof key === 'number' && Array.isArray(value) && key < value.length) {
+    return value.map((item: unknown, index) =>
+      index === key ? replaceAt(item, rest, edit) : item,
+    );
+  }
+  if (typeof key === 'string' && isPlainObject(value) && key in value) {
+    return { ...value, [key]: replaceAt(value[key], rest, edit) };
+  }
+  throw new Error(`no record at ${JSON.stringify(path)}`);
+}
+
+/**
+ * A scripted answer replaying a fixture, as `wireResponse` or `fixtureResponse` would, with the
+ * record at `path` replaced by what `edit` returns for a copy of it. For malformed-response cases.
+ *
+ * @example
+ * const response = patchedResponse('cards/get.active.wire.json', ['result', 'card'], (card) => ({
+ *   ...card,
+ *   number: FULL_PAN,
+ * }));
+ */
+export function patchedResponse(
+  relativePath: string,
+  path: BodyPath,
+  edit: (record: Record<string, unknown>) => unknown,
+): FakeResponseSpec {
+  const response = relativePath.endsWith('.wire.json')
+    ? wireResponse(relativePath)
+    : fixtureResponse(relativePath);
+  return { ...response, body: replaceAt(response.body, path, edit) };
 }

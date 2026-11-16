@@ -310,15 +310,27 @@ describe('PaylovFakeGateway', () => {
       fake.assertDone();
     });
 
-    it('hangs until the attempt times out or the caller aborts', async () => {
+    it('hangs until the attempt times out', async () => {
       const { fake, paylov } = setup(20);
-      fake.payments.pay.hang();
       fake.payments.pay.hang();
 
       expect(await captureAsync(paylov.payments.pay(PAY))).toMatchObject({ code: 'sdk_timeout' });
-      expect(
-        await captureAsync(paylov.payments.pay(PAY, { signal: AbortSignal.timeout(5) })),
-      ).toMatchObject({ code: 'sdk_aborted' });
+    });
+
+    it('hangs until the caller aborts', async () => {
+      const { fake, paylov } = setup();
+      fake.payments.pay.hang();
+      const controller = new AbortController();
+
+      const pending = captureAsync(paylov.payments.pay(PAY, { signal: controller.signal }));
+      await vi.waitFor(
+        () => {
+          expect(fake.calls.at(-1)?.method).toBe('payments.pay');
+        },
+        { interval: 1 },
+      );
+      controller.abort();
+      expect(await pending).toMatchObject({ code: 'sdk_aborted' });
     });
   });
 });

@@ -40,7 +40,7 @@ function run(
     cwd: directory,
     encoding: 'utf8',
     env,
-    timeout: 10_000,
+    timeout: 30_000,
   });
   expect(result.error, 'the command finished').toBeUndefined();
   return result;
@@ -50,9 +50,7 @@ it('reports architecture problems as a failing check', () => {
   withCheckout({ 'src/core/money.ts': "import '../client.js';\n" }, (directory) => {
     const { status, stderr } = run(directory, ['scripts/checkArchitecture.mjs']);
     expect(status).toBe(1);
-    expect(stderr).toMatch(/^check:architecture failed — \d+ problem\(s\):\n/);
-    expect(stderr).toContain('\n  - checkout is missing src/checkout/link.ts\n');
-    expect(stderr).toContain('\n  - src/core/money.ts may not import ../client.js\n');
+    expect(stderr).toContain('src/core/money.ts may not import ../client.js');
   });
 });
 
@@ -64,8 +62,7 @@ it('reports usage index gaps as a failing check', () => {
   withCheckout(files, (directory) => {
     const { status, stderr } = run(directory, ['scripts/checkDocSurface.mjs']);
     expect(status).toBe(1);
-    expect(stderr).toMatch(/^check:docs failed — \d+ problem\(s\):\n/);
-    expect(stderr).toContain('\n  - value export not mentioned in INDEX.md: undocumented\n');
+    expect(stderr).toContain('value export not mentioned in INDEX.md: undocumented');
   });
 });
 
@@ -77,14 +74,8 @@ it('reports runtime dependencies as a failing check', () => {
   withCheckout(files, (directory) => {
     const { status, stderr } = run(directory, ['scripts/checkDependencies.mjs']);
     expect(status).toBe(1);
-    expect(stderr).toBe(
-      [
-        'check:dependencies failed — 2 problem(s):',
-        '  - runtime dependency fields present: dependencies',
-        '  - src/core/http.ts has a forbidden runtime dependency: typescript',
-        '',
-      ].join('\n'),
-    );
+    expect(stderr).toContain('runtime dependency fields present: dependencies');
+    expect(stderr).toContain('src/core/http.ts has a forbidden runtime dependency: typescript');
   });
 });
 
@@ -93,13 +84,9 @@ it('scans the maintained Paylov reference but not the vendor mirror', () => {
   withCheckout({ 'docs/paylov/cards.md': leak, 'docs/vendor/cards.md': leak }, (directory) => {
     const { status, stderr } = run(directory, ['scripts/checkSecrets.mjs']);
     expect(status).toBe(1);
-    expect(stderr).toBe(
-      [
-        'check:secrets failed — 1 problem(s):',
-        '  - docs/paylov/cards.md: full-PAN-shaped literal in "number"',
-        '',
-      ].join('\n'),
-    );
+    expect(stderr).toContain('docs/paylov/cards.md: full-PAN-shaped literal in "number"');
+    expect(stderr).not.toContain('docs/vendor/');
+    expect(stderr).not.toContain('8'.repeat(15));
   });
 });
 

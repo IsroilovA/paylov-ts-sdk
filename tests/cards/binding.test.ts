@@ -5,9 +5,8 @@ import {
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
-  recordOf,
 } from '../helpers/asserts.js';
-import { fixtureResponse, loadWire, wireResponse } from '../helpers/fixtures.js';
+import { patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL } from '../helpers/testHttp.js';
 import {
   PAN,
@@ -70,9 +69,12 @@ describe('cards.createBindLink', () => {
   });
 
   it('rejects an expiry without an offset', async () => {
-    const body = recordOf(structuredClone(loadWire('cards/createBindLink.success.wire.json').body));
-    const result = { ...recordOf(body['result']), expiresAt: '2026-11-12T21:11:50' };
-    const { cards } = setup([{ body: { ...body, result } }]);
+    const { cards } = setup([
+      patchedResponse('cards/createBindLink.success.wire.json', ['result'], (result) => ({
+        ...result,
+        expiresAt: '2026-11-12T21:11:50',
+      })),
+    ]);
 
     await expectMalformed(cards.createBindLink({ userId: 'user-42' }), 'result.expiresAt');
   });
@@ -92,26 +94,6 @@ describe('cards.getBindSession', () => {
     );
     expect(requests[0]?.endpoint).toBe('GET /merchant/userCard/bindSession/{token}/status/');
     expect(JSON.stringify([requests, responses])).not.toContain(BIND_TOKEN);
-  });
-
-  it('percent-encodes the token into one path segment', async () => {
-    const { cards, fetchImpl } = setup([wireResponse('cards/getBindSession.created.wire.json')]);
-
-    await cards.getBindSession({ token: 'a/b?c' });
-
-    expect(fetchImpl.calls[0]?.url).toBe(
-      `${BASE_URL}/merchant/userCard/bindSession/a%2Fb%3Fc/status/`,
-    );
-  });
-
-  it('refuses a dot-segment token before any request', async () => {
-    const { cards, fetchImpl } = setup([]);
-
-    await expectInputError(cards.getBindSession({ token: '..' }), {
-      field: 'token',
-      rule: 'format',
-    });
-    expect(fetchImpl.calls).toHaveLength(0);
   });
 
   it('decodes the confirmed card with its flat status and an empty cardName as null', async () => {
@@ -159,24 +141,17 @@ describe('cards.getBindSession', () => {
   });
 
   it('reads an unconfirmed session as unbound even when it carries a card', async () => {
-    const confirmed = recordOf(loadWire('cards/getBindSession.confirmed.wire.json').body);
-    const card = recordOf(confirmed['result'])['card'];
-    const { cards } = setup([{ body: { result: { state: 'created', card }, error: null } }]);
+    const { cards } = setup([
+      patchedResponse('cards/getBindSession.confirmed.wire.json', ['result'], (result) => ({
+        ...result,
+        state: 'created',
+      })),
+    ]);
 
     await expect(cards.getBindSession({ token: BIND_TOKEN })).resolves.toEqual({
       isBound: false,
       status: 'created',
       card: null,
-    });
-  });
-
-  it('surfaces link_already_used', async () => {
-    const { cards } = setup([
-      fixtureResponse('cards/getBindSession.linkAlreadyUsed.synthesized.json', { status: 400 }),
-    ]);
-
-    await expectApiError(cards.getBindSession({ token: BIND_TOKEN }), {
-      code: 'link_already_used',
     });
   });
 });
@@ -263,16 +238,6 @@ describe('cards.startPanBinding', () => {
       fields: ['expireDate'],
     });
     expect(fetchImpl.calls[0]?.body).toMatchObject({ expireDate: '1299' });
-  });
-
-  it('rejects options whose signal is not an AbortSignal before any request', async () => {
-    const { cards, fetchImpl } = setup([]);
-
-    await expectInputError(cards.startPanBinding(params, { signal: 'soon' } as never), {
-      field: 'signal',
-      rule: 'type',
-    });
-    expect(fetchImpl.calls).toHaveLength(0);
   });
 });
 

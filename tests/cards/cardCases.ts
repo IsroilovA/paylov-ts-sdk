@@ -2,7 +2,7 @@ import { createCardsResource, type CardsResource } from '../../src/cards/resourc
 import type { Card } from '../../src/cards/types.js';
 import { recordOf } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { loadWire } from '../helpers/fixtures.js';
+import { patchedResponse } from '../helpers/fixtures.js';
 import { setupResource, type ResourceHarness } from '../helpers/testHttp.js';
 
 // Values shared by the card suites; ids follow the cards/ fixtures.
@@ -41,13 +41,9 @@ export function setup(
   return { ...harness, cards: harness.resource };
 }
 
-/** A wire body with `patch` applied to the card at `result.card`. */
+/** A wire fixture with `patch` applied to the card at `result.card`. */
 export function withCard(fixture: string, patch: Record<string, unknown>): FakeResponseSpec {
-  const body = recordOf(structuredClone(loadWire(fixture).body));
-  const result = recordOf(body['result']);
-  return {
-    body: { ...body, result: { ...result, card: { ...recordOf(result['card']), ...patch } } },
-  };
+  return patchedResponse(fixture, ['result', 'card'], (card) => ({ ...card, ...patch }));
 }
 
 export function bodyKeys(call: { body?: unknown } | undefined): string[] {

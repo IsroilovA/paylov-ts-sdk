@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { PaylovClient, type PaylovClientConfig } from '../src/client.js';
-import { expectInputError, expectNoSecretLeak } from './helpers/asserts.js';
+import { PaylovConnectionError } from '../src/core/errors.js';
+import { PaylovOnboarding } from '../src/onboarding/client.js';
+import { captureAsync, expectInputError, expectNoSecretLeak } from './helpers/asserts.js';
 import { createFakeFetch } from './helpers/fakeFetch.js';
 import { BASE_URL } from './helpers/testHttp.js';
 
@@ -148,4 +150,155 @@ describe('PaylovClient.close', () => {
       rule: 'type',
     });
   });
+});
+
+const ID = '5eed0000-0000-4000-8000-000000000001';
+const PINFL = '88888888888888';
+const RECEIPT_ITEM = {
+  title: 'Consultation',
+  priceTiyin: 100_000,
+  count: 1,
+  code: '10112001001000000',
+  vatPercent: 12,
+  packageCode: '1497773',
+  tin: '123456789',
+};
+
+type ClientCall = (client: PaylovClient, signal: AbortSignal) => Promise<unknown>;
+type OnboardingCall = (onboarding: PaylovOnboarding, signal: AbortSignal) => Promise<unknown>;
+
+// One row per public method with valid params, so only the signal can refuse the call.
+const CLIENT_CALLS: Readonly<Record<string, ClientCall>> = {
+  'gateway.getStatus': (c, signal) => c.gateway.getStatus({ signal }),
+  'gateway.listBanks': (c, signal) => c.gateway.listBanks({ signal }),
+  'cards.createBindLink': (c, signal) => c.cards.createBindLink({ userId: 'user-1' }, { signal }),
+  'cards.getBindSession': (c, signal) =>
+    c.cards.getBindSession({ token: 'EXAMPLE-BIND-TOKEN-NOT-A-REAL-TOKEN' }, { signal }),
+  'cards.startPanBinding': (c, signal) =>
+    c.cards.startPanBinding(
+      { userId: 'user-1', cardNumber: 'PAN-FROM-SECURE-INPUT', cardExpiry: '9912' },
+      { signal },
+    ),
+  'cards.confirmPanBinding': (c, signal) =>
+    c.cards.confirmPanBinding({ cardId: ID, otp: 'OTP-FROM-SMS-EXAMPLE' }, { signal }),
+  'cards.get': (c, signal) => c.cards.get({ cardId: ID }, { signal }),
+  'cards.list': (c, signal) => c.cards.list({ userId: 'user-1' }, { signal }),
+  'cards.delete': (c, signal) => c.cards.delete({ cardId: ID }, { signal }),
+  'cards.checkPhone': (c, signal) =>
+    c.cards.checkPhone({ cardId: ID, phoneNumber: '+998900000000' }, { signal }),
+  'payments.create': (c, signal) => c.payments.create({ amountTiyin: 100 }, { signal }),
+  'payments.pay': (c, signal) =>
+    c.payments.pay({ transactionId: ID, cardId: ID, userId: 'user-1' }, { signal }),
+  'payments.refund': (c, signal) => c.payments.refund({ transactionId: ID }, { signal }),
+  'payments.startPanPayment': (c, signal) =>
+    c.payments.startPanPayment(
+      { cardNumber: 'PAN-FROM-SECURE-INPUT', cardExpiry: '9912', amountTiyin: 100 },
+      { signal },
+    ),
+  'payments.confirmPanPayment': (c, signal) =>
+    c.payments.confirmPanPayment({ transactionId: ID, otp: 'OTP-FROM-SMS-EXAMPLE' }, { signal }),
+  'transactions.get': (c, signal) => c.transactions.get({ transactionId: ID }, { signal }),
+  'transactions.list': (c, signal) => c.transactions.list({}, { signal }),
+  'transactions.getRrn': (c, signal) => c.transactions.getRrn({ transactionId: ID }, { signal }),
+  'holds.create': (c, signal) =>
+    c.holds.create(
+      {
+        userId: 'user-1',
+        cardId: ID,
+        amountTiyin: 100,
+        durationMinutes: 30,
+        externalId: 'order-1',
+      },
+      { signal },
+    ),
+  'holds.capture': (c, signal) =>
+    c.holds.capture({ transactionId: ID, amountTiyin: 100 }, { signal }),
+  'holds.release': (c, signal) => c.holds.release({ transactionId: ID }, { signal }),
+  'holds.get': (c, signal) => c.holds.get({ transactionId: ID }, { signal }),
+  'splits.create': (c, signal) =>
+    c.splits.create(
+      { transactionId: ID, recipients: [{ recipientId: 'platform', amountTiyin: 100 }] },
+      { signal },
+    ),
+  'splits.get': (c, signal) => c.splits.get({ transactionId: ID }, { signal }),
+  'fiscalization.registerReceipt': (c, signal) =>
+    c.fiscalization.registerReceipt({ transactionId: ID, items: [RECEIPT_ITEM] }, { signal }),
+  'fiscalization.getReceipt': (c, signal) =>
+    c.fiscalization.getReceipt({ transactionId: ID }, { signal }),
+  'fiscalization.attachReceipt': (c, signal) =>
+    c.fiscalization.attachReceipt(
+      {
+        transactionId: ID,
+        terminalId: 'EXAMPLE-TERMINAL',
+        issuedAtRaw: '20261112160011',
+        fiscalSign: 'EXAMPLE-SIGN',
+        receiptUrl: 'https://ofd.example.com/receipt/1',
+        receiptId: 1,
+      },
+      { signal },
+    ),
+  'fiscalization.refundReceipt': (c, signal) =>
+    c.fiscalization.refundReceipt({ receiptId: 1 }, { signal }),
+  'fiscalization.checkActivityType': (c, signal) =>
+    c.fiscalization.checkActivityType({ pinfl: PINFL, activityType: 'self_employed' }, { signal }),
+  'subMerchants.create': (c, signal) =>
+    c.subMerchants.create({ name: 'Shop', tin: '900000001' }, { signal }),
+};
+
+const ONBOARDING_CALLS: Readonly<Record<string, OnboardingCall>> = {
+  checkToken: (o, signal) =>
+    o.checkToken({ token: 'EXAMPLE-ONBOARDING-TOKEN-NOT-A-REAL-TOKEN' }, { signal }),
+  complete: (o, signal) =>
+    o.complete(
+      { token: 'EXAMPLE-ONBOARDING-TOKEN-NOT-A-REAL-TOKEN', username: 'user', password: PASSWORD },
+      { signal },
+    ),
+};
+
+function clientMethods(client: PaylovClient): string[] {
+  return Object.entries(client).flatMap(([namespace, resource]: [string, unknown]) =>
+    typeof resource === 'object' && resource !== null
+      ? Object.keys(resource).map((name) => `${namespace}.${name}`)
+      : [],
+  );
+}
+
+describe('an already-aborted caller signal', () => {
+  it('has a row for every public method', () => {
+    expect(clientMethods(new PaylovClient(VALID)).toSorted()).toEqual(
+      Object.keys(CLIENT_CALLS).toSorted(),
+    );
+    const onboardingMethods = Object.getOwnPropertyNames(PaylovOnboarding.prototype).filter(
+      (name) => name !== 'constructor',
+    );
+    expect(onboardingMethods.toSorted()).toEqual(Object.keys(ONBOARDING_CALLS).toSorted());
+  });
+
+  it.each(Object.entries(CLIENT_CALLS))(
+    'ends %s with sdk_aborted before any I/O',
+    async (_, call) => {
+      const fetchImpl = createFakeFetch([]);
+      const client = new PaylovClient({ ...VALID, fetch: fetchImpl });
+
+      const error = await captureAsync(call(client, AbortSignal.abort()));
+
+      expect(error).toBeInstanceOf(PaylovConnectionError);
+      expect(error).toMatchObject({ code: 'sdk_aborted', isSent: false });
+      expect(fetchImpl.calls).toHaveLength(0);
+    },
+  );
+
+  it.each(Object.entries(ONBOARDING_CALLS))(
+    'ends onboarding.%s with sdk_aborted before any I/O',
+    async (_, call) => {
+      const fetchImpl = createFakeFetch([]);
+      const onboarding = new PaylovOnboarding({ baseUrl: BASE_URL, fetch: fetchImpl });
+
+      const error = await captureAsync(call(onboarding, AbortSignal.abort()));
+
+      expect(error).toBeInstanceOf(PaylovConnectionError);
+      expect(error).toMatchObject({ code: 'sdk_aborted', isSent: false });
+      expect(fetchImpl.calls).toHaveLength(0);
+    },
+  );
 });

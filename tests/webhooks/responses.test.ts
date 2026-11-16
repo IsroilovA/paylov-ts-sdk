@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import type { PaylovInputRule } from '../../src/core/errors.js';
 import { createWebhookResponse } from '../../src/webhooks/responses.js';
 import type {
   WebhookDecision,
   TransactionCheckEvent,
   TransactionPerformEvent,
 } from '../../src/webhooks/types.js';
-import { capture } from '../helpers/asserts.js';
+import { expectInputError } from '../helpers/asserts.js';
 import { loadFixture } from '../helpers/fixtures.js';
 
 // Expectations come from docs/paylov/callbacks.md (statuses) and the documented answer bodies.
@@ -54,23 +55,27 @@ describe('createWebhookResponse', () => {
     );
   });
 
-  it('rejects unknown decisions, blank custom text and events without a JSON-RPC id', () => {
-    const invalid: readonly [unknown, unknown, string][] = [
-      [CHECK, 'success', 'decision'],
-      [CHECK, 'toString', 'decision'],
-      [CHECK, '0', 'decision'],
-      [CHECK, undefined, 'decision'],
-      [CHECK, { custom: '  ' }, 'decision.custom'],
-      [CHECK, { custom: 7 }, 'decision.custom'],
-      [{ ...CHECK, id: null }, 'accept', 'event.id'],
-      [{ ...CHECK, id: Number.NaN }, 'accept', 'event.id'],
-      [{ kind: 'transaction.cancel', id: 1 }, 'accept', 'event.kind'],
-      [null, 'accept', 'event'],
-    ];
-    for (const [event, decision, field] of invalid) {
-      expect(capture(() => createWebhookResponse(event as never, decision as never))).toMatchObject(
-        { code: 'sdk_invalid_input', field },
-      );
-    }
+  it.each<[string, unknown, unknown, string, PaylovInputRule]>([
+    ['an unknown decision', CHECK, 'success', 'decision', 'format'],
+    ['an inherited property name', CHECK, 'toString', 'decision', 'format'],
+    ['a raw status code', CHECK, '0', 'decision', 'format'],
+    ['a missing decision', CHECK, undefined, 'decision', 'required'],
+    ['blank custom text', CHECK, { custom: '  ' }, 'decision.custom', 'required'],
+    ['non-string custom text', CHECK, { custom: 7 }, 'decision.custom', 'type'],
+    ['a null JSON-RPC id', { ...CHECK, id: null }, 'accept', 'event.id', 'type'],
+    ['a NaN JSON-RPC id', { ...CHECK, id: Number.NaN }, 'accept', 'event.id', 'type'],
+    [
+      'a notification event',
+      { kind: 'transaction.cancel', id: 1 },
+      'accept',
+      'event.kind',
+      'format',
+    ],
+    ['a null event', null, 'accept', 'event', 'type'],
+  ])('rejects %s', async (_case, event, decision, field, rule) => {
+    await expectInputError(() => createWebhookResponse(event as never, decision as never), {
+      field,
+      rule,
+    });
   });
 });

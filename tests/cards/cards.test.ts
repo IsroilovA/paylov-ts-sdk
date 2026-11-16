@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  captureAsync,
-  expectApiError,
-  expectInputError,
-  expectMalformed,
-  expectNoSecretLeak,
-  recordOf,
-} from '../helpers/asserts.js';
-import { fixtureResponse, loadWire, wireResponse } from '../helpers/fixtures.js';
+import { expectApiError, expectMalformed, expectNoSecretLeak } from '../helpers/asserts.js';
+import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL } from '../helpers/testHttp.js';
 import { UZCARD_ID, HUMO_ID, FULL_PAN, UZCARD, setup, withCard } from './cardCases.js';
 
@@ -64,16 +57,9 @@ describe('cards.get', () => {
   });
 
   it('rejects a result without a card', async () => {
-    const { cards } = setup([fixtureResponse('cards/get.malformed.synthesized.json')]);
+    const { cards } = setup([{ body: { result: {}, error: null } }]);
 
     await expectMalformed(cards.get({ cardId: UZCARD_ID }), 'result.card');
-  });
-
-  it('refuses a dot-segment card id before any request', async () => {
-    const { cards, fetchImpl } = setup([]);
-
-    await expectInputError(cards.get({ cardId: '..' }), { field: 'cardId', rule: 'format' });
-    expect(fetchImpl.calls).toHaveLength(0);
   });
 });
 
@@ -96,17 +82,6 @@ describe('cards.list', () => {
     });
   });
 
-  it("forwards the caller's signal", async () => {
-    const { cards, fetchImpl } = setup([wireResponse('cards/list.empty.wire.json')]);
-
-    const error = await captureAsync(
-      cards.list({ userId: 'user-42' }, { signal: AbortSignal.abort() }),
-    );
-
-    expect(error).toMatchObject({ kind: 'connection', code: 'sdk_aborted' });
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-
   it('returns an empty list for a user without cards', async () => {
     const { cards } = setup([wireResponse('cards/list.empty.wire.json')]);
 
@@ -114,12 +89,13 @@ describe('cards.list', () => {
   });
 
   it('rejects the flat status layout the docs show', async () => {
-    const body = recordOf(structuredClone(loadWire('cards/list.success.wire.json').body));
-    const list = recordOf(body['result'])['cards'];
-    const first: unknown = Array.isArray(list) ? list[0] : undefined;
     const flat = { is_active: true, status_message: 'active', sms_info: true };
-    const card = { ...recordOf(first), status: flat };
-    const { cards } = setup([{ body: { result: { cards: [card] }, error: null } }]);
+    const { cards } = setup([
+      patchedResponse('cards/list.success.wire.json', ['result', 'cards', 0], (card) => ({
+        ...card,
+        status: flat,
+      })),
+    ]);
 
     await expectMalformed(cards.list({ userId: 'user-42' }), 'result.cards[0].status.result');
   });

@@ -1,7 +1,0 @@
-{
-  "result": null,
-  "error": {
-    "code": "ofd_check_already_generated",
-    "message": "The transaction already has a fiscal receipt."
-  }
-}

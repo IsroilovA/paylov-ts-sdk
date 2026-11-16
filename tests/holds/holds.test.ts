@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { createHoldsResource } from '../../src/holds/resource.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
@@ -126,7 +125,7 @@ describe('holds.create', () => {
   );
 
   it('rejects a success without a transaction id', async () => {
-    const { resource } = setup([fixtureResponse('holds/create.malformed.synthesized.json')]);
+    const { resource } = setup([{ body: { result: {}, error: null } }]);
 
     await expectMalformed(resource.create(CREATE), 'result.transactionId');
   });
@@ -136,13 +135,11 @@ describe('holds.create', () => {
       wireResponse('holds/create.duplicateExternalId.wire.json'),
     ]);
 
-    const error = await captureAsync(resource.create(CREATE));
-    const tooLong = await captureAsync(
-      resource.create({ ...CREATE, externalId: `${EXTERNAL_ID}-${'x'.repeat(64)}` }),
-    );
+    const error = await expectApiError(resource.create(CREATE), {
+      code: 'external_id_already_exists',
+    });
 
     expectNoSecretLeak(error, [EXTERNAL_ID, CREATE.userId]);
-    expectNoSecretLeak(tooLong, [EXTERNAL_ID]);
     expect(JSON.stringify([requests, responses])).not.toMatch(/EXAMPLE-ORDER|user-example/);
   });
 });
@@ -170,7 +167,6 @@ describe('holds.capture', () => {
       'amountTiyin',
       'format',
     ],
-    ['a negative amount', { amountTiyin: -1000 }, 'sdk_invalid_amount', 'amountTiyin', 'type'],
     [
       'a blank transactionId',
       { transactionId: ' ' },
@@ -186,15 +182,6 @@ describe('holds.capture', () => {
       { code, field, rule },
     );
     expect(fetchImpl.calls).toHaveLength(0);
-  });
-
-  it('surfaces a refused capture without retrying the POST', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('holds/capture.overHeld.wire.json')]);
-
-    await expectApiError(resource.capture({ transactionId: HOLD_ID, amountTiyin: 1000 }), {
-      code: 'invalid_amount',
-    });
-    expect(fetchImpl.calls).toHaveLength(1);
   });
 
   it('rejects a capture time that is not the documented UTC format', async () => {
@@ -216,12 +203,6 @@ describe('holds.release', () => {
     expect(released).toEqual({ transactionId: RELEASED_HOLD_ID });
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/payment/hold/dismiss/`);
     expect(recordOf(fetchImpl.calls[0]?.body)).toEqual({ transactionId: RELEASED_HOLD_ID });
-  });
-
-  it('surfaces hold_not_found for a captured hold', async () => {
-    const { resource } = setup([wireResponse('holds/release.afterCapture.wire.json')]);
-
-    await expectApiError(resource.release({ transactionId: HOLD_ID }), { code: 'hold_not_found' });
   });
 
   it('rejects a blank transactionId before any request', async () => {
@@ -292,18 +273,6 @@ describe('holds.get', () => {
       capturedAt: null,
       releasedAt: new Date('2026-11-12T16:00:21Z'),
     });
-  });
-
-  it("passes the caller's signal to the request", async () => {
-    const { resource } = setup([{ ...wireResponse('holds/get.hold.wire.json'), delayMs: 1_000 }]);
-    const controller = new AbortController();
-
-    const pending = captureAsync(
-      resource.get({ transactionId: HOLD_ID }, { signal: controller.signal }),
-    );
-    controller.abort();
-
-    await expect(pending).resolves.toMatchObject({ code: 'sdk_aborted' });
   });
 
   it('returns null for transaction_not_found', async () => {

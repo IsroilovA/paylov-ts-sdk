@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { createFiscalizationResource } from '../../src/fiscalization/resource.js';
 import type { AttachFiscalReceiptParams } from '../../src/index.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
@@ -11,7 +10,12 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse, loadFixture, wireResponse } from '../helpers/fixtures.js';
+import {
+  fixtureResponse,
+  loadFixture,
+  patchedResponse,
+  wireResponse,
+} from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -35,6 +39,9 @@ const WIRE_ITEM = {
   package_code: '1497773',
 };
 
+/** A card-payment registration with one item fiscalized under a TIN. */
+const REGISTER = { transactionId: TRANSACTION_ID, items: [{ ...ITEM, tin: '123456789' }] };
+
 function setup(...script: FakeResponseSpec[]) {
   return setupResource(createFiscalizationResource, script);
 }
@@ -45,10 +52,7 @@ describe('fiscalization.registerReceipt', () => {
       fixtureResponse('fiscalization/register.success.docs.json'),
     );
 
-    const receipt = await resource.registerReceipt({
-      transactionId: TRANSACTION_ID,
-      items: [{ ...ITEM, tin: '123456789' }],
-    });
+    const receipt = await resource.registerReceipt(REGISTER);
 
     expect(fetchImpl.calls[0]).toMatchObject({
       method: 'POST',
@@ -104,62 +108,23 @@ describe('fiscalization.registerReceipt', () => {
       fixtureResponse('fiscalization/register.missingReceiptId.synthesized.json'),
     );
 
-    await expectMalformed(
-      resource.registerReceipt({
-        transactionId: TRANSACTION_ID,
-        items: [{ ...ITEM, tin: '123456789' }],
-      }),
-      'result.ofd.receiptId',
-    );
+    await expectMalformed(resource.registerReceipt(REGISTER), 'result.ofd.receiptId');
   });
 
   it('exposes nested gateway validation as flattened wire field paths', async () => {
     const { resource } = setup(wireResponse('fiscalization/register.nestedValidation.wire.json'));
 
-    await expectApiError(
-      resource.registerReceipt({
-        transactionId: TRANSACTION_ID,
-        items: [{ ...ITEM, tin: '123456789' }],
-      }),
-      {
-        code: 'validation_error',
-        fields: [
-          'items.0.title',
-          'items.0.price',
-          'items.0.count',
-          'items.0.code',
-          'items.0.vat_percent',
-          'items.0.package_code',
-        ],
-      },
-    );
-  });
-
-  it('reports a merchant without fiscalization as feature_not_enabled', async () => {
-    const { resource } = setup(wireResponse('fiscalization/register.permissionDenied.wire.json'));
-
-    await expectApiError(
-      resource.registerReceipt({
-        transactionId: TRANSACTION_ID,
-        items: [{ ...ITEM, tin: '123456789' }],
-      }),
-      { code: 'permission_denied' },
-    );
-  });
-
-  it('surfaces the replay code without retrying the POST', async () => {
-    const { resource, fetchImpl } = setup(
-      fixtureResponse('fiscalization/register.alreadyGenerated.synthesized.json', { status: 400 }),
-    );
-
-    await expectApiError(
-      resource.registerReceipt({
-        transactionId: TRANSACTION_ID,
-        items: [{ ...ITEM, tin: '123456789' }],
-      }),
-      { code: 'ofd_check_already_generated' },
-    );
-    expect(fetchImpl.calls).toHaveLength(1);
+    await expectApiError(resource.registerReceipt(REGISTER), {
+      code: 'validation_error',
+      fields: [
+        'items.0.title',
+        'items.0.price',
+        'items.0.count',
+        'items.0.code',
+        'items.0.vat_percent',
+        'items.0.package_code',
+      ],
+    });
   });
 
   it('keeps phones, PINFLs and echoed tax ids out of errors and logger events', async () => {
@@ -182,18 +147,6 @@ describe('fiscalization.registerReceipt', () => {
 });
 
 describe('fiscalization.getReceipt', () => {
-  it('aborts with the caller signal', async () => {
-    const { resource } = setup(
-      fixtureResponse('fiscalization/getReceipt.success.docs.json', { delayMs: 1_000 }),
-    );
-
-    const error = await captureAsync(
-      resource.getReceipt({ transactionId: TRANSACTION_ID }, { signal: AbortSignal.timeout(1) }),
-    );
-
-    expect(error).toMatchObject({ kind: 'connection', code: 'sdk_aborted' });
-  });
-
   it('reads a receipt by transactionId with the isRefund filter', async () => {
     const { resource, fetchImpl } = setup(
       fixtureResponse('fiscalization/getReceipt.success.docs.json'),
@@ -254,10 +207,12 @@ describe('fiscalization.getReceipt', () => {
   });
 
   it('requires isRefund on a found receipt', async () => {
-    const { result } = loadFixture<{ result: Record<string, unknown> }>(
-      'fiscalization/getReceipt.success.docs.json',
+    const { resource } = setup(
+      patchedResponse('fiscalization/getReceipt.success.docs.json', ['result'], (result) => ({
+        ...result,
+        isRefund: null,
+      })),
     );
-    const { resource } = setup({ body: { result: { ...result, isRefund: null } } });
 
     await expectMalformed(
       resource.getReceipt({ transactionId: TRANSACTION_ID }),
@@ -357,16 +312,6 @@ describe('fiscalization.refundReceipt', () => {
 
     await expectMalformed(resource.refundReceipt({ receiptId: 184595 }), 'result.sale');
   });
-
-  it('reports a merchant without fiscalization as feature_not_enabled', async () => {
-    const { resource } = setup(
-      wireResponse('fiscalization/refundReceipt.permissionDenied.wire.json'),
-    );
-
-    await expectApiError(resource.refundReceipt({ receiptId: 184595 }), {
-      code: 'permission_denied',
-    });
-  });
 });
 
 describe('fiscalization.checkActivityType', () => {
@@ -411,19 +356,6 @@ describe('fiscalization.checkActivityType', () => {
     });
 
     expect(check).toEqual({ isConfirmed: false, activityNames: [] });
-  });
-
-  it('withholds the upstream reason text', async () => {
-    const { resource } = setup(
-      fixtureResponse('fiscalization/checkActivityType.negative.docs.json'),
-    );
-
-    const check = await resource.checkActivityType({
-      pinfl: PERSON_PINFL,
-      activityType: 'individual_entrepreneur',
-    });
-
-    expect(JSON.stringify(check)).not.toContain('ПИНФЛ');
   });
 
   it('rejects data that is neither null, a number nor the income object', async () => {

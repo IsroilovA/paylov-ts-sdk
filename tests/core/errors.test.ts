@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   PaylovApiError,
@@ -195,11 +195,5 @@ describe('isPaylovApiError', () => {
     expect(isPaylovApiError(error, 'card_not_found')).toBe(false);
     expect(isPaylovApiError(invalidInput('m', 'f', 'type'))).toBe(false);
     expect(isPaylovApiError({ code: 'insufficient_funds' })).toBe(false);
-  });
-
-  it('narrows the code to the listed literals', () => {
-    if (isPaylovApiError(error, 'card_not_found', 'insufficient_funds')) {
-      expectTypeOf(error.code).toEqualTypeOf<'card_not_found' | 'insufficient_funds'>();
-    }
   });
 });

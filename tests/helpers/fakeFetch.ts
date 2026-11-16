@@ -5,6 +5,8 @@
 
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { onTestFinished } from 'vitest';
+
 import type { FetchLike } from '../../src/core/types.js';
 
 /** One recorded outgoing call. `body` is the parsed JSON when the request sent JSON. */
@@ -28,8 +30,58 @@ export interface FakeResponseSpec {
   headers?: Record<string, string>;
   /** Abortable delay before answering. */
   delayMs?: number;
+  /** Holds the answer until the test releases it; the wait aborts with the request signal. */
+  gate?: ResponseGate;
   /** Thrown instead of answering, as a pre-response network failure. */
   throw?: unknown;
+}
+
+/** A barrier that tells a test when a call reached the fake and lets it choose when to answer. */
+export interface ResponseGate {
+  /** Resolves once the gated call has reached the fake. */
+  readonly started: Promise<void>;
+  /** Lets the gated call answer. */
+  release(): void;
+  /** Called by the fake: marks the call started and waits for `release` or the signal. */
+  enter(signal: AbortSignal | undefined): Promise<void>;
+}
+
+/**
+ * Creates a gate for one scripted response.
+ *
+ * @example
+ * const gate = createGate();
+ * const pending = http.request(GET_STATUS); // scripted with { ...SUCCESS, gate }
+ * await gate.started;
+ * gate.release();
+ */
+export function createGate(): ResponseGate {
+  const started = Promise.withResolvers<undefined>();
+  const released = Promise.withResolvers<undefined>();
+  return {
+    started: started.promise,
+    release: () => {
+      released.resolve(undefined);
+    },
+    enter: async (signal) => {
+      started.resolve(undefined);
+      if (signal === undefined) {
+        await released.promise;
+        return;
+      }
+      signal.throwIfAborted();
+      const aborted = Promise.withResolvers<never>();
+      const onAbort = (): void => {
+        aborted.reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        await Promise.race([released.promise, aborted.promise]);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+      }
+    },
+  };
 }
 
 function headersToRecord(init: RequestInit['headers']): Record<string, string> {
@@ -42,7 +94,9 @@ function headersToRecord(init: RequestInit['headers']): Record<string, string> {
 }
 
 /**
- * Creates a `fetch` that answers from a script and records every call.
+ * Creates a `fetch` that answers from a script and records every call. Call it inside a test: a
+ * call past the end of the script fails that test even when the SDK turns the fake's throw into a
+ * network error.
  *
  * @example
  * const fetchImpl = createFakeFetch([{ status: 500 }, { body: { result: { ok: true } } }]);
@@ -52,6 +106,10 @@ function headersToRecord(init: RequestInit['headers']): Record<string, string> {
  */
 export function createFakeFetch(script: FakeResponseSpec[]): FetchLike & { calls: FakeCall[] } {
   const calls: FakeCall[] = [];
+  let overrun: Error | undefined;
+  onTestFinished(() => {
+    if (overrun !== undefined) throw overrun;
+  });
 
   const impl = async (input: string, init: RequestInit): Promise<Response> => {
     const index = calls.length;
@@ -66,9 +124,11 @@ export function createFakeFetch(script: FakeResponseSpec[]): FetchLike & { calls
 
     const spec = script[index];
     if (spec === undefined) {
-      throw new Error(`createFakeFetch: no scripted response for call #${index + 1}`);
+      overrun ??= new Error(`createFakeFetch: no scripted response for call #${index + 1}`);
+      throw overrun;
     }
 
+    await spec.gate?.enter(init.signal ?? undefined);
     if (spec.delayMs !== undefined) {
       await delay(spec.delayMs, undefined, { signal: init.signal ?? undefined });
     }

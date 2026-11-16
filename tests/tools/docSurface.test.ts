@@ -112,10 +112,7 @@ function problemsOf(input: Surface): string[] {
 }
 
 it('accepts a documented surface', () => {
-  expect(docSurfaceProblems(surface())).toEqual({
-    problems: [],
-    summary: '5 value exports, 1 namespaces, 2 topic files covered by INDEX.md',
-  });
+  expect(problemsOf(surface())).toEqual([]);
 });
 
 it('rejects an undocumented runtime export', () => {

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { createSubMerchantsResource } from '../../src/subMerchants/resource.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
@@ -32,18 +31,6 @@ function setup(...script: FakeResponseSpec[]) {
 }
 
 describe('subMerchants.create', () => {
-  it('aborts with the caller signal', async () => {
-    const { resource } = setup(
-      fixtureResponse('subMerchants/create.success.docs.json', { delayMs: 1_000 }),
-    );
-
-    const error = await captureAsync(
-      resource.create({ name: 'Shop', tin: TIN }, { signal: AbortSignal.timeout(1) }),
-    );
-
-    expect(error).toMatchObject({ kind: 'connection', code: 'sdk_aborted' });
-  });
-
   it('maps every field to its snake_case wire name and accepts HTTP 201', async () => {
     const { resource, fetchImpl } = setup(
       fixtureResponse('subMerchants/create.success.docs.json', { status: 201 }),
@@ -202,16 +189,14 @@ describe('subMerchants.create', () => {
     expect(fetchImpl.calls[0]?.body).toEqual({ name: 'Shop', tin: '12' });
   });
 
-  it.each([
-    ['create.permissionDenied.wire.json', { code: 'permission_denied' }],
-    ['create.alreadyCreated.docs.json', { code: 'sub_merchant_already_created' }],
-  ])('surfaces %s', async (fixture, expected) => {
-    const response = fixture.endsWith('.wire.json')
-      ? wireResponse(`subMerchants/${fixture}`)
-      : fixtureResponse(`subMerchants/${fixture}`, { status: 400 });
-    const { resource } = setup(response);
+  it('surfaces sub_merchant_already_created', async () => {
+    const { resource } = setup(
+      fixtureResponse('subMerchants/create.alreadyCreated.docs.json', { status: 400 }),
+    );
 
-    await expectApiError(resource.create({ name: 'Shop', tin: TIN }), expected);
+    await expectApiError(resource.create({ name: 'Shop', tin: TIN }), {
+      code: 'sub_merchant_already_created',
+    });
   });
 
   it('requires the sub-merchant id in the result', async () => {

@@ -2,7 +2,6 @@
 
 import {
   createCheckoutUrl,
-  createWebhookResponse,
   formatSum,
   isPaylovApiError,
   isPaylovError,
@@ -14,7 +13,6 @@ import {
   PaylovInputError,
   PaylovOnboarding,
   PaylovProtocolError,
-  PaylovWebhookReceiver,
   sumToTiyin,
   type CardsResource,
   type CheckoutAmount,
@@ -44,7 +42,6 @@ import {
   type TransactionLookup,
   type TransactionReference,
   type TransactionsResource,
-  type WebhookOutcome,
 } from '../../src/index.js';
 
 declare const paylovConsumerKey: string;
@@ -107,38 +104,6 @@ const checkoutUrl: string = createCheckoutUrl({
   returnUrl: 'https://shop.example/return',
 });
 void checkoutUrl;
-
-const receiver = new PaylovWebhookReceiver({
-  login: 'EXAMPLE-CALLBACK-LOGIN',
-  password: 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL',
-});
-const outcome: WebhookOutcome = receiver.receive({ method: 'POST', headers: {}, body: {} });
-switch (outcome.kind) {
-  case 'transaction.check':
-  case 'transaction.perform':
-    void createWebhookResponse(outcome, 'accept');
-    break;
-  case 'transaction.cancel': {
-    const cancelledAt: Date = outcome.cancelledAt;
-    void cancelledAt;
-    // @ts-expect-error notifications carry no JSON-RPC id to answer
-    void createWebhookResponse(outcome, 'accept');
-    break;
-  }
-  case 'merchant.deposit':
-    void outcome.depositId;
-    break;
-  case 'card.bind':
-    void outcome.token;
-    break;
-  case 'invalid':
-    void outcome.reason;
-    break;
-  default: {
-    const exhaustive: never = outcome;
-    void exhaustive;
-  }
-}
 
 // Shared public types
 const account: PaylovJsonObject = { order_id: 'A-1001', lines: [1, 2], meta: { gift: true } };

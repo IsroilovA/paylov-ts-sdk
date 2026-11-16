@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { PaylovInputError } from '../../src/core/errors.js';
+import type { PaylovInputRule } from '../../src/core/errors.js';
 import { PaylovWebhookReceiver } from '../../src/webhooks/receiver.js';
 import type { TransactionCheckEvent, WebhookInput } from '../../src/webhooks/types.js';
-import { basicAuthHeader, capture, expectNoSecretLeak, recordOf } from '../helpers/asserts.js';
+import {
+  basicAuthHeader,
+  expectInputError,
+  expectNoSecretLeak,
+  recordOf,
+} from '../helpers/asserts.js';
 import { loadFixture } from '../helpers/fixtures.js';
 
 // Expectations come from docs/paylov/callbacks.md.
@@ -11,6 +16,7 @@ type Fixture = Record<string, unknown>;
 const LOGIN = 'callback-user';
 const PASSWORD = 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL';
 const AUTHORIZATION = basicAuthHeader(LOGIN, PASSWORD);
+const WRONG_AUTHORIZATION = basicAuthHeader(LOGIN, 'wrong-password');
 const CHECK = loadFixture<Fixture>('webhooks/transactionCheck.request.docs.json');
 const PERFORM = loadFixture<Fixture>('webhooks/transactionPerform.request.docs.json');
 const CANCEL = loadFixture<Fixture>('webhooks/transactionCancel.notification.docs.json');
@@ -146,7 +152,7 @@ describe('PaylovWebhookReceiver authentication', () => {
     const noColon = Buffer.from('missing-separator', 'utf8').toString('base64');
     const headerSets: Readonly<Record<string, string | readonly string[] | undefined>>[] = [
       {},
-      { authorization: basicAuthHeader(LOGIN, 'wrong-password') },
+      { authorization: WRONG_AUTHORIZATION },
       { authorization: basicAuthHeader('wrong-login', PASSWORD) },
       { authorization: 'Bearer token' },
       { authorization: 'Basic not-base64' },
@@ -201,6 +207,10 @@ describe('PaylovWebhookReceiver invalid input', () => {
     const cases: readonly [WebhookInput, string][] = [
       [{ ...post(CHECK), method: 'GET' }, 'unsupported_http_method'],
       [{ ...post(CHECK), headers: null as never }, 'unauthorized'],
+      [{ ...post(CHECK, 'Basic not-base64'), method: 'GET' }, 'unsupported_http_method'],
+      [post('{', WRONG_AUTHORIZATION), 'unauthorized'],
+      [post({ ...CHECK, method: 'merchant.withdrawal' }, WRONG_AUTHORIZATION), 'unauthorized'],
+      [post({ ...CHECK, params: null }, WRONG_AUTHORIZATION), 'unauthorized'],
       [post('{'), 'malformed_body'],
       [post(new Uint8Array([0xff, 0xfe])), 'malformed_body'],
       [post(() => undefined), 'malformed_body'],
@@ -295,25 +305,24 @@ describe('PaylovWebhookReceiver invalid input', () => {
 });
 
 describe('PaylovWebhookReceiver construction', () => {
-  it('rejects a missing config and a blank or non-string login or password by field', () => {
-    const cases: readonly [unknown, string | undefined][] = [
-      [undefined, undefined],
-      [{ login: '', password: PASSWORD }, 'login'],
-      [{ login: '  ', password: PASSWORD }, 'login'],
-      [{ login: LOGIN, password: '' }, 'password'],
-      [{ login: LOGIN, password: 7 }, 'password'],
-    ];
-    for (const [config, field] of cases) {
-      const error = capture(() => new PaylovWebhookReceiver(config as never));
-      expect(error).toBeInstanceOf(PaylovInputError);
-      expect(error).toMatchObject({ code: 'sdk_config_error', field });
-      expectNoSecretLeak(error, [PASSWORD]);
-    }
-  });
-
-  it('rejects a login with a colon, which Basic credentials can never carry', () => {
-    const error = capture(() => new PaylovWebhookReceiver({ login: 'a:b', password: PASSWORD }));
-    expect(error).toBeInstanceOf(PaylovInputError);
-    expect(error).toMatchObject({ code: 'sdk_config_error', field: 'login', rule: 'format' });
+  it.each<[string, unknown, string | undefined, PaylovInputRule]>([
+    ['a missing config', undefined, undefined, 'type'],
+    ['an empty login', { login: '', password: PASSWORD }, 'login', 'required'],
+    ['a blank login', { login: '  ', password: PASSWORD }, 'login', 'required'],
+    ['an empty password', { login: LOGIN, password: '' }, 'password', 'required'],
+    ['a non-string password', { login: LOGIN, password: 7 }, 'password', 'type'],
+    [
+      'a login with a colon, which Basic credentials can never carry',
+      { login: 'a:b', password: PASSWORD },
+      'login',
+      'format',
+    ],
+  ])('rejects %s', async (_case, config, field, rule) => {
+    const error = await expectInputError(() => new PaylovWebhookReceiver(config as never), {
+      code: 'sdk_config_error',
+      field,
+      rule,
+    });
+    expectNoSecretLeak(error, [PASSWORD]);
   });
 });

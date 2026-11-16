@@ -44,6 +44,12 @@ const PAY = {
   miss: 'insufficient_funds',
 } as const;
 
+// Compile-time only: every route placeholder needs a path value.
+expectTypeOf<EndpointRequest<typeof CARD>['path']>().toEqualTypeOf<
+  Readonly<Record<'cardId', string>>
+>();
+expectTypeOf<EndpointRequest<typeof STATUS>['path']>().toEqualTypeOf<undefined>();
+
 describe('send', () => {
   it('decodes an envelope under result', async () => {
     const { http, fetchImpl } = setupResource((transport) => transport, [SUCCESS, { body: {} }]);
@@ -61,13 +67,6 @@ describe('send', () => {
     await send(http, CARD, { path: { cardId: CARD_ID } }, decodeTransactionId);
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/userCard/${CARD_ID}/`);
     expect(requests[0]?.endpoint).toBe('GET /merchant/userCard/{cardId}/');
-  });
-
-  it('requires a value for every placeholder at compile time', () => {
-    expectTypeOf<EndpointRequest<typeof CARD>['path']>().toEqualTypeOf<
-      Readonly<Record<'cardId', string>>
-    >();
-    expectTypeOf<EndpointRequest<typeof STATUS>['path']>().toEqualTypeOf<undefined>();
   });
 
   it('decodes the other shapes under body', async () => {

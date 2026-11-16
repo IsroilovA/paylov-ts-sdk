@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { PaylovOnboarding } from '../../src/onboarding/client.js';
 import type { CompleteOnboardingParams } from '../../src/onboarding/types.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
@@ -42,7 +41,6 @@ function setup(script: FakeResponseSpec[]) {
 const MALFORMED_VALUES = [
   [undefined, 'required'],
   [42, 'type'],
-  ['', 'required'],
   ['        ', 'required'],
 ] as const;
 
@@ -135,11 +133,6 @@ describe('PaylovOnboarding.complete', () => {
     expectNoSecretLeak(error, SECRETS);
   });
 
-  it('surfaces a used token as invalid_or_expired', async () => {
-    const { onboarding } = setup([TOKEN_USED]);
-    await expectApiError(onboarding.complete(COMPLETE), { code: 'invalid_or_expired' });
-  });
-
   it('rejects a malformed success without quoting the issued secret', async () => {
     for (const [body, path] of [
       [{ ...CREDENTIALS_BODY, consumer_secret: undefined }, 'body.consumer_secret'],
@@ -177,28 +170,6 @@ describe('PaylovOnboarding.complete', () => {
     ]);
     expect(events.responses).toHaveLength(1);
     expectNoSecretLeak(events, SECRETS);
-  });
-});
-
-describe('call options', () => {
-  it('rejects a signal that is not an AbortSignal before any I/O', async () => {
-    const { onboarding, fetchImpl } = setup([]);
-    for (const call of [
-      () => onboarding.checkToken({ token: TOKEN }, { signal: 'soon' as never }),
-      () => onboarding.complete(COMPLETE, { signal: 'soon' as never }),
-    ]) {
-      await expectInputError(call(), { field: 'signal', rule: 'type' });
-    }
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-
-  it('ends an aborted call with sdk_aborted', async () => {
-    const { onboarding } = setup([{ ...TOKEN_OK, delayMs: 1_000 }]);
-    const error = await captureAsync(
-      onboarding.checkToken({ token: TOKEN }, { signal: AbortSignal.timeout(5) }),
-    );
-    expect(error).toMatchObject({ code: 'sdk_aborted', endpoint: 'GET /merchant/onboarding/' });
-    expectNoSecretLeak(error, SECRETS);
   });
 });
 

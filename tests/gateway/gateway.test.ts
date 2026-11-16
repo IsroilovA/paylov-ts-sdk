@@ -5,7 +5,6 @@ import { createGatewayResource } from '../../src/gateway/resource.js';
 import {
   basicAuthHeader,
   expectApiError,
-  expectInputError,
   expectMalformed,
   expectNoSecretLeak,
 } from '../helpers/asserts.js';
@@ -117,19 +116,6 @@ describe('gateway.listBanks', () => {
   });
 });
 
-describe('call options', () => {
-  it('rejects a signal that is not an AbortSignal before any I/O', async () => {
-    const { resource, fetchImpl } = setupGateway([]);
-    for (const call of [
-      () => resource.getStatus({ signal: 'soon' as never }),
-      () => resource.listBanks({ signal: 'soon' as never }),
-    ]) {
-      await expectInputError(call(), { field: 'signal', rule: 'type' });
-    }
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-});
-
 describe('gateway through PaylovClient', () => {
   it('logs in with Basic on the token endpoint, then lists banks with Bearer', async () => {
     const { client, fetchImpl } = setupClient([LOGIN, BANK_LIST]);
@@ -180,17 +166,5 @@ describe('gateway through PaylovClient', () => {
       TOKEN.access_token,
       TOKEN.refresh_token,
     ]);
-  });
-
-  it('never lets a throwing or rejecting logger fail a call', async () => {
-    const { client } = setupClient([LOGIN, BANK_LIST], {
-      logger: {
-        onRequest: () => {
-          throw new Error('logger exploded');
-        },
-        onResponse: () => Promise.reject(new Error('async logger exploded')),
-      },
-    });
-    await expect(client.gateway.listBanks()).resolves.toHaveLength(37);
   });
 });

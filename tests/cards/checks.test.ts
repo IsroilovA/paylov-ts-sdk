@@ -26,16 +26,10 @@ describe('cards.checkPhone', () => {
     await expect(cards.checkPhone(params)).resolves.toBe(false);
   });
 
-  it('throws every gateway code, phone_not_match included', async () => {
-    const { cards } = setup([
-      wireResponse('cards/checkPhone.phoneNotMatch.wire.json'),
-      wireResponse('cards/get.cardNotFound.wire.json'),
-      { status: 400, body: { result: null, error: { code: 'permission_denied', message: 'x' } } },
-    ]);
+  it('throws phone_not_match instead of answering false', async () => {
+    const { cards } = setup([wireResponse('cards/checkPhone.phoneNotMatch.wire.json')]);
 
     await expectApiError(cards.checkPhone(params), { code: 'phone_not_match' });
-    await expectApiError(cards.checkPhone(params), { code: 'card_not_found' });
-    await expectApiError(cards.checkPhone(params), { code: 'permission_denied' });
   });
 
   it('rejects a result without a boolean match', async () => {

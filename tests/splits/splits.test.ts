@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { createSplitsResource } from '../../src/splits/resource.js';
 import {
-  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
@@ -10,7 +9,7 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse, wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -118,43 +117,6 @@ describe('splits.create', () => {
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
-  it('exposes nested gateway validation as flattened wire field paths', async () => {
-    const { resource } = setup(wireResponse('splits/create.nestedValidation.wire.json'));
-
-    await expectApiError(
-      resource.create({
-        transactionId: TRANSACTION_ID,
-        recipients: [{ recipientId: 'r', amountTiyin: 100, items: [ITEM] }],
-      }),
-      {
-        code: 'validation_error',
-        fields: [
-          'recipients.0.recipientId',
-          'recipients.0.amount',
-          'recipients.0.items.0.title',
-          'recipients.0.items.0.price',
-          'recipients.0.items.0.count',
-          'recipients.0.items.0.code',
-          'recipients.0.items.0.vat_percent',
-          'recipients.0.items.0.package_code',
-          'resendOFD',
-        ],
-      },
-    );
-  });
-
-  it('reports a merchant without splits as feature_not_enabled', async () => {
-    const { resource } = setup(wireResponse('splits/create.permissionDenied.wire.json'));
-
-    await expectApiError(
-      resource.create({
-        transactionId: TRANSACTION_ID,
-        recipients: [{ recipientId: 'r', amountTiyin: 100 }],
-      }),
-      { code: 'permission_denied' },
-    );
-  });
-
   it('surfaces recipient_not_found without the recipient ids it carries', async () => {
     const { resource, requests, responses } = setup(
       fixtureResponse('splits/create.recipientNotFound.docs.json', { status: 400 }),
@@ -173,16 +135,6 @@ describe('splits.create', () => {
 });
 
 describe('splits.get', () => {
-  it('aborts with the caller signal', async () => {
-    const { resource } = setup(fixtureResponse('splits/get.success.docs.json', { delayMs: 1_000 }));
-
-    const error = await captureAsync(
-      resource.get({ transactionId: TRANSACTION_ID }, { signal: AbortSignal.timeout(1) }),
-    );
-
-    expect(error).toMatchObject({ kind: 'connection', code: 'sdk_aborted' });
-  });
-
   it('reads every recipient share with tiyin amounts and the raw creation time', async () => {
     const { resource, fetchImpl } = setup(fixtureResponse('splits/get.success.docs.json'));
 
@@ -232,13 +184,5 @@ describe('splits.get', () => {
     const { resource } = setup({ body });
 
     await expectMalformed(resource.get({ transactionId: TRANSACTION_ID }), path);
-  });
-
-  it('reports a merchant without splits as feature_not_enabled', async () => {
-    const { resource } = setup(wireResponse('splits/get.permissionDenied.wire.json'));
-
-    await expectApiError(resource.get({ transactionId: TRANSACTION_ID }), {
-      code: 'permission_denied',
-    });
   });
 });

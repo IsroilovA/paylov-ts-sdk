@@ -56,16 +56,22 @@ describe('predicates', () => {
   });
 
   it('toJsonValue copies JSON trees and rejects non-JSON values', () => {
-    const tree = { a: [1, 'x', true, null, { b: 2 }] };
-    expect(toJsonValue(tree)).toEqual(tree);
-    expect(toJsonValue(tree)).not.toBe(tree);
+    const inner = { b: 2 };
+    const list: unknown[] = [1, 'x', true, null, inner];
+    const tree = { a: list };
+    const copy = toJsonValue(tree);
+    expect(copy).toEqual({ a: [1, 'x', true, null, { b: 2 }] });
+    inner.b = 3;
+    list.push('added');
+    tree.a = [];
+    expect(copy).toEqual({ a: [1, 'x', true, null, { b: 2 }] });
     for (const value of [undefined, Number.NaN, () => 1, { a: [Symbol('x')] }, { a: 1n }]) {
       expect(toJsonValue(value)).toBeUndefined();
     }
   });
 
   it('toJsonValue rejects nesting deeper than 64 levels instead of overflowing the stack', () => {
-    expect(toJsonValue(nested(64))).toBeDefined();
+    expect(toJsonValue(nested(64))).toEqual(nested(64));
     expect(toJsonValue(nested(65))).toBeUndefined();
     expect(toJsonValue(nested(20_000))).toBeUndefined();
   });

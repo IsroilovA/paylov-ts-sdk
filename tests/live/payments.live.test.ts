@@ -130,7 +130,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('payments writes', () => {
   it('getRrn reads a digit RRN for the paid payment', async () => {
     const rrn = await client.transactions.getRrn({ transactionId: paidTransactionId() });
     observe('transactions.getRrn', { length: rrn.length, digitsOnly: /^\d+$/.test(rrn) });
-    expect(rrn.length).toBeGreaterThan(0);
+    expect(/^\d+$/.test(rrn)).toBe(true);
   });
 
   it('list contains the paid payment', async () => {
