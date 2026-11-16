@@ -80,11 +80,15 @@ npm unless that version is already there, then tags `vX.Y.Z` and creates the Git
 version's `CHANGELOG.md` section. Never tag or publish by hand.
 
 1. On `dev`, set the version and move `Unreleased` `CHANGELOG.md` entries under a dated
-   `## [X.Y.Z] - YYYY-MM-DD` heading; the job fails without one.
+   `## [X.Y.Z] - YYYY-MM-DD` heading with its `[X.Y.Z]:` release link; `check:changelog` fails
+   without them.
 2. Run `npm run check`; review the packed consumer result and the complete release diff.
 3. Confirm the package contains built JavaScript and declarations, usage docs, README, CHANGELOG and
    LICENSE, and nothing else.
 4. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`.
+5. Let that run's `release` job finish before the next fast-forward. Runs on `main` queue one at a
+   time and a newer push replaces a queued one, so a version raised only in the replaced push is
+   never published.
 
 The job authenticates through npm trusted publishing: the package's npm settings trust this
 repository's `ci.yml`. It stores no token; a publish failing with `E404` or `ENEEDAUTH` means that
