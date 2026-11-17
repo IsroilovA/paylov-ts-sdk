@@ -71,7 +71,8 @@ export interface FiscalizationResource {
   /**
    * Has Paylov register a fiscal receipt with the OFD: for a paid card payment by
    * `transactionId`, or for a cash sale by `externalId` and `phoneNumber`. Moves no money. Item
-   * prices are integer tiyin; their total must equal the transaction amount.
+   * prices are integer tiyin; the lines, each `(priceTiyin - discountTiyin) * count`, must total
+   * the transaction amount.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before registering again;
    * `null` means nothing is registered yet. `ofd_check_already_generated` on a repeated call

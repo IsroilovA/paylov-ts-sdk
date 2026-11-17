@@ -30,8 +30,8 @@ checks. No money moves here. Grades: [evidence](README.md#evidence).
 
 Which payments Paylov fiscalizes itself is [OPEN Q32]: no page states automatic fiscalization (D),
 and a paid payment of the DEV merchant, which has no fiscalization, has an empty `ofd` array (W
-c125, c1300). How item amounts total is [OPEN Q80]. [Activity types](#activity-types) are
-independent of receipts.
+c125, c1300). An item line totals `(price - discount) * count` ([items](#item-object), M
+2026-11-16). [Activity types](#activity-types) are independent of receipts.
 
 Validation runs before the permission gate (W c269, c270 versus c271; c1310 versus c1301). Register,
 set-receipt, refund and activity types answer `400 permission_denied` without `data` for a merchant
@@ -60,21 +60,27 @@ both together still reached the permission gate (W c1309).
 
 Split payments use the same item object ([splits.md](splits.md)).
 
-| Name           | Type    | Required | Description                                                                                                  | Grade                     |
-| -------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| `title`        | string  | Yes      | Item name.                                                                                                   | W (c270)                  |
-| `price`        | integer | Yes      | Pre-discount price ([unit](README.md#amount-units-by-operation)); unit price or line total is [OPEN Q80].    | W (c270) required; D unit |
-| `discount`     | integer | No       | Discount ([unit](README.md#amount-units-by-operation)), at most `price`; per unit or per line is [OPEN Q80]. | W (c270) optional; M unit |
-| `count`        | integer | Yes      | Quantity, at least 1.                                                                                        | W (c270, c272)            |
-| `code`         | string  | Yes      | Unique item code (IKPU).                                                                                     | W (c270)                  |
-| `vat_percent`  | integer | Yes      | VAT percentage.                                                                                              | W (c270)                  |
-| `package_code` | string  | Yes      | Package type code.                                                                                           | W (c270)                  |
-| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                                                       | D, W (c886)               |
-| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                                                              | D, W (c886)               |
+| Name           | Type    | Required | Description                                                                          | Grade                                 |
+| -------------- | ------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------- |
+| `title`        | string  | Yes      | Item name.                                                                           | W (c270)                              |
+| `price`        | integer | Yes      | Pre-discount price of one unit ([unit](README.md#amount-units-by-operation)).        | W (c270) required; D unit; M per unit |
+| `discount`     | integer | No       | Discount on one unit ([unit](README.md#amount-units-by-operation)), at most `price`. | W (c270) optional; M unit; M per unit |
+| `count`        | integer | Yes      | Quantity, at least 1.                                                                | W (c270, c272)                        |
+| `code`         | string  | Yes      | Unique item code (IKPU).                                                             | W (c270)                              |
+| `vat_percent`  | integer | Yes      | VAT percentage.                                                                      | W (c270)                              |
+| `package_code` | string  | Yes      | Package type code.                                                                   | W (c270)                              |
+| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                               | D, W (c886)                           |
+| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                                      | D, W (c886)                           |
 
 The [vendor item table](../vendor/paylov/subscribe/ofd/register.md#item-object-inside-items) gives
 no `discount` unit, only that it "Cannot exceed the price" (D, all locales); a comparison with the
 tiyin `price` holds only in tiyin, so `discount` is tiyin (M 2026-11-15).
+
+No page states how items total for the `invalid_amount` check ("The total price of items does not
+match the transaction amount", D), and DEV rejects register for the merchant (W c271), so no total
+was observed. The table describes "the item" with a `count` "Quantity of the item", and caps the
+discount at "the price", so `price` is the unit price and `discount` applies per unit: a line totals
+`(price - discount) * count`, and the lines sum to the transaction amount (M 2026-11-16).
 
 Each item carries exactly one of `pinfl` and `tin` (D). An otherwise valid item with neither got
 `validation_error`

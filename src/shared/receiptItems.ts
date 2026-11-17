@@ -9,13 +9,12 @@ import type { Params } from '../core/params.js';
 export interface FiscalReceiptItemBase {
   /** Item name as it appears on the fiscal receipt. */
   readonly title: string;
-  // Unit price or line total, and discount per unit or per line, are [OPEN Q80].
-  /** Integer tiyin. Paylov does not document whether this is the unit price or the line total. */
-  readonly priceTiyin: number;
   /**
-   * Integer tiyin; Paylov allows at most `priceTiyin`. Paylov does not document whether it applies
-   * per unit or to the whole line.
+   * Integer tiyin, the price of one unit before discount. The SDK assumes a line totals
+   * `(priceTiyin - discountTiyin) * count`; Paylov documents no formula.
    */
+  readonly priceTiyin: number;
+  /** Integer tiyin off each unit; Paylov allows at most `priceTiyin`. */
   readonly discountTiyin?: number;
   /** Integer quantity; Paylov answers `validation_error` below 1. */
   readonly count: number;

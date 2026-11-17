@@ -36,10 +36,10 @@ try {
   and `phoneNumber`.
 - Store every `receiptId` (a number) with its `transactionId` or `externalId`: refunds and recovery
   need it.
-- Use `count: 1` per item, with any `discountTiyin` on that item: Paylov does not document whether
-  `priceTiyin` is the unit price or the line total, or whether a discount applies per unit or to the
-  line, and with `count: 1` every reading gives the same total. Verify any other count on the
-  development gateway first. Paylov states no unit for the discount; the SDK sends tiyin.
+- `priceTiyin` is the price of one unit and `discountTiyin` comes off each unit, so a line totals
+  `(priceTiyin - discountTiyin) * count`; the lines must add up to the transaction amount, else
+  `invalid_amount`. Paylov documents no formula or discount unit: this is the SDK's reading, and the
+  SDK sends tiyin.
 - Paylov does not document which payments it fiscalizes itself; agree it with Paylov as part of your
   merchant setup. `attachReceipt` needs client-side fiscalization. The SDK cannot tell which
   applies: read `getReceipt` before registering.

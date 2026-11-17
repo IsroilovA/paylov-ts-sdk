@@ -40,18 +40,6 @@ The docs say to resend when the response lacks OFD data, yet the documented succ
 (D); item validation matches OFD register (W c220), and splits answer `permission_denied` on the DEV
 merchant (W c1452). Page: [Splits](splits.md).
 
-## Q80
-
-How does Paylov total an OFD item for the `invalid_amount` check: is `price` the unit price or the
-line total, and does `discount` apply per unit or to the whole line?
-
-`price` is the pre-discount price in tiyin, `discount` "Cannot exceed the price", `count` is
-quantity, and `invalid_amount` means "The total price of items does not match the transaction
-amount" (D). The discount unit is assumed tiyin (M 2026-11-15). The readings
-`price * count - discount`, `(price - discount) * count` and `price - discount` agree only at
-`count: 1`; the discount cap fits the last two best. DEV rejects register for the merchant (W c271),
-so no total was probed. Page: [Fiscalization](fiscalization.md#item-object).
-
 ## Q86
 
 Which `getTransactions` status does each of these read, and is it the same on production as on DEV:

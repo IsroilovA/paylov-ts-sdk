@@ -3,6 +3,14 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Fiscal receipt items document `priceTiyin` as the unit price and `discountTiyin` as a per-unit
+  discount: a line totals `(priceTiyin - discountTiyin) * count`. This is the SDK's reading; Paylov
+  documents no formula.
+
 ## [0.0.1] - 2026-11-16
 
 Initial release. Documented in [`docs/usage/`](docs/usage/INDEX.md).
