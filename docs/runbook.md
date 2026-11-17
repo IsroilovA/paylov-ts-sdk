@@ -90,9 +90,11 @@ version's `CHANGELOG.md` section. Never tag or publish by hand.
    time and a newer push replaces a queued one, so a version raised only in the replaced push is
    never published.
 
-The job authenticates through npm trusted publishing: the package's npm settings trust this
-repository's `ci.yml`. It stores no token; a publish failing with `E404` or `ENEEDAUTH` means that
-trust is missing or names another repository or workflow.
+The job authenticates through npm trusted publishing and stores no token. The package's npm trusted
+publisher names GitHub Actions, `IsroilovA/paylov-ts-sdk`, workflow `ci.yml`, no environment, and
+allows `npm publish`; without that permission it may only stage publishes and the job fails. A
+publish failing with `E404` or `ENEEDAUTH` means that trust is missing or names another repository,
+workflow or environment.
 
 ## Troubleshooting
 
