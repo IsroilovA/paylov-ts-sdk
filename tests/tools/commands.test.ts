@@ -66,6 +66,20 @@ it('reports usage index gaps as a failing check', () => {
   });
 });
 
+it('checks links in maintained Markdown but not in the vendor mirror', () => {
+  const files = {
+    'package.json': JSON.stringify({ files: ['docs/usage'] }),
+    'docs/paylov/cards.md': '[holds](holds.md)\n',
+    'docs/vendor/paylov/cards.md': '[holds](holds.md)\n',
+  };
+  withCheckout(files, (directory) => {
+    const { status, stderr } = run(directory, ['scripts/checkDocLinks.mjs']);
+    expect(status).toBe(1);
+    expect(stderr).toContain('docs/paylov/cards.md: holds.md names a missing file');
+    expect(stderr).not.toContain('docs/vendor/');
+  });
+});
+
 it('reports runtime dependencies as a failing check', () => {
   const files = {
     'package.json': JSON.stringify({ dependencies: { typescript: '*' } }),

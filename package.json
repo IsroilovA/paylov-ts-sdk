@@ -61,7 +61,7 @@
     "check:architecture": "node scripts/checkArchitecture.mjs",
     "check:dependencies": "node scripts/checkDependencies.mjs",
     "check:changelog": "node scripts/checkChangelog.mjs",
-    "check:docs": "node scripts/checkDocSurface.mjs",
+    "check:docs": "node scripts/checkDocSurface.mjs && node scripts/checkDocLinks.mjs",
     "check:secrets": "node scripts/checkSecrets.mjs",
     "check:package": "node scripts/checkPackage.mjs",
     "check": "npm run check:static && npm run check:runtime",
