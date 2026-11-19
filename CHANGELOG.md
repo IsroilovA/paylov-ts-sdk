@@ -3,6 +3,13 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] - 2026-11-19
+
+### Changed
+
+- Published from the repository's `release.yml` workflow, which its npm provenance now names. The
+  package contents are unchanged.
+
 ## [0.0.2] - 2026-11-19
 
 ### Changed
@@ -39,5 +46,6 @@ Initial release. Documented in [`docs/usage/`](docs/usage/INDEX.md).
   scripts every client and onboarding method and records each request, and `createWebhookRequest`
   for authenticated webhook requests.
 
+[0.0.3]: https://github.com/IsroilovA/paylov-ts-sdk/releases/tag/v0.0.3
 [0.0.2]: https://github.com/IsroilovA/paylov-ts-sdk/releases/tag/v0.0.2
 [0.0.1]: https://github.com/IsroilovA/paylov-ts-sdk/releases/tag/v0.0.1
