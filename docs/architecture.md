@@ -97,7 +97,6 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 
 ## Transport
 
-- `baseUrl` has no default host.
 - Failure retries are GET-only. POST and DELETE never retry: a lost response does not prove the
   operation did not execute.
 - Nothing retries a 429: the gateway asks for tens of seconds, so callers read `retryAfterSeconds`.
@@ -145,13 +144,11 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 
 ## Holds and recovery
 
-- Capture is single-use and may be partial; the remainder can then be neither captured nor released
-  through the API, and is treated as released to the cardholder by Paylov and the card's bank (M,
-  [holds](paylov/holds.md#charge)). Callers keep the original held amount.
-- Dismiss is the only documented release, so it is the proof of release: callers release every hold
-  they will not capture, also after it expires, and `hold_not_found` reads as nothing left to
-  release (M, [holds](paylov/holds.md#dismiss)). No expiry-based release is inferred from status
-  reads, which kept reporting expired holds as held on DEV.
+- A partial capture's remainder counts as released ([holds](paylov/holds.md#charge)); callers keep
+  the original held amount.
+- Dismiss is the only proof of release ([holds](paylov/holds.md#dismiss)): callers release every
+  hold they will not capture, also after it expires. Release is never inferred from expiry or status
+  reads.
 - Nothing that moves money is retried automatically. After an ambiguous failure callers reconcile
   through a read and retry with the same `externalId` or `transactionId`
   ([usage/errors.md](usage/errors.md#recovery-after-an-ambiguous-failure)).

@@ -58,7 +58,8 @@ The guides ship in the package under `docs/usage/`. Method contracts are in the 
 - [Errors](docs/usage/errors.md): branching on failures and recovery after an ambiguous one.
 - [Webhooks](docs/usage/webhooks.md): receiving and answering Paylov callbacks.
 - [Testing](docs/usage/testing.md): the in-memory gateway and webhook requests.
-- [Examples](examples/): runnable checkout and hold-capture flows.
+- [Examples](https://github.com/IsroilovA/paylov-ts-sdk/tree/main/examples): runnable checkout and
+  hold-capture flows.
 
 Paylov's own references: the [sandbox](https://sandbox.paylov.uz/) and the
 [developer docs](https://developer.paylov.uz/).
@@ -66,15 +67,13 @@ Paylov's own references: the [sandbox](https://sandbox.paylov.uz/) and the
 ## Status
 
 Pre-1.0: any release may contain breaking changes, listed in the [changelog](CHANGELOG.md). Where
-Paylov leaves behavior undocumented, the SDK does not guess; those gaps are tracked as
-[open questions](docs/paylov/open-questions.md).
+Paylov leaves behavior undocumented, the SDK does not guess.
 
 ## Contributing
 
-The repository also holds the Paylov protocol notes the SDK implements
-([`docs/paylov/`](docs/paylov/README.md)), the [architecture](docs/architecture.md), and the
-contributor guide ([`AGENTS.md`](AGENTS.md) and the [runbook](docs/runbook.md)). Report
-vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
+Development happens in the [GitHub repository](https://github.com/IsroilovA/paylov-ts-sdk). Report
+vulnerabilities privately as described in the
+[security policy](https://github.com/IsroilovA/paylov-ts-sdk/blob/main/SECURITY.md).
 
 ## License
 

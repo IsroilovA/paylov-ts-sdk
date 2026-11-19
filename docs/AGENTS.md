@@ -2,9 +2,9 @@ Repository documentation.
 
 ## Owners
 
-- [`paylov/`](paylov/): how Paylov works as a whole, for SDK users (often agents) and maintainers:
-  flows, wire facts, units, codes, evidence, and deviations from the vendor docs. Unresolved
-  behavior lives in `paylov/open-questions.md`. Consult it before re-researching Paylov.
+- [`paylov/`](paylov/): how Paylov works as a whole, for SDK maintainers and contributors: flows,
+  wire facts, units, codes, evidence, and deviations from the vendor docs. Unresolved behavior lives
+  in `paylov/open-questions.md`. Consult it before re-researching Paylov.
 - [`vendor/paylov/`](vendor/paylov/): verbatim mirror of the official developer docs, replaced
   wholesale through the `sync-paylov-reference` skill. Never edit it by hand; add no guide inside
   it.
@@ -25,6 +25,7 @@ Repository documentation.
   prevents a wrong fix, and procedures.
 - `paylov/` records Paylov behavior in full, not SDK design. Every fact carries an evidence grade
   from [`paylov/README.md`](paylov/README.md#evidence); record observations apart from contract.
+- The root `README.md` serves SDK users: it links only to shipped files or absolute URLs.
 - Usage pages stay short and indexed in `usage/INDEX.md`. They cover what types and JSDoc cannot:
   call order, recovery, units, and pitfalls. They import from the package root, use
   `https://gateway.example` with named credential variables, and link only to shipped files.
