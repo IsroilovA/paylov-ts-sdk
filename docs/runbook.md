@@ -75,9 +75,10 @@ enter the repository.
 
 ## Release
 
-Pushing to `main` releases: once CI passes, its `release` job publishes `package.json`'s version to
-npm unless that version is already there, then tags `vX.Y.Z` and creates the GitHub release from the
-version's `CHANGELOG.md` section. Never tag or publish by hand.
+Pushing to `main` releases: [`release.yml`](../.github/workflows/release.yml) runs the CI checks,
+then publishes `package.json`'s version to npm unless that version is already there, then tags
+`vX.Y.Z` and creates the GitHub release from the version's `CHANGELOG.md` section. Never tag or
+publish by hand.
 
 1. On `dev`, set the version and move `Unreleased` `CHANGELOG.md` entries under a dated
    `## [X.Y.Z] - YYYY-MM-DD` heading with its `[X.Y.Z]:` release link; `check:changelog` fails
@@ -85,14 +86,12 @@ version's `CHANGELOG.md` section. Never tag or publish by hand.
 2. Run `npm run check` and review the complete release diff and the packed file list: built
    JavaScript and declarations, usage docs, `package.json`, README, CHANGELOG and LICENSE, and
    nothing else.
-3. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`.
-4. Let that run's `release` job finish before the next fast-forward. Runs on `main` queue one at a
-   time and a newer push replaces a queued one, so a version raised only in the replaced push is
-   never published.
+3. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`. Release
+   runs queue in push order, so the next fast-forward need not wait.
 
 The job authenticates through npm trusted publishing and stores no token. The package's npm trusted
-publisher names GitHub Actions, `IsroilovA/paylov-ts-sdk`, workflow `ci.yml`, no environment, and
-allows `npm publish`; without that permission it may only stage publishes and the job fails. A
+publisher names GitHub Actions, `IsroilovA/paylov-ts-sdk`, workflow `release.yml`, no environment,
+and allows `npm publish`; without that permission it may only stage publishes and the job fails. A
 publish failing with `E404` or `ENEEDAUTH` means that trust is missing or names another repository,
 workflow or environment.
 
