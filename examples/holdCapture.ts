@@ -11,7 +11,7 @@
  */
 
 // In your own code this is `from '@isroilov_an/paylov'`; in-repo it resolves to the same entry point.
-import { formatSum, isPaylovApiError, PaylovClient } from '../src/index.js';
+import { formatSum, isPaylovApiError, PaylovClient, readHoldState } from '../src/index.js';
 
 // No fallbacks: a default here would become the credential of every copy of this file.
 function requiredEnv(name: string): string {
@@ -44,10 +44,19 @@ try {
     durationMinutes: 10,
     externalId,
   });
-  console.log('hold created: %s', hold.transactionId);
+  console.log(
+    'hold created: %s, capture before %s',
+    hold.transactionId,
+    hold.clientCaptureDeadline.toISOString(),
+  );
 
   const status = await paylov.holds.get({ externalId });
-  console.log('status=%s amount=%s SUM', status?.status, formatSum(status?.amountTiyin ?? 0));
+  const state = readHoldState({
+    hold: status,
+    clientCaptureDeadline: hold.clientCaptureDeadline,
+    now: new Date(),
+  });
+  console.log('state=%s amount=%s SUM', state.kind, formatSum(status?.amountTiyin ?? 0));
 
   if (capture) {
     // Capture is single-use: the remainder cannot be captured later, and the SDK assumes Paylov

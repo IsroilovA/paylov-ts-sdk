@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
+import { ENDPOINTS as CARD_ENDPOINTS } from '../../src/cards/resource.js';
+import { ENDPOINTS as AUTH_ENDPOINTS } from '../../src/core/auth.js';
+import { normalizeResponse } from '../../src/core/envelope.js';
+import type { Endpoint } from '../../src/core/types.js';
+import { ENDPOINTS as FISCALIZATION_ENDPOINTS } from '../../src/fiscalization/resource.js';
+import { ENDPOINTS as GATEWAY_ENDPOINTS } from '../../src/gateway/resource.js';
+import { ENDPOINTS as HOLD_ENDPOINTS } from '../../src/holds/resource.js';
+import { ENDPOINTS as ONBOARDING_ENDPOINTS } from '../../src/onboarding/client.js';
+import { ENDPOINTS as PAYMENT_ENDPOINTS } from '../../src/payments/resource.js';
+import { ENDPOINTS as SPLIT_ENDPOINTS } from '../../src/splits/resource.js';
+import { ENDPOINTS as SUB_MERCHANT_ENDPOINTS } from '../../src/subMerchants/resource.js';
+import { ENDPOINTS as TRANSACTION_ENDPOINTS } from '../../src/transactions/resource.js';
 import {
   PaylovApiError,
   PaylovConnectionError,
@@ -11,6 +23,7 @@ import {
   isPaylovError,
   isPaylovOutcomeUnknown,
 } from '../../src/core/errors.js';
+import { capture } from '../helpers/asserts.js';
 
 const ENDPOINT = 'POST /merchant/receipts/create/';
 
@@ -92,7 +105,16 @@ describe('toJSON', () => {
       httpStatus: 400,
       endpoint: ENDPOINT,
       fields: ['items.0.title'],
+      isUnsettled: false,
     });
+    expect(
+      new PaylovApiError({
+        code: 'processing_error',
+        httpStatus: 400,
+        endpoint: ENDPOINT,
+        isUnsettled: true,
+      }).toJSON(),
+    ).toMatchObject({ isUnsettled: true });
     expect(
       new PaylovApiError({
         code: 'rate_limit_exceeded',
@@ -181,6 +203,33 @@ describe('isPaylovOutcomeUnknown', () => {
   });
 });
 
+function apiErrorOf(code: string, isUnsettled: boolean): PaylovApiError {
+  return new PaylovApiError({ code, httpStatus: 400, endpoint: ENDPOINT, isUnsettled });
+}
+
+describe('isPaylovOutcomeUnknown for a 4xx gateway error', () => {
+  it('reads the error as unknown exactly when the endpoint left it unsettled', () => {
+    expect(isPaylovOutcomeUnknown(apiErrorOf('processing_error', true))).toBe(true);
+    expect(isPaylovOutcomeUnknown(apiErrorOf('processing_error', false))).toBe(false);
+  });
+
+  it('counts HTTP 500 and above as unsettled for any code', () => {
+    const error = new PaylovApiError({ code: 'server_error', httpStatus: 502, endpoint: ENDPOINT });
+    expect(error.isUnsettled).toBe(true);
+    expect(isPaylovOutcomeUnknown(error)).toBe(true);
+  });
+
+  it('defaults isUnsettled to false for an error built without it', () => {
+    const error = new PaylovApiError({
+      code: 'processing_error',
+      httpStatus: 400,
+      endpoint: ENDPOINT,
+    });
+    expect(error.isUnsettled).toBe(false);
+    expect(isPaylovOutcomeUnknown(error)).toBe(false);
+  });
+});
+
 describe('isPaylovApiError', () => {
   const error: unknown = new PaylovApiError({
     code: 'insufficient_funds',
@@ -195,5 +244,49 @@ describe('isPaylovApiError', () => {
     expect(isPaylovApiError(error, 'card_not_found')).toBe(false);
     expect(isPaylovApiError(invalidInput('m', 'f', 'type'))).toBe(false);
     expect(isPaylovApiError({ code: 'insufficient_funds' })).toBe(false);
+  });
+});
+
+describe('unsettled codes', () => {
+  it('leave exactly the money-moving operations unknown, except processing_error on pay', () => {
+    const tables: Readonly<Record<string, Readonly<Record<string, Endpoint>>>> = {
+      cards: CARD_ENDPOINTS,
+      fiscalization: FISCALIZATION_ENDPOINTS,
+      gateway: GATEWAY_ENDPOINTS,
+      holds: HOLD_ENDPOINTS,
+      payments: PAYMENT_ENDPOINTS,
+      splits: SPLIT_ENDPOINTS,
+      subMerchants: SUB_MERCHANT_ENDPOINTS,
+      transactions: TRANSACTION_ENDPOINTS,
+      onboarding: ONBOARDING_ENDPOINTS,
+      auth: AUTH_ENDPOINTS,
+    };
+    const generic = ['processing_error', 'unknown_error', 'error_at_pay'];
+    const specific = ['insufficient_funds', 'hold_time_expired', 'transaction_already_payed'];
+    const unsettledCodesOf = (endpoint: Endpoint): string[] =>
+      [...generic, ...specific].filter((code) => {
+        const body = { result: null, error: { code, message: 'declined' } };
+        const error = capture(() =>
+          normalizeResponse(body, { endpoint: ENDPOINT, httpStatus: 400 }, endpoint, null),
+        );
+        return error instanceof PaylovApiError && error.isUnsettled;
+      });
+    const declared = Object.fromEntries(
+      Object.entries(tables).flatMap(([feature, table]) =>
+        Object.entries(table).flatMap(([name, endpoint]) => {
+          const codes = unsettledCodesOf(endpoint);
+          return codes.length === 0 ? [] : [[`${feature}.${name}`, codes]];
+        }),
+      ),
+    );
+    expect(declared).toEqual({
+      'holds.capture': generic,
+      'holds.create': generic,
+      'holds.release': generic,
+      'payments.confirmPanPayment': generic,
+      'payments.pay': ['unknown_error', 'error_at_pay'],
+      'payments.refund': generic,
+      'splits.create': generic,
+    });
   });
 });

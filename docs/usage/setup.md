@@ -63,12 +63,14 @@ try {
 
 - **Deadlines.** `timeoutMs` bounds one HTTP attempt (`sdk_timeout`). A call's `{ signal }` bounds
   the whole call: attempts, backoff and the token wait (`sdk_aborted`, never retried). A GET can
-  make up to four attempts, so pass a `signal` for a real deadline. A timed-out POST, or one aborted
-  after it was sent, has an unknown outcome
+  make `maxGetRetries` + 2 attempts (four by default, with the token replay), so pass a `signal` for
+  a real deadline. A timed-out POST, or one aborted after it was sent, has an unknown outcome
   ([errors.md](errors.md#recovery-after-an-ambiguous-failure)); an abort before anything was sent
   reports `isSent: false`.
-- **Retries.** Only GETs retry: at most twice, after a network error, a timeout or HTTP
-  500/502/503/504. POST and DELETE never retry. Nothing retries a 429: wait `retryAfterSeconds`.
+- **Retries.** Only GETs retry: `maxGetRetries` times (an integer from 0 to 5, default 2), after a
+  network error, a timeout or HTTP 500/502/503/504, with a jittered backoff of up to 200 ms that
+  doubles per retry. POST and DELETE never retry, whatever `maxGetRetries` says. Nothing retries a
+  429: wait `retryAfterSeconds`.
 - **Tokens.** Acquired lazily on the first authenticated call, shared by concurrent calls and
   refreshed before expiry. After a 401 `permission_denied` the client fetches a new token and
   replays the call once.
@@ -81,5 +83,7 @@ try {
 - **Redirects** are not followed.
 - **Logger.** `onRequest` and `onResponse` receive metadata for every attempt, token requests
   included. Hooks are not awaited and their failures are discarded.
+- **Clock.** `now` (default the system clock) drives token expiry and `holds.create`'s
+  `clientCaptureDeadline`. Inject it in tests instead of mocking `Date`.
 - **`fetch`.** Inject a `fetch` to route through a proxy or for tests ([testing.md](testing.md)).
-  `PaylovOnboarding` takes the same `timeoutMs`, `fetch` and `logger`.
+  `PaylovOnboarding` takes the same `timeoutMs`, `maxGetRetries`, `fetch` and `logger`.

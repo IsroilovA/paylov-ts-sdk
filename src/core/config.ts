@@ -2,7 +2,7 @@
 
 import { configError } from './errors.js';
 import { isRecord } from './decoding.js';
-import type { HttpClientConfig } from './http.js';
+import { MAX_GET_RETRIES, type HttpClientConfig } from './http.js';
 import type { Params } from './params.js';
 import type { FetchLike, PaylovLogger, PaylovTransportConfig } from './types.js';
 
@@ -24,9 +24,10 @@ function assertLogger(value: unknown): asserts value is PaylovLogger {
   }
 }
 
-/** `timeoutMs`, `fetch` and `logger` from a configuration; only the options given. */
+/** The shared transport options from a configuration; only the options given. */
 function readTransportConfig(config: Params): PaylovTransportConfig {
   const timeoutMs = config.optionalInteger('timeoutMs', { min: 1, max: MAX_TIMEOUT_MS });
+  const maxGetRetries = config.optionalInteger('maxGetRetries', { min: 0, max: MAX_GET_RETRIES });
   const fetch = config.raw('fetch');
   if (fetch !== undefined && !isFetchLike(fetch)) {
     throw configError('fetch must be a function', 'fetch', 'type');
@@ -35,37 +36,17 @@ function readTransportConfig(config: Params): PaylovTransportConfig {
   if (logger !== undefined) assertLogger(logger);
   return {
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxGetRetries !== undefined ? { maxGetRetries } : {}),
     ...(fetch !== undefined ? { fetch } : {}),
     ...(logger !== undefined ? { logger } : {}),
   };
 }
 
 /**
- * A bare `https` origin. Every path starts with `/merchant/`, so a `.../merchant` base would
- * request `/merchant/merchant/...`; every call carries credentials, so cleartext is refused.
- * Credentials, a query or a fragment are checked on the text as given, before normalization.
+ * The transport of a network surface: its `baseUrl` origin and its transport options. Every path
+ * starts with `/merchant/`, so a `.../merchant` base would request `/merchant/merchant/...`; every
+ * call carries credentials, so cleartext is refused.
  */
-function readHttpsOrigin(config: Params, key: string): string {
-  const text = config.string(key).trim();
-  const url = URL.parse(text);
-  if (url === null || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
-    throw configError(`${key} must be an absolute https URL`, key, 'format');
-  }
-  if (url.protocol !== 'https:') throw configError(`${key} must use https`, key, 'format');
-  if (url.username !== '' || url.password !== '' || /[?#]/.test(text)) {
-    throw configError(`${key} must not include credentials, a query or a fragment`, key, 'format');
-  }
-  if (url.pathname !== '/') {
-    throw configError(
-      `${key} must be an origin without a path, e.g. https://dev.gw.paylov.uz`,
-      key,
-      'format',
-    );
-  }
-  return url.origin;
-}
-
-/** The transport of a network surface: its `baseUrl` origin and its transport options. */
 export function readSurfaceTransport(config: Params): HttpClientConfig {
-  return { origin: readHttpsOrigin(config, 'baseUrl'), ...readTransportConfig(config) };
+  return { origin: config.httpsOrigin('baseUrl'), ...readTransportConfig(config) };
 }

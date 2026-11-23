@@ -6,9 +6,10 @@ import {
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
+  recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse, loadWire, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const RECEIPT_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -285,6 +286,126 @@ describe('transactions.list', () => {
     const { resource } = setup([{ body: { result: { transactions: [] }, error: null } }]);
 
     await expectMalformed(resource.list(), 'result.totalTransaction');
+  });
+});
+
+function listPage(total: number, rows: readonly Record<string, unknown>[]): FakeResponseSpec {
+  return { body: { result: { totalTransaction: total, transactions: rows }, error: null } };
+}
+
+function idsOf(rows: readonly Record<string, unknown>[]): unknown[] {
+  return rows.map((row) => row['id']);
+}
+
+async function collectIds(
+  iterable: AsyncIterable<{ readonly transactionId: string }>,
+): Promise<string[]> {
+  const seen: string[] = [];
+  for await (const transaction of iterable) seen.push(transaction.transactionId);
+  return seen;
+}
+
+describe('transactions.iterate', () => {
+  // Rows replayed from the paid-list recording, split into synthesized pages: the page size is
+  // undocumented, so the iterator must rely only on `total`, empty pages and fresh rows.
+  const recorded = recordOf(recordOf(loadWire('transactions/list.paid.wire.json').body)['result']);
+  const ROWS = (Array.isArray(recorded['transactions']) ? recorded['transactions'] : []).map(
+    recordOf,
+  );
+  it('fetches pages in order until the rows seen reach the total', async () => {
+    const { resource, fetchImpl } = setup([
+      listPage(6, ROWS.slice(0, 4)),
+      listPage(6, ROWS.slice(4)),
+    ]);
+
+    const seen = await collectIds(
+      resource.iterate({ fromDate: '2026-11-01', toDate: '2026-11-30' }),
+    );
+
+    expect(seen).toEqual(idsOf(ROWS));
+    expect(fetchImpl.calls.map((call) => call.url)).toEqual([
+      `${BASE_URL}/merchant/getTransactions/?beginDate=2026-11-01&endDate=2026-11-30&page=1`,
+      `${BASE_URL}/merchant/getTransactions/?beginDate=2026-11-01&endDate=2026-11-30&page=2`,
+    ]);
+  });
+
+  it('stops at an empty page even when the total says more', async () => {
+    const { resource, fetchImpl } = setup([listPage(9, ROWS.slice(0, 3)), listPage(9, [])]);
+
+    expect(await collectIds(resource.iterate())).toEqual(idsOf(ROWS.slice(0, 3)));
+    expect(fetchImpl.calls).toHaveLength(2);
+  });
+
+  it('makes one request for an empty range', async () => {
+    const { resource, fetchImpl } = setup([listPage(0, [])]);
+
+    expect(await collectIds(resource.iterate())).toEqual([]);
+    expect(fetchImpl.calls).toHaveLength(1);
+  });
+
+  it('yields a row that shifted onto the next page once', async () => {
+    // A payment arriving between requests pushes the last row of page 1 onto page 2.
+    const { resource } = setup([
+      listPage(6, ROWS.slice(0, 3)),
+      listPage(6, ROWS.slice(2, 5)),
+      listPage(6, ROWS.slice(5)),
+    ]);
+
+    expect(await collectIds(resource.iterate())).toEqual(idsOf(ROWS));
+  });
+
+  it('reads on past one page of only seen rows, as a full page of new payments leaves', async () => {
+    // Three payments arrive after page 1, so page 2 repeats it; page 3 then holds the rest.
+    const { resource } = setup([
+      listPage(6, ROWS.slice(0, 3)),
+      listPage(9, ROWS.slice(0, 3)),
+      listPage(9, ROWS.slice(3)),
+      listPage(9, []),
+    ]);
+
+    expect(await collectIds(resource.iterate())).toEqual(idsOf(ROWS));
+  });
+
+  it('fails instead of looping when two pages in a row bring no new rows', async () => {
+    const { resource, fetchImpl } = setup([
+      listPage(6, ROWS.slice(0, 3)),
+      listPage(6, ROWS.slice(0, 3)),
+      listPage(6, ROWS.slice(0, 3)),
+    ]);
+
+    await expectMalformed(collectIds(resource.iterate()), 'result.transactions');
+    expect(fetchImpl.calls).toHaveLength(3);
+  });
+
+  it('checks params when called, before any request', async () => {
+    const { resource, fetchImpl } = setup([]);
+
+    await expectInputError(
+      // @ts-expect-error malformed JavaScript input
+      () => resource.iterate({ fromDate: 20261101 }),
+      { field: 'fromDate', rule: 'type' },
+    );
+    expect(fetchImpl.calls).toHaveLength(0);
+  });
+
+  it('stops with sdk_aborted once the signal fires between pages', async () => {
+    const controller = new AbortController();
+    const { resource, fetchImpl } = setup([
+      listPage(6, ROWS.slice(0, 3)),
+      listPage(6, ROWS.slice(3)),
+    ]);
+    const seen: string[] = [];
+
+    const loop = (async () => {
+      for await (const transaction of resource.iterate({}, { signal: controller.signal })) {
+        seen.push(transaction.transactionId);
+        if (seen.length === 3) controller.abort();
+      }
+    })();
+
+    await expect(loop).rejects.toMatchObject({ code: 'sdk_aborted', isSent: false });
+    expect(seen).toEqual(idsOf(ROWS.slice(0, 3)));
+    expect(fetchImpl.calls).toHaveLength(1);
   });
 });
 

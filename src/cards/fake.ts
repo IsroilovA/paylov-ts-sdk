@@ -1,5 +1,6 @@
 import {
   optionalEntry,
+  type FakeCodec,
   type FakeRequest,
   type PaylovFakeSurface,
   type Scripter,
@@ -138,6 +139,16 @@ function decodeCheckPhoneRequest({ body }: FakeRequest): CheckCardPhoneParams {
   return { cardId: body.string('cardId'), phoneNumber: body.string('phoneNumber') };
 }
 
+export const CARD_CODECS: {
+  readonly get: FakeCodec<Card, GetCardParams>;
+  readonly list: FakeCodec<readonly Card[], ListCardsParams>;
+  readonly delete: FakeCodec<void, DeleteCardParams>;
+} = {
+  get: { encode: encodeFetchedCard, decodeRequest: decodeGetRequest },
+  list: { encode: encodeCardList, decodeRequest: decodeListRequest },
+  delete: { encode: encodeTrue, decodeRequest: decodeDeleteRequest },
+};
+
 export function createCardsFake(
   script: Scripter<'cards', CardsResource>,
 ): PaylovFakeSurface<CardsResource> {
@@ -166,9 +177,19 @@ export function createCardsFake(
       encodeConfirmedCard,
       decodeConfirmPanBindingRequest,
     ),
-    get: script('cards.get', ENDPOINTS.get, encodeFetchedCard, decodeGetRequest),
-    list: script('cards.list', ENDPOINTS.list, encodeCardList, decodeListRequest),
-    delete: script('cards.delete', ENDPOINTS.delete, encodeTrue, decodeDeleteRequest),
+    get: script('cards.get', ENDPOINTS.get, CARD_CODECS.get.encode, CARD_CODECS.get.decodeRequest),
+    list: script(
+      'cards.list',
+      ENDPOINTS.list,
+      CARD_CODECS.list.encode,
+      CARD_CODECS.list.decodeRequest,
+    ),
+    delete: script(
+      'cards.delete',
+      ENDPOINTS.delete,
+      CARD_CODECS.delete.encode,
+      CARD_CODECS.delete.decodeRequest,
+    ),
     checkPhone: script(
       'cards.checkPhone',
       ENDPOINTS.checkPhone,

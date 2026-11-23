@@ -1,11 +1,11 @@
 /** Authenticated webhook requests for testing a `PaylovWebhookReceiver` integration. */
 
 import { encodeWebhookEvent } from '../webhooks/fake.js';
-import type { PaylovWebhookReceiverConfig, WebhookEvent, WebhookInput } from '../webhooks/types.js';
+import type { PaylovWebhookCredentials, WebhookEvent, WebhookInput } from '../webhooks/types.js';
 
 /**
- * The request Paylov would send for `event`, authenticated with the receiver's credentials, so
- * `receiver.receive(request)` returns `event`. Change the result to cover the `invalid`
+ * The request Paylov would send for `event`, authenticated with one of the receiver's credential
+ * pairs, so `receiver.receive(request)` returns `event` with that pair's `credentialIndex`. Change the result to cover the `invalid`
  * outcomes. Throws `TypeError` for a time the wire cannot carry (sub-second or before 1970).
  *
  * @example
@@ -24,7 +24,7 @@ import type { PaylovWebhookReceiverConfig, WebhookEvent, WebhookInput } from '..
  */
 export function createWebhookRequest(
   event: WebhookEvent,
-  credentials: PaylovWebhookReceiverConfig,
+  credentials: PaylovWebhookCredentials,
 ): WebhookInput {
   const pair = `${credentials.login}:${credentials.password}`;
   const authorization = `Basic ${Buffer.from(pair, 'utf8').toString('base64')}`;

@@ -23,8 +23,9 @@ import {
 } from '@isroilov_an/paylov';
 
 const receiver = new PaylovWebhookReceiver({
-  login: webhookLoginFromSecretManager, // no ':'
-  password: webhookPasswordFromSecretManager,
+  credentials: [
+    { login: webhookLoginFromSecretManager, password: webhookPasswordFromSecretManager },
+  ],
 });
 
 export interface WebhookReply {
@@ -71,6 +72,24 @@ the payment is applied; if applying fails, let the handler fail rather than answ
 Pass `body` already read: JSON text, bytes (`Uint8Array`, `Buffer` or `ArrayBuffer`), or the value a
 JSON body parser produced. An unread stream, such as a Fetch `Request`'s `body`, or a `Blob` answers
 `malformed_body`.
+
+## Rotate credentials
+
+List every pair Paylov may currently send, at least one; logins carry no `:`. During a rotation,
+configure the old and the new pair, ask Paylov to switch, and remove the old pair once
+`event.credentialIndex` (its position in the list) shows only the new one:
+
+```ts
+const rotating = new PaylovWebhookReceiver({
+  credentials: [
+    { login: oldWebhookLogin, password: oldWebhookPassword },
+    { login: newWebhookLogin, password: newWebhookPassword },
+  ],
+});
+```
+
+Every pair is compared in constant time, so the response time does not reveal which one matched.
+`credentialIndex` is for your metrics; never return it to the caller.
 
 ## Cap the body size
 

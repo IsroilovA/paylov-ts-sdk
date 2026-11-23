@@ -49,12 +49,15 @@ const EVENTS: readonly WebhookEvent[] = [
 ];
 
 describe('createWebhookRequest', () => {
-  const receiver = new PaylovWebhookReceiver(CREDENTIALS);
+  const receiver = new PaylovWebhookReceiver({ credentials: [CREDENTIALS] });
 
   it.each(EVENTS.map((event) => [event.kind, event] as const))(
     'builds a %s request the receiver decodes back to the event',
     (_kind, event) => {
-      expect(receiver.receive(createWebhookRequest(event, CREDENTIALS))).toEqual(event);
+      expect(receiver.receive(createWebhookRequest(event, CREDENTIALS))).toEqual({
+        ...event,
+        credentialIndex: 0,
+      });
     },
   );
 

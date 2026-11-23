@@ -77,13 +77,62 @@ never recorded.
 
 - Each scripted answer serves one HTTP attempt. Retries follow
   [setup.md](setup.md#runtime-behavior): a GET that meets `disconnect()`, `hang()` or HTTP
-  500/502/503/504 is retried up to twice, each retry taking the next answer. Script one answer per
-  attempt, or pass `{ persist: true }` for a gateway that stays down:
+  500/502/503/504 is retried up to `maxGetRetries` times (default 2), each retry taking the next
+  answer. Script one answer per attempt, or pass `{ persist: true }` for a gateway that stays down:
   `fake.transactions.get.fail('server_error', { httpStatus: 500 }, { persist: true })`.
 - `fail('permission_denied', { httpStatus: 401 })` makes the client fetch a new token and replay the
   call once against the next answer.
 - Use fake timers to skip backoff waits.
 - `assertDone()` flags an unscripted request that followed a retryable answer as a likely retry.
+
+## Token endpoint
+
+Token requests succeed with canary tokens unless `fake.token` scripts a failure. `grant` picks the
+password grant or the refresh; `fake.token.requests` lists the grant of each token request:
+
+```ts
+fake.token.fail('invalid_grant', { grant: 'refresh_token' }); // falls back to one password grant
+fake.token.fail('invalid_grant', { grant: 'password' }); // locks the client
+fake.token.fail('rate_limit_exceeded', { retryAfterSeconds: 48 }); // HTTP 429 with Retry-After
+```
+
+`invalid_grant` and `invalid_client` default to HTTP 401, `rate_limit_exceeded` to 429, other codes
+to 400. An unserved token answer fails `assertDone()`.
+
+## Simulate gateway state
+
+`new PaylovFakeGateway({ simulate: true })` keeps cards, payments, transactions and holds in memory
+and answers unscripted calls from that state, so a test can run a whole flow:
+
+```ts
+let now = new Date('2026-11-12T10:00:00Z');
+const fake = new PaylovFakeGateway({ simulate: true, now: () => now });
+const paylov = new PaylovClient(fake.clientConfig); // hold deadlines use the same clock
+fake.addCard(card); // a card as `cards.get` returns it, already bound
+
+const hold = await paylov.holds.create({ ...holdParams, cardId: card.cardId, durationMinutes: 30 });
+now = new Date(now.getTime() + 31 * 60_000);
+await expect(
+  paylov.holds.capture({ transactionId: hold.transactionId, amountTiyin }),
+).rejects.toThrow();
+// The capture failed with hold_time_expired; the hold now reads released.
+fake.assertDone();
+```
+
+- It covers `cards.get`, `cards.list`, `cards.delete`, `payments.create`, `payments.pay`,
+  `payments.refund`, `transactions.get`, `transactions.list` (and so `iterate`) and the four hold
+  methods. Others still need a script.
+- It reproduces only what Paylov's test environment has shown: one capture per hold, a partial
+  capture ends the hold, an expired hold still reads `held`, capture after expiry fails with
+  `hold_time_expired` and releases the hold, an `externalId` is never reused, a second pay answers
+  `transaction_already_payed`, a second refund `transaction_not_available_for_cancel`, and the list
+  shows paid sales only, by Tashkent day.
+- A state it does not simulate, such as refunding a captured hold or a hold with a `serviceId`,
+  answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`: script that call instead.
+- A scripted answer takes precedence over the simulation for the call it matches and does not change
+  the stored state. Use it for declines and transient failures.
+- Generated ids are `00000000-0000-4000-a000-…`; times are whole seconds from `now`. An id that only
+  a scripted reply returned is unknown to the simulation.
 
 ## Logger events
 
@@ -103,14 +152,14 @@ const paylov = new PaylovClient({
 ## Webhook requests
 
 `createWebhookRequest(event, credentials)` builds the request Paylov would send, so
-`receiver.receive(request)` returns that event:
+`receiver.receive(request)` returns that event with the matching `credentialIndex`:
 
 ```ts
 import { PaylovWebhookReceiver } from '@isroilov_an/paylov';
 import { createWebhookRequest } from '@isroilov_an/paylov/testing';
 
 const credentials = { login: 'EXAMPLE-WEBHOOK-LOGIN', password: 'EXAMPLE-WEBHOOK-PASSWORD' };
-const receiver = new PaylovWebhookReceiver(credentials);
+const receiver = new PaylovWebhookReceiver({ credentials: [credentials] });
 
 const request = createWebhookRequest(
   {

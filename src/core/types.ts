@@ -66,6 +66,12 @@ export interface PaylovTransportConfig {
    * body read), token requests included, not the whole call. Pass a `signal` to bound a call.
    */
   readonly timeoutMs?: number;
+  /**
+   * How many times a GET is retried after a connection failure other than an abort, or HTTP
+   * 500/502/503/504: an integer from 0 to 5, default 2, with exponential backoff. POST and DELETE
+   * requests are never retried, whatever this is.
+   */
+  readonly maxGetRetries?: number;
   /** Defaults to `globalThis.fetch`. Injected in tests and behind proxies. */
   readonly fetch?: FetchLike;
   /** Observability hooks. Events contain metadata only; hook failures are discarded. */
@@ -111,6 +117,13 @@ export interface Endpoint {
   readonly shape: ResponseShape;
   /** The verified gateway code a method maps to a value instead of throwing (`orOnMiss`). */
   readonly miss?: PaylovKnownErrorCode;
+  /**
+   * The endpoint can charge, reserve, capture, release, refund or split money, so a generic
+   * failure code from it leaves the outcome unknown (`PaylovApiError.isUnsettled`).
+   */
+  readonly movesMoney?: true;
+  /** Generic failure codes this money-moving endpoint answers only when nothing moved. */
+  readonly definitiveCodes?: readonly PaylovKnownErrorCode[];
 }
 
 /** Raw headers and `Response` objects never cross this boundary. */

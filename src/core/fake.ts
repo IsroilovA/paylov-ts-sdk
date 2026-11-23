@@ -10,7 +10,7 @@ import { isRecord } from './decoding.js';
 import type { PaylovErrorCode } from './errorCodes.js';
 import { tiyinToWireSum, wireSumToTiyin } from './money.js';
 import type { Params } from './params.js';
-import { TASHKENT_OFFSET_MINUTES } from './time.js';
+import { MINUTE_MS, TASHKENT_OFFSET_MINUTES } from './time.js';
 import type { Endpoint } from './types.js';
 
 /** An encoder's answer for a result the gateway reports as the endpoint's `miss` error. */
@@ -108,6 +108,18 @@ export type RequestMatcher = (request: FakeRequest) => boolean;
 /** Reads a request back into the params of the method that sent it; the inverse of its encoding. */
 export type RequestDecoder<P> = (request: FakeRequest) => P;
 
+/**
+ * How one SDK method's results and requests cross the wire in the fake: `encode` returns the
+ * success payload, unwrapped, or `MISS`; `decodeRequest` reads a request back into the params.
+ * Both the scripted answers and the simulation use it.
+ */
+export interface FakeCodec<T, P> {
+  readonly encode: (result: T) => unknown;
+  readonly decodeRequest: RequestDecoder<P>;
+  /** For methods sharing an endpoint: whether a request is this method's. */
+  readonly matches?: RequestMatcher;
+}
+
 /** The result type of an SDK method. */
 type ResultOf<M> = M extends (...args: never[]) => Promise<infer T> ? T : never;
 
@@ -177,8 +189,6 @@ export function encodeWholeSum(amountTiyin: number, field: string): number {
   if (sum === undefined) throw unencodable(field, 'must be a whole SUM amount in tiyin');
   return sum;
 }
-
-const MINUTE_MS = 60_000;
 
 function two(value: number): string {
   return String(value).padStart(2, '0');

@@ -2,7 +2,7 @@
 
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { envelopeErrorCode, normalizeResponse } from './envelope.js';
+import { envelopeErrorCode, normalizeResponse, type ResponseEndpoint } from './envelope.js';
 import {
   abortedError,
   clientClosedError,
@@ -22,11 +22,13 @@ import type {
   PaylovLogger,
   PaylovTransportConfig,
   RequestOptions,
-  ResponseShape,
 } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_RETRIES = 2;
+/** The default of `maxGetRetries`. */
+const DEFAULT_GET_RETRIES = 2;
+/** The bound of `maxGetRetries`: a longer burst only spends the gateway's patience. */
+export const MAX_GET_RETRIES = 5;
 const BASE_DELAY_MS = 200;
 /**
  * Transient gateway failures. 429 is excluded: the token endpoint asks for tens of seconds
@@ -205,7 +207,7 @@ interface PreparedRequest {
   readonly method: PaylovHttpMethod;
   /** The static identity, from {@link endpointName}. */
   readonly endpoint: string;
-  readonly shape: ResponseShape;
+  readonly declared: ResponseEndpoint;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string | undefined;
@@ -221,7 +223,7 @@ function prepareRequest(
   return {
     method: endpoint.method,
     endpoint: endpointName(endpoint),
-    shape: endpoint.shape,
+    declared: endpoint,
     url: buildUrl(origin, endpoint.route, options),
     headers: requestHeaders(options.headers, body !== undefined),
     body,
@@ -242,6 +244,7 @@ function refusalAfterHook(
 export function createHttpClient(config: HttpClientConfig): HttpClient {
   const fetchImpl: FetchLike = config.fetch ?? ((input, init) => globalThis.fetch(input, init));
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxGetRetries = config.maxGetRetries ?? DEFAULT_GET_RETRIES;
   const { auth, lifecycle, logger, origin } = config;
   const sleep = config.sleep ?? defaultSleep;
   const random = config.random ?? Math.random;
@@ -343,8 +346,9 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
     const prepared = prepareRequest(origin, endpoint, options);
     const { signal } = prepared;
     const abortedAfterSend = (): PaylovConnectionError => abortedError(prepared.endpoint, true);
-    // Failure retries are GET-only: Paylov documents no idempotency, not even for DELETE.
-    const retryable = endpoint.method === 'GET';
+    // Failure retries are GET-only whatever the configuration: Paylov documents no idempotency,
+    // not even for DELETE.
+    const maxRetries = endpoint.method === 'GET' ? maxGetRetries : 0;
     let retriesUsed = 0;
     let replayed = false;
     let isSent = false;
@@ -357,7 +361,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
         auth?.invalidate(outcome.authorization.generation);
         continue;
       }
-      if (retryable && retriesUsed < MAX_RETRIES && isTransientFailure(outcome)) {
+      if (retriesUsed < maxRetries && isTransientFailure(outcome)) {
         retriesUsed += 1;
         await untilAborted(sleep(backoffMs(retriesUsed), signal), signal, abortedAfterSend);
         continue;
@@ -367,7 +371,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
       const { response } = outcome;
       const context = { endpoint: prepared.endpoint, httpStatus: response.status };
       const retryAfter = response.headers.get('retry-after');
-      const payload = normalizeResponse(outcome.body, context, prepared.shape, retryAfter);
+      const payload = normalizeResponse(outcome.body, context, prepared.declared, retryAfter);
       return { payload, context };
     }
   }

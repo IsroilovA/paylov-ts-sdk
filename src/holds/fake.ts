@@ -5,7 +5,9 @@ import {
   utcDateTimeOf,
   decodeWholeSum,
   encodeWholeSum,
+  type FakeCodec,
   type FakeRequest,
+  type PaylovFakeMethod,
   type PaylovFakeSurface,
   type Scripter,
 } from '../core/fake.js';
@@ -16,6 +18,7 @@ import { ENDPOINTS, type HoldsResource } from './resource.js';
 import type {
   CaptureHoldParams,
   CreateHoldParams,
+  GetHoldParams,
   Hold,
   HoldCaptured,
   ReleaseHoldParams,
@@ -68,20 +71,36 @@ function decodeReleaseRequest({ body }: FakeRequest): ReleaseHoldParams {
   return { transactionId: body.string('transactionId') };
 }
 
-export function createHoldsFake(
-  script: Scripter<'holds', HoldsResource>,
-): PaylovFakeSurface<HoldsResource> {
+function decodeGetRequest({ query }: FakeRequest): GetHoldParams {
+  return readTransactionLookup(query);
+}
+
+/**
+ * The holds script. `create` replies with what the gateway sends: the SDK adds
+ * `durationMinutes` and `clientCaptureDeadline` itself, from the request and its clock.
+ */
+export type HoldsFakeSurface = Omit<PaylovFakeSurface<HoldsResource>, 'create'> & {
+  readonly create: PaylovFakeMethod<TransactionReference, CreateHoldParams>;
+};
+
+export const HOLD_CODECS: {
+  readonly create: FakeCodec<TransactionReference, CreateHoldParams>;
+  readonly capture: FakeCodec<HoldCaptured, CaptureHoldParams>;
+  readonly release: FakeCodec<TransactionReference, ReleaseHoldParams>;
+  readonly get: FakeCodec<Hold | null, GetHoldParams>;
+} = {
+  create: { encode: encodeTransactionReference, decodeRequest: decodeCreateRequest },
+  capture: { encode: encodeHoldCaptured, decodeRequest: decodeCaptureRequest },
+  release: { encode: encodeHoldReleased, decodeRequest: decodeReleaseRequest },
+  get: { encode: encodeHold, decodeRequest: decodeGetRequest },
+};
+
+export function createHoldsFake(script: Scripter<'holds', HoldsResource>): HoldsFakeSurface {
+  const { create, capture, release, get } = HOLD_CODECS;
   return {
-    create: script(
-      'holds.create',
-      ENDPOINTS.create,
-      encodeTransactionReference,
-      decodeCreateRequest,
-    ),
-    capture: script('holds.capture', ENDPOINTS.capture, encodeHoldCaptured, decodeCaptureRequest),
-    release: script('holds.release', ENDPOINTS.release, encodeHoldReleased, decodeReleaseRequest),
-    get: script('holds.get', ENDPOINTS.get, encodeHold, ({ query }) =>
-      readTransactionLookup(query),
-    ),
+    create: script('holds.create', ENDPOINTS.create, create.encode, create.decodeRequest),
+    capture: script('holds.capture', ENDPOINTS.capture, capture.encode, capture.decodeRequest),
+    release: script('holds.release', ENDPOINTS.release, release.encode, release.decodeRequest),
+    get: script('holds.get', ENDPOINTS.get, get.encode, get.decodeRequest),
   };
 }

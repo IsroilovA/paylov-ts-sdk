@@ -23,7 +23,7 @@ const CANCEL = loadFixture<Fixture>('webhooks/transactionCancel.notification.doc
 const DEPOSIT = loadFixture<Fixture>('webhooks/merchantDeposit.notification.docs.json');
 const CARD_BIND = loadFixture<Fixture>('webhooks/cardBind.notification.docs.json');
 
-const receiver = new PaylovWebhookReceiver({ login: LOGIN, password: PASSWORD });
+const receiver = new PaylovWebhookReceiver({ credentials: [{ login: LOGIN, password: PASSWORD }] });
 
 /** Bodies here are untyped fixtures or malformed JavaScript values, which the receiver must take. */
 function post(body: unknown, authorization = AUTHORIZATION): WebhookInput {
@@ -43,11 +43,12 @@ const CHECK_EVENT: TransactionCheckEvent = {
 
 describe('PaylovWebhookReceiver events', () => {
   it('decodes the documented transaction.check request', () => {
-    expect(receiver.receive(post(CHECK))).toEqual(CHECK_EVENT);
+    expect(receiver.receive(post(CHECK))).toEqual({ ...CHECK_EVENT, credentialIndex: 0 });
   });
 
   it('decodes the documented transaction.perform request', () => {
     expect(receiver.receive(post(PERFORM))).toEqual({
+      credentialIndex: 0,
       kind: 'transaction.perform',
       id: 1234567,
       transactionId: '9bd1a92b-5cce-47c8-a2df-99a20836ab9e',
@@ -61,12 +62,14 @@ describe('PaylovWebhookReceiver events', () => {
       receiver.receive(post(withParams(CHECK, { currency: 840, amount_tiyin: 1999 }))),
     ).toEqual({
       ...CHECK_EVENT,
+      credentialIndex: 0,
       amount: { currency: 840, amountCents: 1999 },
     });
   });
 
   it('decodes the documented transaction.cancel notification', () => {
     expect(receiver.receive(post(CANCEL))).toEqual({
+      credentialIndex: 0,
       kind: 'transaction.cancel',
       transactionId: '9b3bd7be-9327-4608-b886-4353e49df05f',
       account: { order_id: '12345' },
@@ -77,6 +80,7 @@ describe('PaylovWebhookReceiver events', () => {
 
   it('decodes the documented merchant.deposit notification', () => {
     expect(receiver.receive(post(DEPOSIT))).toEqual({
+      credentialIndex: 0,
       kind: 'merchant.deposit',
       depositId: '6f1c2b7e-3d4a-5b8c-9e0f-1a2b3c4d5e6f',
       merchantId: '125',
@@ -96,6 +100,7 @@ describe('PaylovWebhookReceiver events', () => {
   it('decodes the documented card-bind notification, surfacing only the card id', () => {
     const outcome = receiver.receive(post(CARD_BIND));
     expect(outcome).toEqual({
+      credentialIndex: 0,
       kind: 'card.bind',
       token: 'pR3x...kLq9',
       userId: 'partner-user-10234',
@@ -106,7 +111,10 @@ describe('PaylovWebhookReceiver events', () => {
   });
 
   it('reads only the tiyin field, so a fractional or missing whole amount is accepted', () => {
-    expect(receiver.receive(post(withParams(CHECK, { amount: 500.5 })))).toEqual(CHECK_EVENT);
+    expect(receiver.receive(post(withParams(CHECK, { amount: 500.5 })))).toEqual({
+      ...CHECK_EVENT,
+      credentialIndex: 0,
+    });
     const cancelParams = { ...recordOf(CANCEL['params']) };
     delete cancelParams['amount'];
     expect(receiver.receive(post({ ...CANCEL, params: cancelParams })).kind).toBe(
@@ -280,7 +288,10 @@ describe('PaylovWebhookReceiver invalid input', () => {
 
   it('reads an ArrayBuffer body as bytes and answers an unread body object malformed_body', () => {
     const json = JSON.stringify(CHECK);
-    expect(receiver.receive(post(new TextEncoder().encode(json).buffer))).toEqual(CHECK_EVENT);
+    expect(receiver.receive(post(new TextEncoder().encode(json).buffer))).toEqual({
+      ...CHECK_EVENT,
+      credentialIndex: 0,
+    });
     // A Fetch Request's body is a stream, which would re-serialize as `{}`.
     const request = new Request('https://merchant.example/paylov', {
       method: 'POST',
@@ -304,17 +315,85 @@ describe('PaylovWebhookReceiver invalid input', () => {
   });
 });
 
+describe('PaylovWebhookReceiver credential rotation', () => {
+  const OLD = {
+    login: 'callback-user-old',
+    password: 'EXAMPLE-OLD-PASSWORD-NOT-A-REAL-CREDENTIAL',
+  };
+  const NEW = {
+    login: 'callback-user-new',
+    password: 'EXAMPLE-NEW-PASSWORD-NOT-A-REAL-CREDENTIAL',
+  };
+  const rotating = new PaylovWebhookReceiver({ credentials: [OLD, NEW] });
+
+  it('accepts every configured pair and reports which one matched', () => {
+    for (const [index, pair] of [OLD, NEW].entries()) {
+      const outcome = rotating.receive(post(CHECK, basicAuthHeader(pair.login, pair.password)));
+      expect(outcome).toEqual({ ...CHECK_EVENT, credentialIndex: index });
+    }
+  });
+
+  it("rejects one pair's login with another pair's password", () => {
+    for (const authorization of [
+      basicAuthHeader(OLD.login, NEW.password),
+      basicAuthHeader(NEW.login, OLD.password),
+    ]) {
+      expect(rotating.receive(post(CHECK, authorization))).toEqual({
+        kind: 'invalid',
+        reason: 'unauthorized',
+      });
+    }
+  });
+
+  it('tells apart two passwords for the same login', () => {
+    const samePassword = new PaylovWebhookReceiver({
+      credentials: [OLD, { login: OLD.login, password: NEW.password }],
+    });
+    const receive = (password: string): unknown =>
+      samePassword.receive(post(CHECK, basicAuthHeader(OLD.login, password)));
+
+    expect(receive(OLD.password)).toEqual({ ...CHECK_EVENT, credentialIndex: 0 });
+    expect(receive(NEW.password)).toEqual({ ...CHECK_EVENT, credentialIndex: 1 });
+    expect(receive(PASSWORD)).toEqual({ kind: 'invalid', reason: 'unauthorized' });
+  });
+});
+
 describe('PaylovWebhookReceiver construction', () => {
+  const pair = { login: LOGIN, password: PASSWORD };
+
   it.each<[string, unknown, string | undefined, PaylovInputRule]>([
     ['a missing config', undefined, undefined, 'type'],
-    ['an empty login', { login: '', password: PASSWORD }, 'login', 'required'],
-    ['a blank login', { login: '  ', password: PASSWORD }, 'login', 'required'],
-    ['an empty password', { login: LOGIN, password: '' }, 'password', 'required'],
-    ['a non-string password', { login: LOGIN, password: 7 }, 'password', 'type'],
+    ['a missing credentials list', {}, 'credentials', 'required'],
+    ['an empty credentials list', { credentials: [] }, 'credentials', 'required'],
+    ['a credentials object instead of a list', { credentials: pair }, 'credentials', 'type'],
+    [
+      'an empty login',
+      { credentials: [{ login: '', password: PASSWORD }] },
+      'credentials[0].login',
+      'required',
+    ],
+    [
+      'a blank login',
+      { credentials: [{ login: '  ', password: PASSWORD }] },
+      'credentials[0].login',
+      'required',
+    ],
+    [
+      'an empty password',
+      { credentials: [pair, { login: LOGIN, password: '' }] },
+      'credentials[1].password',
+      'required',
+    ],
+    [
+      'a non-string password',
+      { credentials: [{ login: LOGIN, password: 7 }] },
+      'credentials[0].password',
+      'type',
+    ],
     [
       'a login with a colon, which Basic credentials can never carry',
-      { login: 'a:b', password: PASSWORD },
-      'login',
+      { credentials: [pair, { login: 'a:b', password: PASSWORD }] },
+      'credentials[1].login',
       'format',
     ],
   ])('rejects %s', async (_case, config, field, rule) => {

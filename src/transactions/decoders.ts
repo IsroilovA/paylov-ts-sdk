@@ -49,7 +49,7 @@ const decodeFiscalReceiptSummary: Decoder<FiscalReceiptSummary> = (value, path) 
 
 /**
  * Withholds `owner` (cardholder name), the float SUM `amount`, the label `transaction_type` and
- * `account`, which reads `{}` whatever was sent [OPEN Q87].
+ * `account`, which reads `{}` whatever was sent.
  */
 const decodeTransaction: Decoder<Transaction> = (value, path) => {
   const transaction = readFields(value, path);

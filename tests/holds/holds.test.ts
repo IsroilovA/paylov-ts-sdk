@@ -27,8 +27,10 @@ const CREATE = {
   externalId: EXTERNAL_ID,
 };
 
-function setup(script: FakeResponseSpec[]) {
-  return setupResource(createHoldsResource, script);
+const NOW = new Date('2026-11-12T15:30:00.250Z');
+
+function setup(script: FakeResponseSpec[], clock: () => Date = () => NOW) {
+  return setupResource((http) => createHoldsResource(http, clock), script);
 }
 
 describe('holds.create', () => {
@@ -41,7 +43,11 @@ describe('holds.create', () => {
       serviceId: SERVICE_ID,
     });
 
-    expect(hold).toEqual({ transactionId: HOLD_ID });
+    expect(hold).toEqual({
+      transactionId: HOLD_ID,
+      durationMinutes: 30,
+      clientCaptureDeadline: new Date('2026-11-12T16:00:00.250Z'),
+    });
     expect(fetchImpl.calls).toHaveLength(1);
     expect(fetchImpl.calls[0]?.method).toBe('POST');
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/payment/hold/create/`);
@@ -54,6 +60,33 @@ describe('holds.create', () => {
       account: { orderId: 'A-1' },
       serviceId: SERVICE_ID,
     });
+  });
+
+  it('reads the clock before the request leaves, so the deadline never trails the gateway', async () => {
+    const sentAtReads: number[] = [];
+    const sent: { count: () => number } = { count: () => Number.NaN };
+    const harness = setup([wireResponse('holds/create.success.wire.json')], () => {
+      sentAtReads.push(sent.count());
+      return NOW;
+    });
+    sent.count = () => harness.fetchImpl.calls.length;
+
+    await harness.resource.create(CREATE);
+
+    expect(sentAtReads).toEqual([0]);
+  });
+
+  it.each<[string, () => unknown]>([
+    ['an invalid Date', () => new Date(Number.NaN)],
+    ['epoch milliseconds, as Date.now returns', Date.now],
+  ])('rejects a clock that returns %s before sending', async (_case, clock) => {
+    const { resource, fetchImpl } = setup([], clock as () => Date);
+    await expectInputError(resource.create(CREATE), {
+      code: 'sdk_config_error',
+      field: 'now',
+      rule: 'type',
+    });
+    expect(fetchImpl.calls).toHaveLength(0);
   });
 
   it('omits account and serviceId when absent', async () => {

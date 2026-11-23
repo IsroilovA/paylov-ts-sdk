@@ -1,4 +1,5 @@
 import { orOnMiss, readCall, send } from '../core/call.js';
+import { MINUTE_MS, readClock, type Clock } from '../core/time.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
 import {
   decodeTransactionReference,
@@ -12,13 +13,29 @@ import type {
   GetHoldParams,
   Hold,
   HoldCaptured,
+  HoldCreated,
   ReleaseHoldParams,
 } from './types.js';
 
 export const ENDPOINTS = {
-  create: { method: 'POST', route: '/merchant/payment/hold/create/', shape: 'envelope' },
-  capture: { method: 'POST', route: '/merchant/payment/hold/charge/', shape: 'envelope' },
-  release: { method: 'POST', route: '/merchant/payment/hold/dismiss/', shape: 'envelope' },
+  create: {
+    method: 'POST',
+    route: '/merchant/payment/hold/create/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
+  capture: {
+    method: 'POST',
+    route: '/merchant/payment/hold/charge/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
+  release: {
+    method: 'POST',
+    route: '/merchant/payment/hold/dismiss/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
   get: {
     method: 'GET',
     route: '/merchant/payment/hold/status/',
@@ -35,7 +52,8 @@ export const ENDPOINTS = {
 export interface HoldsResource {
   /**
    * Reserves `amountTiyin` on a bound card for `durationMinutes`. Money is reserved, not
-   * captured.
+   * captured. Store `clientCaptureDeadline`, a client-side lower bound on the hold's expiry: Paylov
+   * reports none, and an expired hold still reads `held`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, the hold may exist. Read
    * `holds.get({ externalId })`; a hold found is the result. `null` is not proof that the
@@ -53,9 +71,9 @@ export interface HoldsResource {
    *   durationMinutes: 24 * 60,
    *   externalId: `booking-${booking.id}`,
    * });
-   * await bookings.saveHold(booking.id, hold.transactionId);
+   * await bookings.saveHold(booking.id, hold.transactionId, hold.clientCaptureDeadline);
    */
-  create(params: CreateHoldParams, options?: PaylovCallOptions): Promise<TransactionReference>;
+  create(params: CreateHoldParams, options?: PaylovCallOptions): Promise<HoldCreated>;
 
   /**
    * Captures a hold: **this moves money.** Capture is single-use. An amount below the held
@@ -83,9 +101,9 @@ export interface HoldsResource {
   capture(params: CaptureHoldParams, options?: PaylovCallOptions): Promise<HoldCaptured>;
 
   /**
-   * Releases an uncaptured hold in full; moves no money. It cannot undo a capture: after one,
-   * only `payments.refund` remains, and Paylov's test environment refuses it for a captured hold
-   * with `processing_error`. Release every hold you will not capture, also after its duration runs
+   * Releases an uncaptured hold in full, returning the reserved money to the card. It cannot undo a
+   * capture: after one, only `payments.refund` remains, and Paylov's test environment refuses it
+   * for a captured hold with `processing_error`, which the SDK reports as an unknown outcome. Release every hold you will not capture, also after its duration runs
    * out. Release is the only documented way to free a hold, so the SDK reads `hold_not_found`
    * then as nothing left to release.
    *
@@ -102,8 +120,8 @@ export interface HoldsResource {
   /**
    * Looks a hold up by exactly one of `transactionId` or `externalId`; `null` when the gateway
    * knows no such hold (`transaction_not_found`). A miss right after an ambiguous `create` is not
-   * proof: read again after a delay. An expired hold can still read `held`: track its deadline
-   * (creation time plus `durationMinutes`) yourself.
+   * proof: read again after a delay. An expired hold can still read `held`: compare `now` with
+   * the `clientCaptureDeadline` from `holds.create`, or pass both to `readHoldState`.
    *
    * @example
    * const hold = await paylov.holds.get({ externalId: `booking-${booking.id}` });
@@ -113,21 +131,31 @@ export interface HoldsResource {
   get(params: GetHoldParams, options?: PaylovCallOptions): Promise<Hold | null>;
 }
 
-export function createHoldsResource(http: HttpClient): HoldsResource {
+export function createHoldsResource(http: HttpClient, clock: Clock): HoldsResource {
   return {
     async create(params, options) {
       const method = 'holds.create';
       const { input, signal } = readCall(params, options, method);
+      const durationMinutes = input.integer('durationMinutes');
       const body = {
         userId: input.string('userId'),
         cardId: input.string('cardId'),
         amount: input.tiyinAsWholeSum('amountTiyin'),
-        time: input.integer('durationMinutes'),
+        time: durationMinutes,
         externalId: input.string('externalId'),
         account: input.optionalJson('account'),
         serviceId: input.optionalString('serviceId'),
       };
-      return send(http, ENDPOINTS.create, { body, signal }, decodeTransactionReference);
+      // Read before the request leaves, so the deadline cannot fall after the gateway's expiry.
+      const startedAt = readClock(clock, method);
+      const { transactionId } = await send(
+        http,
+        ENDPOINTS.create,
+        { body, signal },
+        decodeTransactionReference,
+      );
+      const clientCaptureDeadline = new Date(startedAt + durationMinutes * MINUTE_MS);
+      return { transactionId, durationMinutes, clientCaptureDeadline };
     },
 
     async capture(params, options) {

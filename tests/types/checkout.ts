@@ -30,8 +30,9 @@ void createCheckoutUrl({ ...params, amount: 50_000 });
 void createCheckoutUrl({ ...params, convertTo: 978 });
 // @ts-expect-error checkout account values are strings: callbacks echo them as strings
 void createCheckoutUrl({ ...params, account: { order_id: 12 } });
-// @ts-expect-error the checkout host is fixed
-void createCheckoutUrl({ ...params, baseUrl: 'https://stage.example/' });
+void createCheckoutUrl({ ...params, baseUrl: 'https://checkout.example' });
+// @ts-expect-error the checkout host is a URL string
+void createCheckoutUrl({ ...params, baseUrl: new URL('https://checkout.example') });
 
 declare const amount: CheckoutAmount;
 const minorUnits: number = amount.currency === 860 ? amount.amountTiyin : amount.amountCents;

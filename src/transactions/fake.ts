@@ -2,6 +2,7 @@ import {
   nullableOf,
   optionalEntry,
   tashkentDateTimeOf,
+  type FakeCodec,
   type FakeRequest,
   type PaylovFakeSurface,
   type Scripter,
@@ -87,6 +88,22 @@ function decodeRrnRequest({ path }: FakeRequest): GetRrnParams {
   return { transactionId: path.string('transactionId') };
 }
 
+export const TRANSACTION_CODECS: {
+  readonly get: FakeCodec<Transaction | null, GetTransactionParams>;
+  readonly list: FakeCodec<TransactionPage, ListTransactionsParams>;
+} = {
+  get: {
+    encode: encodeRequestedTransaction,
+    decodeRequest: decodeGetRequest,
+    matches: isSingleRead,
+  },
+  list: {
+    encode: encodeTransactionPage,
+    decodeRequest: decodeListRequest,
+    matches: (request: FakeRequest) => !isSingleRead(request),
+  },
+};
+
 export function createTransactionsFake(
   script: Scripter<'transactions', TransactionsResource>,
 ): PaylovFakeSurface<TransactionsResource> {
@@ -94,16 +111,16 @@ export function createTransactionsFake(
     get: script(
       'transactions.get',
       ENDPOINTS.getTransactions,
-      encodeRequestedTransaction,
-      decodeGetRequest,
-      isSingleRead,
+      TRANSACTION_CODECS.get.encode,
+      TRANSACTION_CODECS.get.decodeRequest,
+      TRANSACTION_CODECS.get.matches,
     ),
     list: script(
       'transactions.list',
       ENDPOINTS.getTransactions,
-      encodeTransactionPage,
-      decodeListRequest,
-      (request) => !isSingleRead(request),
+      TRANSACTION_CODECS.list.encode,
+      TRANSACTION_CODECS.list.decodeRequest,
+      TRANSACTION_CODECS.list.matches,
     ),
     getRrn: script('transactions.getRrn', ENDPOINTS.getRrn, encodeRrn, decodeRrnRequest),
   };

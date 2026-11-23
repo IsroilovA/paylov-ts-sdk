@@ -18,8 +18,11 @@ import type {
   InvalidWebhook,
   InvalidWebhookReason,
   WebhookCallbackId,
-  WebhookOutcome,
+  WebhookEvent,
 } from './types.js';
+
+/** A decoded body, before the receiver adds the credential pair that authenticated it. */
+export type DecodedWebhook = WebhookEvent | InvalidWebhook;
 
 export function invalid(reason: InvalidWebhookReason): InvalidWebhook {
   return { kind: 'invalid', reason };
@@ -66,7 +69,7 @@ function decodeCheckOrPerform(
   method: 'transaction.check' | 'transaction.perform',
   id: WebhookCallbackId,
   value: unknown,
-): WebhookOutcome {
+): DecodedWebhook {
   const params = readFields(value, 'params');
   const account = params('account', asJsonObject);
   const amount = decodeParamsAmount(value, 'params');
@@ -74,7 +77,7 @@ function decodeCheckOrPerform(
   return { kind: method, id, transactionId: params('transaction_id', asUuid), account, amount };
 }
 
-function decodeCancel(value: unknown): WebhookOutcome {
+function decodeCancel(value: unknown): DecodedWebhook {
   const params = readFields(value, 'params');
   return {
     kind: 'transaction.cancel',
@@ -85,7 +88,7 @@ function decodeCancel(value: unknown): WebhookOutcome {
   };
 }
 
-function decodeDeposit(value: unknown): WebhookOutcome {
+function decodeDeposit(value: unknown): DecodedWebhook {
   const params = readFields(value, 'params');
   return {
     kind: 'merchant.deposit',
@@ -105,7 +108,7 @@ const JSON_RPC_METHODS = [
   'merchant.deposit',
 ] as const;
 
-function decodeJsonRpc(envelope: Readonly<Record<string, unknown>>): WebhookOutcome {
+function decodeJsonRpc(envelope: Readonly<Record<string, unknown>>): DecodedWebhook {
   if (envelope['jsonrpc'] !== '2.0') return invalid('invalid_request');
   const method = JSON_RPC_METHODS.find((name) => name === envelope['method']);
   if (method === undefined) return invalid('unknown_method');
@@ -120,7 +123,7 @@ function decodeJsonRpc(envelope: Readonly<Record<string, unknown>>): WebhookOutc
 
 // The card itself is unauthenticated processor data; its id is enough to read it through the
 // authenticated cards API.
-function decodeCardBind(envelope: Readonly<Record<string, unknown>>): WebhookOutcome {
+function decodeCardBind(envelope: Readonly<Record<string, unknown>>): DecodedWebhook {
   const field = readFields(envelope, 'body');
   return {
     kind: 'card.bind',
@@ -131,7 +134,7 @@ function decodeCardBind(envelope: Readonly<Record<string, unknown>>): WebhookOut
   };
 }
 
-export function decodeWebhook(body: unknown): WebhookOutcome {
+export function decodeWebhook(body: unknown): DecodedWebhook {
   let envelope: unknown;
   try {
     envelope = parseJsonBody(body);

@@ -77,10 +77,14 @@ type ClientNamespace = {
       : K
     : never;
 }[keyof PaylovClient];
+/** The methods of a namespace that send one request; `transactions.iterate` pages through `list`. */
+type RequestMethodOf<R> = {
+  [K in keyof R]: R[K] extends (...args: never[]) => Promise<unknown> ? K : never;
+}[keyof R];
 /** `true` only when `Fake` has every client namespace, each with exactly the client's methods. */
 type MirrorsClient<Fake> = false extends {
   [K in ClientNamespace]: K extends keyof Fake
-    ? IsEqual<keyof PaylovClient[K], keyof Fake[K]>
+    ? IsEqual<RequestMethodOf<PaylovClient[K]>, keyof Fake[K]>
     : false;
 }[ClientNamespace]
   ? false
@@ -96,6 +100,26 @@ const missingMethod: MirrorsClient<{
     : PaylovFakeGateway[K];
 }> = true;
 void [fakeMirrorsClient, missingNamespace, missingMethod];
+
+// @ts-expect-error iterate is served by the transactions.list script
+void fake.transactions.iterate;
+// holds.create replies with what the gateway sends; the SDK adds the deadline itself.
+type HoldCreateReply = Parameters<typeof fake.holds.create.reply>[0];
+const replyHasNoDeadline: 'clientCaptureDeadline' extends keyof HoldCreateReply ? false : true =
+  true;
+void replyHasNoDeadline;
+fake.holds.create.reply({ transactionId: 't' });
+
+const simulatedFake = new PaylovFakeGateway({ simulate: true, now: () => new Date() });
+// @ts-expect-error the simulation clock returns a Date
+const numericClockFake = new PaylovFakeGateway({ now: () => 0 });
+void [simulatedFake, numericClockFake];
+fake.token.fail('invalid_grant', { grant: 'refresh_token' });
+fake.token.fail('rate_limit_exceeded', { retryAfterSeconds: 48 }, { persist: true });
+// @ts-expect-error grants are the two the SDK sends
+fake.token.fail('invalid_grant', { grant: 'client_credentials' });
+const grants: readonly ('password' | 'refresh_token')[] = fake.token.requests;
+void grants;
 
 const request: WebhookInput = createWebhookRequest(
   { kind: 'card.bind', token: 't', userId: 'u', status: 'confirmed', cardId: 'c' },

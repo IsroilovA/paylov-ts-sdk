@@ -4,6 +4,7 @@
  * consulted.
  */
 
+import { configError } from './errors.js';
 import { isNonNegativeSafeInteger } from './numbers.js';
 
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
@@ -12,7 +13,7 @@ const ISO_DATE_TIME =
 
 /** Tashkent's fixed offset east of UTC. */
 export const TASHKENT_OFFSET_MINUTES = 300;
-const MINUTE_MS = 60_000;
+export const MINUTE_MS = 60_000;
 
 type WallClock = readonly [
   year: number,
@@ -91,4 +92,26 @@ export function fromUnixSeconds(value: number): Date | undefined {
   if (!isNonNegativeSafeInteger(value)) return undefined;
   const date = new Date(value * 1000);
   return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+/** The current time. Injected through `PaylovClientConfig.now`; defaults to the system clock. */
+export type Clock = () => Date;
+
+export function systemClock(): Date {
+  return new Date();
+}
+
+/** Its results are checked on each read by `readClock`. */
+export function isClock(value: unknown): value is Clock {
+  return typeof value === 'function';
+}
+
+/** The clock's current epoch milliseconds; a clock that returns no valid `Date` is a config bug. */
+export function readClock(clock: Clock, method: string): number {
+  const now: unknown = clock();
+  const ms = now instanceof Date ? now.getTime() : Number.NaN;
+  if (!Number.isFinite(ms)) {
+    throw configError(`${method}: the configured now() must return a valid Date`, 'now', 'type');
+  }
+  return ms;
 }

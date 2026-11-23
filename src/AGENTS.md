@@ -20,7 +20,7 @@ Production source.
   method's params as the inverse of its encoding; methods sharing an endpoint each pass a request
   matcher. Only fakes and `testing/` import a fake. Code two features use lives in `shared/`.
 - A surface outside `PaylovClient` enters through `client.ts` (a class), `link.ts` (a pure function)
-  or `receiver.ts`.
+  or `receiver.ts`. A pure decision over a feature's read result lives in that feature's `state.ts`.
 - Each surface declares its endpoints once, in an exported `ENDPOINTS` table of `as const`
   `Endpoint` literals. The resource and the testing fake both read it; never restate a route,
   method, or shape.

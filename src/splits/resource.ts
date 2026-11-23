@@ -7,7 +7,12 @@ import { decodeSplitShares } from './decoders.js';
 import type { CreateSplitParams, GetSplitParams, SplitShare } from './types.js';
 
 export const ENDPOINTS = {
-  create: { method: 'POST', route: '/merchant/splitPayment/', shape: 'envelope' },
+  create: {
+    method: 'POST',
+    route: '/merchant/splitPayment/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
   get: { method: 'GET', route: '/merchant/splitPayment/status/', shape: 'envelope' },
 } as const;
 

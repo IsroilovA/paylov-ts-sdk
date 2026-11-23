@@ -19,6 +19,10 @@ export type * from './splits/types.js';
 export type * from './fiscalization/types.js';
 export type * from './subMerchants/types.js';
 
+// Decisions over reads
+export { readHoldState } from './holds/state.js';
+export { readRefundState } from './transactions/state.js';
+
 // Standalone surfaces
 export { createCheckoutUrl } from './checkout/link.js';
 export type { CreateCheckoutUrlParams } from './checkout/link.js';

@@ -218,21 +218,26 @@ const CASES: Readonly<Record<string, Case>> = {
     roundTrip(fake.transactions.getRrn, '600000000001', { transactionId: id(2) }, (params) =>
       paylov.transactions.getRrn(params),
     ),
-  'holds.create': ({ fake, paylov }) =>
-    roundTrip(
-      fake.holds.create,
-      { transactionId: id(4) },
-      {
-        userId: 'user-42',
-        cardId: id(1),
-        amountTiyin: 100_000,
-        durationMinutes: 60,
-        externalId: 'hold-1',
-        account: ACCOUNT,
-        serviceId: id(3),
-      },
-      (params) => paylov.holds.create(params),
-    ),
+  'holds.create': async ({ fake }) => {
+    // The SDK adds the deadline from the client clock.
+    const paylov = new PaylovClient({ ...fake.clientConfig, now: () => AT });
+    const params = {
+      userId: 'user-42',
+      cardId: id(1),
+      amountTiyin: 100_000,
+      durationMinutes: 60,
+      externalId: 'hold-1',
+      account: ACCOUNT,
+      serviceId: id(3),
+    };
+    fake.holds.create.reply({ transactionId: id(4) });
+    await expect(paylov.holds.create(params)).resolves.toEqual({
+      transactionId: id(4),
+      durationMinutes: 60,
+      clientCaptureDeadline: new Date(AT.getTime() + 60 * 60_000),
+    });
+    expect(fake.holds.create.requests).toEqual([params]);
+  },
   'holds.capture': ({ fake, paylov }) =>
     roundTrip(
       fake.holds.capture,

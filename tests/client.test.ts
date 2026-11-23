@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PaylovClient, type PaylovClientConfig } from '../src/client.js';
 import { PaylovConnectionError } from '../src/core/errors.js';
 import { PaylovOnboarding } from '../src/onboarding/client.js';
+import { PaylovFakeGateway } from '../src/testing/gateway.js';
 import { captureAsync, expectInputError, expectNoSecretLeak } from './helpers/asserts.js';
 import { createFakeFetch } from './helpers/fakeFetch.js';
 import { BASE_URL } from './helpers/testHttp.js';
@@ -19,6 +20,7 @@ const VALID: PaylovClientConfig = {
 };
 
 const CONFIG = 'sdk_config_error';
+const TRANSACTION_ID = '00000000-0000-4000-8000-000000000001';
 const CREDENTIALS = [PASSWORD, CONSUMER_SECRET];
 
 describe('PaylovClient configuration', () => {
@@ -55,18 +57,63 @@ describe('PaylovClient configuration', () => {
     ['not an absolute URL', 'api.paylov.uz', 'baseUrl must be an absolute https URL'],
     ['another scheme', 'ftp://api.paylov.uz', 'baseUrl must be an absolute https URL'],
     ['cleartext http', 'http://dev.gw.paylov.uz', 'baseUrl must use https'],
-    [
-      'a /merchant path',
-      `${BASE_URL}/merchant`,
-      'baseUrl must be an origin without a path, e.g. https://dev.gw.paylov.uz',
-    ],
+    ['a /merchant path', `${BASE_URL}/merchant`, 'baseUrl must be an origin without a path'],
   ])('rejects a baseUrl with %s', async (_label, baseUrl, message) => {
     const error = await expectInputError(() => new PaylovClient({ ...VALID, baseUrl }), {
       code: CONFIG,
       field: 'baseUrl',
       rule: 'format',
     });
-    expect(error.message).toBe(message);
+    expect(error.message).toBe(`PaylovClient config: ${message}`);
+  });
+
+  it.each([
+    ['a negative count', -1, 'range'],
+    ['more than five', 6, 'range'],
+    ['a fraction', 1.5, 'type'],
+    ['a string', '2', 'type'],
+  ] as const)('rejects maxGetRetries as %s', async (_label, maxGetRetries, rule) => {
+    await expectInputError(() => new PaylovClient({ ...VALID, maxGetRetries } as never), {
+      code: CONFIG,
+      field: 'maxGetRetries',
+      rule,
+    });
+  });
+
+  it('rejects a now that is not a function', async () => {
+    await expectInputError(() => new PaylovClient({ ...VALID, now: new Date() } as never), {
+      code: CONFIG,
+      field: 'now',
+      rule: 'type',
+    });
+  });
+
+  it('rejects a clock that returns no valid Date at construction', async () => {
+    await expectInputError(() => new PaylovClient({ ...VALID, now: Date.now } as never), {
+      code: CONFIG,
+      field: 'now',
+      rule: 'type',
+    });
+  });
+
+  it.each([
+    [0, 1],
+    [1, 2],
+  ])(
+    'passes maxGetRetries %i to the transport: %i GET attempts',
+    async (maxGetRetries, attempts) => {
+      const fake = new PaylovFakeGateway();
+      fake.transactions.get.fail('server_error', { httpStatus: 503 }, { persist: true });
+      const paylov = new PaylovClient({ ...fake.clientConfig, maxGetRetries });
+
+      await captureAsync(paylov.transactions.get({ transactionId: TRANSACTION_ID }));
+
+      expect(fake.transactions.get.requests).toHaveLength(attempts);
+    },
+  );
+
+  it('accepts the largest maxGetRetries', () => {
+    expect(() => new PaylovClient({ ...VALID, maxGetRetries: 5 })).not.toThrow();
   });
 
   it('rejects credentials, queries and fragments on baseUrl without quoting them', async () => {
@@ -199,6 +246,8 @@ const CLIENT_CALLS: Readonly<Record<string, ClientCall>> = {
     c.payments.confirmPanPayment({ transactionId: ID, otp: 'OTP-FROM-SMS-EXAMPLE' }, { signal }),
   'transactions.get': (c, signal) => c.transactions.get({ transactionId: ID }, { signal }),
   'transactions.list': (c, signal) => c.transactions.list({}, { signal }),
+  'transactions.iterate': (c, signal) =>
+    c.transactions.iterate({}, { signal })[Symbol.asyncIterator]().next(),
   'transactions.getRrn': (c, signal) => c.transactions.getRrn({ transactionId: ID }, { signal }),
   'holds.create': (c, signal) =>
     c.holds.create(

@@ -16,7 +16,8 @@ Unofficial server-side TypeScript SDK for the [Paylov](https://paylov.uz) paymen
   responses.
 - Integer tiyin money, typed errors with recovery guidance for ambiguous failures, GET-only retries,
   and metadata-only logging that never records credentials or card data.
-- A `@isroilov_an/paylov/testing` entry point with an in-memory gateway for application tests.
+- A `@isroilov_an/paylov/testing` entry point with an in-memory gateway for application tests,
+  scripted per call or simulating the gateway state Paylov has shown.
 
 ## Install
 

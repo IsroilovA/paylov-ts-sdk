@@ -38,6 +38,22 @@ export interface CreateHoldParams {
   readonly serviceId?: string;
 }
 
+/**
+ * Result of `holds.create`. Paylov returns no expiry, and an expired hold still reads `held`, so
+ * the SDK computes a deadline of its own.
+ */
+export interface HoldCreated extends TransactionReference {
+  /** The duration sent, in minutes. */
+  readonly durationMinutes: number;
+  /**
+   * Computed by the SDK, not reported by Paylov: the client clock just before the request was
+   * sent, plus `durationMinutes`. Paylov starts the hold no earlier, so this is a lower bound on
+   * its real expiry: capture before this. Passing it proves nothing: the hold is released
+   * only after `holds.release` succeeds or `holds.get` reads `released`.
+   */
+  readonly clientCaptureDeadline: Date;
+}
+
 /** Parameters for `holds.capture`. */
 export interface CaptureHoldParams {
   readonly transactionId: string;
@@ -85,3 +101,31 @@ export interface Hold {
   /** The service the hold belongs to: the one sent on create, or the merchant id. */
   readonly serviceId: string;
 }
+
+/** Parameters for `readHoldState`. */
+export interface ReadHoldStateParams {
+  /** A `holds.get` result; `null` when the gateway knew no such hold. */
+  readonly hold: Hold | null;
+  /** The `clientCaptureDeadline` that `holds.create` returned for this hold. */
+  readonly clientCaptureDeadline: Date;
+  /** The time to judge the deadline at, usually now. */
+  readonly now: Date;
+}
+
+/**
+ * What a `holds.get` read establishes, from `readHoldState`:
+ * - `open`: reserved and before the deadline; it can be captured.
+ * - `captured`: captured once; `amountTiyin` is the captured amount, and any remainder of a
+ *   partial capture can be neither captured nor released.
+ * - `released`: Paylov reports the hold released; nothing is left to capture or release.
+ * - `possibly_expired`: still reads `held`, but the deadline has passed. A capture may fail with
+ *   `hold_time_expired`; release it if you will not capture. Not proof of release.
+ * - `unknown`: the read proves nothing (no hold found, an unobserved status, or fields that
+ *   disagree with the status). Read again later; never act on it.
+ */
+export type HoldState =
+  | { readonly kind: 'open' }
+  | { readonly kind: 'captured'; readonly amountTiyin: number; readonly capturedAt: Date }
+  | { readonly kind: 'released'; readonly releasedAt: Date }
+  | { readonly kind: 'possibly_expired' }
+  | { readonly kind: 'unknown' };

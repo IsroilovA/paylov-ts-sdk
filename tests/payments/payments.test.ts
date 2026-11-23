@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
 import { createPaymentsResource } from '../../src/payments/resource.js';
 import {
+  captureAsync,
   expectApiError,
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { patchedResponse, wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -114,6 +116,20 @@ describe('payments.create', () => {
 });
 
 describe('payments.pay', () => {
+  it('reads a processing_error decline as definitive: such a pay never ends up paid', async () => {
+    const params = { transactionId: TRANSACTION_ID, cardId: CARD_ID, userId: USER_ID };
+    const { resource } = setup([
+      wireResponse('payments/pay.processingError.wire.json'),
+      wireResponse('payments/pay.cardNotForCheck.wire.json'),
+    ]);
+
+    for (const code of ['processing_error', 'card_is_not_for_this_check']) {
+      const error = await captureAsync(resource.pay(params));
+      expect(error).toMatchObject({ code, isUnsettled: false });
+      expect(isPaylovOutcomeUnknown(error)).toBe(false);
+    }
+  });
+
   it('posts the transaction, card and user and returns the transaction id', async () => {
     const { resource, fetchImpl } = setup([wireResponse('payments/pay.success.wire.json')]);
 
@@ -162,6 +178,17 @@ describe('gateway field errors', () => {
 });
 
 describe('payments.refund', () => {
+  it('reads processing_error as an unknown outcome', async () => {
+    // DEV answered a refund of a captured hold with processing_error (c559).
+    const { resource } = setup([
+      fixtureResponse('payments/refund.processingError.synthesized.json', { status: 400 }),
+    ]);
+
+    const error = await captureAsync(resource.refund({ transactionId: TRANSACTION_ID }));
+    expect(error).toMatchObject({ code: 'processing_error', isUnsettled: true });
+    expect(isPaylovOutcomeUnknown(error)).toBe(true);
+  });
+
   it('posts the transaction id and reads the Tashkent cancel time', async () => {
     const { resource, fetchImpl } = setup([wireResponse('payments/refund.success.wire.json')]);
 

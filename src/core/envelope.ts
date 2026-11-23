@@ -10,9 +10,10 @@ import {
   PaylovApiError,
   unexpectedStatus,
   type PaylovProtocolError,
+  UNSETTLED_FAILURE_CODES,
 } from './errors.js';
 import { isRecord } from './decoding.js';
-import type { ResponseContext, ResponseShape } from './types.js';
+import type { Endpoint, ResponseContext, ResponseShape } from './types.js';
 
 const WIRE_ERROR_CODE = /^[a-z][a-z0-9_]{0,127}$/;
 
@@ -39,15 +40,22 @@ function unusableBody(context: ResponseContext): PaylovProtocolError {
     : unexpectedStatus(context);
 }
 
+function isUnsettledCode(code: string, endpoint: ResponseEndpoint): boolean {
+  const isDefinitive = (endpoint.definitiveCodes ?? []).some((definitive) => definitive === code);
+  return endpoint.movesMoney === true && UNSETTLED_FAILURE_CODES.has(code) && !isDefinitive;
+}
+
 function apiError(
   code: string,
   error: Readonly<Record<string, unknown>>,
   context: ResponseContext,
+  endpoint: ResponseEndpoint,
   retryAfter: string | null,
 ): PaylovApiError {
   return new PaylovApiError({
     code,
     ...context,
+    isUnsettled: isUnsettledCode(code, endpoint),
     ...decodeErrorDetails(code, error, retryAfter),
   });
 }
@@ -69,6 +77,9 @@ function successPayload(body: unknown, context: ResponseContext, shape: Response
   return unwrapResult(body, context);
 }
 
+/** What the normalizer needs of the declared endpoint. */
+export type ResponseEndpoint = Pick<Endpoint, 'shape' | 'movesMoney' | 'definitiveCodes'>;
+
 /**
  * Returns the success payload as `unknown` for the owning decoder, or throws: `PaylovApiError`
  * for a decodable `error`, `PaylovProtocolError` for anything else. `retryAfter` is the
@@ -77,7 +88,7 @@ function successPayload(body: unknown, context: ResponseContext, shape: Response
 export function normalizeResponse(
   body: unknown,
   context: ResponseContext,
-  shape: ResponseShape,
+  endpoint: ResponseEndpoint,
   retryAfter: string | null,
 ): unknown {
   // Branch on `error` being non-null, never on key presence or on the status alone: 404 carries
@@ -86,8 +97,8 @@ export function normalizeResponse(
   if (error !== null && error !== undefined) {
     const code = isRecord(error) ? error['code'] : undefined;
     if (!isRecord(error) || !isWireErrorCode(code)) throw unusableBody(context);
-    throw apiError(code, error, context, retryAfter);
+    throw apiError(code, error, context, endpoint, retryAfter);
   }
   if (!isSuccessStatus(context.httpStatus)) throw unexpectedStatus(context);
-  return successPayload(body, context, shape);
+  return successPayload(body, context, endpoint.shape);
 }

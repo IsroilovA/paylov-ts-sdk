@@ -15,14 +15,31 @@ import type {
 
 export const ENDPOINTS = {
   create: { method: 'POST', route: '/merchant/receipts/create/', shape: 'envelope' },
-  pay: { method: 'POST', route: '/merchant/receipts/pay/', shape: 'envelope' },
-  refund: { method: 'POST', route: '/merchant/payment/cancel/', shape: 'envelope' },
+  pay: {
+    method: 'POST',
+    route: '/merchant/receipts/pay/',
+    shape: 'envelope',
+    // A pay answered `processing_error` never ends up paid (docs/paylov/payments.md#flow).
+    movesMoney: true,
+    definitiveCodes: ['processing_error'],
+  },
+  refund: {
+    method: 'POST',
+    route: '/merchant/payment/cancel/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
   startPanPayment: {
     method: 'POST',
     route: '/merchant/paymentWithoutRegistration/',
     shape: 'envelope',
   },
-  confirmPanPayment: { method: 'POST', route: '/merchant/confirmPayment/', shape: 'envelope' },
+  confirmPanPayment: {
+    method: 'POST',
+    route: '/merchant/confirmPayment/',
+    shape: 'envelope',
+    movesMoney: true,
+  },
 } as const;
 
 /** The `paylov.payments` namespace. */
@@ -58,7 +75,8 @@ export interface PaymentsResource {
    * `transaction_not_available_for_payment`. Paylov does not document whether a pay can still land
    * while the status reads `created`; the SDK assumes a status that stays `created` across
    * repeated reads means the pay did not take effect: pay again with the same `transactionId`,
-   * never a new transaction.
+   * never a new transaction. The SDK assumes a pay answered `processing_error` never lands, so it reads as a definitive
+   * decline.
    *
    * @throws {@link PaylovApiError} `transaction_already_payed`,
    * `transaction_not_available_for_payment` (refunded, failed or not payable),
@@ -84,8 +102,10 @@ export interface PaymentsResource {
    * `transaction_not_available_for_cancel`.
    *
    * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded, never
-   * paid, or a checkout or PAN payment), `processing_error` (a captured hold on Paylov's test
-   * environment), `transaction_not_found`, `permission_denied`.
+   * paid, or a checkout or PAN payment), `processing_error` (an unknown outcome; Paylov's test
+   * environment answers it for a captured hold and the transaction then still reads `paid`: refund
+   * through the Paylov business panel, not by repeating the call), `transaction_not_found`,
+   * `permission_denied`.
    *
    * @example
    * const { refundedAt } = await paylov.payments.refund({ transactionId });

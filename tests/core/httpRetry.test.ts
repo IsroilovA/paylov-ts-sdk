@@ -405,10 +405,31 @@ describe('non-GET requests are never retried', () => {
     ['timeout', { delayMs: 5_000 }, { timeoutMs: 30 }, 'sdk_timeout'],
   ] as const)('makes exactly one attempt after a %s', async (_label, failure, overrides, code) => {
     for (const method of ['POST', 'DELETE'] as const) {
-      const { http, fetchImpl } = client([failure, SUCCESS], overrides);
-      await expect(http.request({ ...CREATE_RECEIPT, method })).rejects.toMatchObject({ code });
-      expect(fetchImpl.calls).toHaveLength(1);
+      for (const maxGetRetries of [undefined, 0, 5]) {
+        const retry = maxGetRetries === undefined ? {} : { maxGetRetries };
+        const { http, fetchImpl } = client([failure, SUCCESS], { ...overrides, ...retry });
+        await expect(http.request({ ...CREATE_RECEIPT, method })).rejects.toMatchObject({ code });
+        expect(fetchImpl.calls).toHaveLength(1);
+      }
     }
+  });
+});
+
+describe('the GET retry count', () => {
+  const serverError = wireResponse('envelope/serverError.wire.json');
+
+  it.each([
+    [0, 1],
+    [1, 2],
+    [5, 6],
+  ])('retries a GET %i times when configured so', async (maxGetRetries, attempts) => {
+    const { sleeps, sleep } = recordingSleep();
+    const script = Array.from({ length: attempts + 1 }, () => serverError);
+    const { http, fetchImpl } = client(script, { maxGetRetries, sleep });
+    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'server_error' });
+    expect(fetchImpl.calls).toHaveLength(attempts);
+    // The backoff stays exponential from 200 ms (jitter pinned at 1 by the harness).
+    expect(sleeps).toEqual(Array.from({ length: maxGetRetries }, (_, i) => 200 * 2 ** i));
   });
 });
 

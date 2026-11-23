@@ -53,11 +53,3 @@ charge answered `hold_time_expired`, with `cancel_time` set and `is_hold: true` 
 dismissed hold was read through `getTransactions`, and DEV answered `processing_error` to
 `payment/cancel` on a captured hold (W c557, c559, c561, c887). Page:
 [Transactions](transactions.md#fields-of-transactions).
-
-## Q87
-
-Will REST transaction reads ever return the `account` keys a payment was created with?
-
-`getTransactions` returns `account: {}` whatever was sent (W c087, c346), while the GraphQL
-`getCheck` read returned every sent key (W c1151–c1153, c1166–c1171). Page:
-[Payments](payments.md#common-rules).

@@ -4,12 +4,31 @@ import { hash, timingSafeEqual } from 'node:crypto';
 
 import { configError } from '../core/errors.js';
 import { isRecord } from '../core/decoding.js';
-import { readConfig } from '../core/params.js';
+import { readConfig, type Params } from '../core/params.js';
 import { decodeWebhook, invalid } from './decoders.js';
 import type { PaylovWebhookReceiverConfig, WebhookInput, WebhookOutcome } from './types.js';
 
 function sha256(value: string): Buffer {
   return hash('sha256', value, 'buffer');
+}
+
+interface CredentialDigests {
+  readonly login: Buffer;
+  readonly password: Buffer;
+}
+
+function readCredentialDigests(pair: Params, index: number): CredentialDigests {
+  const login = pair.string('login');
+  // RFC 7617 splits credentials at the first colon, so such a login could never authenticate.
+  if (login.includes(':')) {
+    const field = `credentials[${index}].login`;
+    throw configError(
+      `PaylovWebhookReceiver config: ${field} must not contain a colon`,
+      field,
+      'format',
+    );
+  }
+  return { login: sha256(login), password: sha256(pair.string('password')) };
 }
 
 /** The single Authorization header value; a repeated header is never a single value. */
@@ -45,7 +64,9 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  * Card Bind notification. Moves no money and keeps no state.
  *
  * `receive` never throws for anything a request carries. It checks `POST` and HTTP Basic
- * credentials in constant time, then returns a decoded event or `{ kind: 'invalid', reason }`.
+ * credentials against every configured pair in constant time, then returns a decoded event with
+ * the `credentialIndex` of the pair that matched, or `{ kind: 'invalid', reason }`. List several
+ * pairs to rotate credentials without downtime.
  * The caller owns everything after:
  * - answer check and perform with HTTP 200 and `createWebhookResponse(event, decision)`;
  * - acknowledge `transaction.cancel`, `merchant.deposit` and `card.bind` with any 2xx once
@@ -58,8 +79,7 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  *
  * @example
  * const receiver = new PaylovWebhookReceiver({
- *   login: webhookLoginFromSecretManager,
- *   password: webhookPasswordFromSecretManager,
+ *   credentials: [{ login: webhookLoginFromSecretManager, password: webhookPasswordFromSecretManager }],
  * });
  * const event = receiver.receive({ method: req.method, headers: req.headers, body: rawBody });
  * switch (event.kind) {
@@ -72,23 +92,23 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  *     return reply(event.reason === 'unauthorized' ? 401 : 400);
  * }
  *
- * @throws {@link PaylovInputError} `sdk_config_error` for a missing login or password, or a login
- * containing a colon.
+ * @throws {@link PaylovInputError} `sdk_config_error` for an empty `credentials` list, a missing
+ * login or password, or a login containing a colon.
  */
 export class PaylovWebhookReceiver {
-  readonly #loginHash: Buffer;
-  readonly #passwordHash: Buffer;
+  readonly #credentials: readonly CredentialDigests[];
 
   constructor(config: PaylovWebhookReceiverConfig) {
     const surface = 'PaylovWebhookReceiver config';
     const params = readConfig(config, surface);
-    const login = params.string('login');
-    // RFC 7617 splits credentials at the first colon, so such a login could never authenticate.
-    if (login.includes(':')) {
-      throw configError(`${surface}: login must not contain a colon`, 'login', 'format');
+    this.#credentials = params.array('credentials', readCredentialDigests);
+    if (this.#credentials.length === 0) {
+      throw configError(
+        `${surface}: credentials must list at least one pair`,
+        'credentials',
+        'required',
+      );
     }
-    this.#loginHash = sha256(login);
-    this.#passwordHash = sha256(params.string('password'));
   }
 
   /**
@@ -107,16 +127,27 @@ export class PaylovWebhookReceiver {
   receive(input: WebhookInput): WebhookOutcome {
     if (!isRecord(input)) return invalid('invalid_request');
     if (input.method !== 'POST') return invalid('unsupported_http_method');
-    if (!this.#isAuthorized(input.headers)) return invalid('unauthorized');
-    return decodeWebhook(input.body);
+    const credentialIndex = this.#matchingCredential(input.headers);
+    if (credentialIndex === undefined) return invalid('unauthorized');
+    const decoded = decodeWebhook(input.body);
+    return decoded.kind === 'invalid' ? decoded : { ...decoded, credentialIndex };
   }
 
-  #isAuthorized(headers: unknown): boolean {
+  /**
+   * Compares the request against every pair, both digests each, before choosing: the time taken
+   * does not depend on which pair matched or which half differed.
+   */
+  #matchingCredential(headers: unknown): number | undefined {
     const credentials = decodeBasicCredentials(readAuthorization(headers));
-    if (credentials === undefined) return false;
-    // Compare both digests before combining, so a login mismatch costs the same time.
-    const loginMatches = timingSafeEqual(sha256(credentials[0]), this.#loginHash);
-    const passwordMatches = timingSafeEqual(sha256(credentials[1]), this.#passwordHash);
-    return loginMatches && passwordMatches;
+    if (credentials === undefined) return undefined;
+    const login = sha256(credentials[0]);
+    const password = sha256(credentials[1]);
+    const matches = this.#credentials.map(
+      (pair) =>
+        Number(timingSafeEqual(login, pair.login)) &
+        Number(timingSafeEqual(password, pair.password)),
+    );
+    const index = matches.indexOf(1);
+    return index < 0 ? undefined : index;
   }
 }

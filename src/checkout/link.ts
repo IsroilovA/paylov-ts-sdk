@@ -11,7 +11,8 @@ import {
 } from '../shared/checkoutAmount.js';
 
 /** Paylov's hosted-checkout host. The page exists on production only. */
-const CHECKOUT_BASE_URL = 'https://my.paylov.uz/checkout/create/';
+const DEFAULT_CHECKOUT_ORIGIN = 'https://my.paylov.uz';
+const CHECKOUT_PATH = '/checkout/create/';
 
 /**
  * Characters the checkout page can carry in an account key or value. The page splits the
@@ -42,6 +43,11 @@ export interface CreateCheckoutUrlParams {
    * perform webhooks in the converted currency and amount, which Paylov does not state outright.
    */
   readonly convertTo?: CheckoutCurrency;
+  /**
+   * The checkout host as a bare `https` origin, without a path; default `https://my.paylov.uz`.
+   * The link opens `<baseUrl>/checkout/create/<encoded query>`.
+   */
+  readonly baseUrl?: string;
 }
 
 /**
@@ -76,6 +82,7 @@ export function createCheckoutUrl(params: CreateCheckoutUrlParams): string {
   }
   const returnUrl = input.url('returnUrl');
   const convertTo = input.optionalLiteral('convertTo', CHECKOUT_CURRENCIES);
+  const origin = input.optionalHttpsOrigin('baseUrl') ?? DEFAULT_CHECKOUT_ORIGIN;
 
   // Form-encoded like the vendor's Python `urlencode` reference, then standard padded base64:
   // the page decodes it with `atob`, which rejects base64url.
@@ -88,5 +95,5 @@ export function createCheckoutUrl(params: CreateCheckoutUrlParams): string {
     ['currency_id', String(amount.currency)],
     ...(convertTo === undefined ? [] : [['convert_to', String(convertTo)]]),
   ]).toString();
-  return `${CHECKOUT_BASE_URL}${Buffer.from(query, 'utf8').toString('base64')}`;
+  return `${origin}${CHECKOUT_PATH}${Buffer.from(query, 'utf8').toString('base64')}`;
 }

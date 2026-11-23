@@ -1,0 +1,7 @@
+{
+  "result": null,
+  "error": {
+    "code": "processing_error",
+    "message": "The payment could not be processed. Please try again."
+  }
+}

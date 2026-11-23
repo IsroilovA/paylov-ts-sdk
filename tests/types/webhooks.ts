@@ -10,10 +10,22 @@ import {
 } from '../../src/index.js';
 
 const receiver = new PaylovWebhookReceiver({
-  login: 'EXAMPLE-CALLBACK-LOGIN',
-  password: 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL',
+  credentials: [
+    {
+      login: 'EXAMPLE-CALLBACK-LOGIN',
+      password: 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL',
+    },
+  ],
 });
+// @ts-expect-error at least one credential pair
+void new PaylovWebhookReceiver({ credentials: [] });
+// @ts-expect-error a single pair goes in the credentials list
+void new PaylovWebhookReceiver({ login: 'EXAMPLE-CALLBACK-LOGIN', password: 'x' });
 const outcome: WebhookOutcome = receiver.receive({ method: 'POST', headers: {}, body: {} });
+if (outcome.kind !== 'invalid') {
+  const credentialIndex: number = outcome.credentialIndex;
+  void credentialIndex;
+}
 
 declare const nodeRequest: IncomingMessage;
 void receiver.receive({ method: nodeRequest.method, headers: nodeRequest.headers, body: '' });

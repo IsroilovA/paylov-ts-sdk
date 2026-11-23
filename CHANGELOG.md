@@ -3,6 +3,46 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- **Behavior:** `isPaylovOutcomeUnknown` now also returns `true` for `processing_error`,
+  `unknown_error` and `error_at_pay` from a call that can charge, reserve, capture, release, refund
+  or split funds (`payments.pay`, `payments.refund`, `payments.confirmPanPayment`, `holds.create`,
+  `holds.capture`, `holds.release`, `splits.create`). Reconcile before acting again.
+  `processing_error` from `payments.pay` and specific declines stay definitive. `PaylovApiError`
+  gains `isUnsettled`, also in `toJSON()`: true for HTTP 500 and above and for those codes.
+- `holds.create` returns `HoldCreated`: the transaction id plus `durationMinutes` and
+  `clientCaptureDeadline`, a lower bound on expiry computed from the client clock before the request
+  is sent. It is not proof of release.
+- `PaylovWebhookReceiver` takes `{ credentials: [{ login, password }, ...] }` instead of
+  `{ login, password }`, and every received event carries `credentialIndex`: `WebhookOutcome` is
+  `ReceivedWebhookEvent | InvalidWebhook`. `createWebhookRequest(event, credentials)` takes one
+  `PaylovWebhookCredentials` pair.
+- `baseUrl` configuration errors name their context, e.g.
+  `PaylovClient config: baseUrl must use https`.
+
+### Added
+
+- `transactions.iterate(params?, { signal })`: an async iterable over every paid transaction in a
+  Tashkent date range. It stops at `total` or an empty page and throws `PaylovProtocolError` when
+  two pages in a row bring no new row.
+- `readHoldState` and `readRefundState`: pure decisions over `holds.get` and `transactions.get`
+  reads, answering `unknown` whenever the read proves nothing. New types: `HoldCreated`,
+  `HoldState`, `ReadHoldStateParams`, `RefundState`, `ReadRefundStateParams`,
+  `IterateTransactionsParams`, `ReceivedWebhookEvent`, `PaylovWebhookCredentials`.
+- `maxGetRetries` (0 to 5, default 2; POST and DELETE never retry) for `PaylovClient` and
+  `PaylovOnboarding`, and `PaylovClient`'s `now`, the clock behind token expiry and hold deadlines.
+- `createCheckoutUrl({ baseUrl })`: an https checkout origin other than `https://my.paylov.uz`.
+- Webhook credential rotation: several credential pairs, all compared in constant time.
+- `/testing`: `new PaylovFakeGateway({ simulate: true, now })` with `addCard`, simulating cards,
+  payments, transactions and holds as observed on Paylov's test environment, and answering
+  `fake_unsimulated` for a state it does not cover; other methods still need a script, and scripted
+  answers take precedence. `fake.token` scripts token-endpoint failures (`invalid_grant` per grant,
+  429 with `Retry-After`) in both modes. New types: `PaylovFakeGatewayOptions`,
+  `PaylovFakeTokenEndpoint`, `PaylovFakeTokenFailure`, `PaylovFakeGrant`.
+
 ## [0.0.3] - 2026-11-19
 
 ### Changed

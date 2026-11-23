@@ -56,9 +56,10 @@ Each method's JSDoc names the codes worth branching on.
 | Credentials and access       | `invalid_grant`, `permission_denied`, `invalid_token`                                         | Fix configuration or ask Paylov; never retry automatically                       |
 | Request validation           | `validation_error`, `field_required`, `field_not_valid`, `not_found`                          | Fix the call; `not_found` means the route does not exist                         |
 | Infrastructure               | `rate_limit_exceeded`, `server_error`                                                         | Wait `retryAfterSeconds`; a 5xx leaves the outcome unknown                       |
+| Generic failures             | `processing_error`, `unknown_error`, `error_at_pay`                                           | On a money-moving call the outcome is unknown, except `processing_error` on pay  |
 | Card                         | `card_not_found`, `card_not_match`, `card_exists`, `phone_not_match`, `link_expired`          | Ask the end user for another card or corrected details                           |
 | OTP and PIN                  | `invalid_otp`, `otp_expired`, `too_many_attempts`, `otp_code_already_sent`, `card_is_blocked` | Re-prompt or restart the flow; after `card_is_blocked`, wait `retryAfterSeconds` |
-| Funds and declines           | `insufficient_funds`, `invalid_amount`, `do_not_honor`, `processing_error`                    | Tell the user; start a new attempt only after reconciling                        |
+| Funds and declines           | `insufficient_funds`, `invalid_amount`, `do_not_honor`, `card_is_not_for_this_check`          | Tell the user; the call did not move money                                       |
 | Transaction state and lookup | `transaction_not_found`, `transaction_already_payed`, `hold_not_found`                        | Already done or not allowed in this state: read the record                       |
 | Fiscalization                | `ofd_check_already_generated`, `ofd_error`                                                    | Fix the receipt data, or read `fiscalization.getReceipt`                         |
 | Splits and sub-merchants     | `split_already_done`, `recipient_not_found`, `sub_merchant_already_created`                   | Read the split or fix the recipient data                                         |
@@ -75,8 +76,15 @@ Each method's JSDoc names the codes worth branching on.
 ## Recovery after an ambiguous failure
 
 `isPaylovOutcomeUnknown(error)` is true when the call may have run: a protocol error, a connection
-error after a request was sent, or a gateway error with HTTP status 500 or above. Nothing that moves
-money is retried automatically. Then:
+error after a request was sent, a gateway error with HTTP status 500 or above, or a generic failure
+code (`processing_error`, `unknown_error`, `error_at_pay`) from a call that can charge, reserve,
+capture, release, refund or split funds: `payments.pay`, `payments.refund`,
+`payments.confirmPanPayment`, `holds.create`, `holds.capture`, `holds.release` and `splits.create`.
+`error.isUnsettled` carries the same answer. Those codes name no reason, and Paylov does not
+document whether money moved. The exception is `processing_error` from `payments.pay`: the SDK
+assumes that pay never lands and reads it as a definitive decline. Specific declines such as
+`insufficient_funds` or `card_is_not_for_this_check` stay definitive. Nothing that moves money is
+retried automatically. Then:
 
 - Read the record named below before acting again. Never repeat a money-moving call blindly.
 - Repeat a call that takes an `externalId` or a `transactionId` with the same value, never a new

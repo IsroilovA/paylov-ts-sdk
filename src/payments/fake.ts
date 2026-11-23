@@ -2,6 +2,7 @@ import {
   optionalEntry,
   tashkentDateTimeOf,
   decodeWholeSum,
+  type FakeCodec,
   type FakeRequest,
   type PaylovFakeSurface,
   type Scripter,
@@ -9,6 +10,7 @@ import {
 import type { Params } from '../core/params.js';
 import type { PaylovJsonObject } from '../core/types.js';
 import { decodeOtpSms, encodeTransactionReference } from '../shared/fake.js';
+import type { TransactionReference } from '../shared/transactions.js';
 import { ENDPOINTS, type PaymentsResource } from './resource.js';
 import type {
   ConfirmPanPaymentParams,
@@ -76,6 +78,16 @@ function decodeConfirmPanPaymentRequest({ body }: FakeRequest): ConfirmPanPaymen
   };
 }
 
+export const PAYMENT_CODECS: {
+  readonly create: FakeCodec<TransactionReference, CreatePaymentParams>;
+  readonly pay: FakeCodec<TransactionReference, PayPaymentParams>;
+  readonly refund: FakeCodec<PaymentRefunded, RefundPaymentParams>;
+} = {
+  create: { encode: encodeTransactionReference, decodeRequest: decodeCreateRequest },
+  pay: { encode: encodeTransactionReference, decodeRequest: decodePayRequest },
+  refund: { encode: encodePaymentRefunded, decodeRequest: decodeRefundRequest },
+};
+
 export function createPaymentsFake(
   script: Scripter<'payments', PaymentsResource>,
 ): PaylovFakeSurface<PaymentsResource> {
@@ -83,11 +95,21 @@ export function createPaymentsFake(
     create: script(
       'payments.create',
       ENDPOINTS.create,
-      encodeTransactionReference,
-      decodeCreateRequest,
+      PAYMENT_CODECS.create.encode,
+      PAYMENT_CODECS.create.decodeRequest,
     ),
-    pay: script('payments.pay', ENDPOINTS.pay, encodeTransactionReference, decodePayRequest),
-    refund: script('payments.refund', ENDPOINTS.refund, encodePaymentRefunded, decodeRefundRequest),
+    pay: script(
+      'payments.pay',
+      ENDPOINTS.pay,
+      PAYMENT_CODECS.pay.encode,
+      PAYMENT_CODECS.pay.decodeRequest,
+    ),
+    refund: script(
+      'payments.refund',
+      ENDPOINTS.refund,
+      PAYMENT_CODECS.refund.encode,
+      PAYMENT_CODECS.refund.decodeRequest,
+    ),
     startPanPayment: script(
       'payments.startPanPayment',
       ENDPOINTS.startPanPayment,

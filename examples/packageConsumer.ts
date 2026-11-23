@@ -57,7 +57,7 @@ check(
 
 const login = 'EXAMPLE-CALLBACK-LOGIN';
 const password = 'EXAMPLE-CALLBACK-PASSWORD';
-const receiver = new PaylovWebhookReceiver({ login, password });
+const receiver = new PaylovWebhookReceiver({ credentials: [{ login, password }] });
 const event = receiver.receive({
   method: 'POST',
   headers: { authorization: 'Basic ' + btoa(login + ':' + password) },

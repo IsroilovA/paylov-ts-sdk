@@ -106,8 +106,17 @@ export interface InvalidWebhook {
   readonly reason: InvalidWebhookReason;
 }
 
+/** An authenticated event and the credential pair it was sent with. */
+export type ReceivedWebhookEvent = WebhookEvent & {
+  /**
+   * The index in `credentials` of the pair the request authenticated with. Once an old pair stops
+   * appearing, remove it from the configuration and from Paylov.
+   */
+  readonly credentialIndex: number;
+};
+
 /** Receiver outcome, discriminated by `kind`. */
-export type WebhookOutcome = WebhookEvent | InvalidWebhook;
+export type WebhookOutcome = ReceivedWebhookEvent | InvalidWebhook;
 
 /**
  * Framework-neutral inbound request supplied to `PaylovWebhookReceiver.receive`. The `method` and
@@ -125,12 +134,21 @@ export interface WebhookInput {
   readonly body: string | Uint8Array | ArrayBuffer | PaylovJsonValue;
 }
 
+/** One HTTP Basic credential pair registered with Paylov for webhooks. */
+export interface PaylovWebhookCredentials {
+  /** Basic auth login; it cannot contain `:`. */
+  readonly login: string;
+  /** Basic auth password. */
+  readonly password: string;
+}
+
 /** Configuration for `PaylovWebhookReceiver`. */
 export interface PaylovWebhookReceiverConfig {
-  /** Basic auth login registered with Paylov; it cannot contain `:`. */
-  readonly login: string;
-  /** Basic auth password registered with Paylov. */
-  readonly password: string;
+  /**
+   * Every pair the receiver accepts, at least one. List the new pair beside the old one while
+   * Paylov switches over, then remove the old one: rotation without downtime.
+   */
+  readonly credentials: readonly [PaylovWebhookCredentials, ...PaylovWebhookCredentials[]];
 }
 
 /**

@@ -25,7 +25,7 @@ function normalize(
   shape: ResponseShape = 'envelope',
   retryAfter: string | null = null,
 ): unknown {
-  return normalizeResponse(body, { endpoint: ENDPOINT, httpStatus }, shape, retryAfter);
+  return normalizeResponse(body, { endpoint: ENDPOINT, httpStatus }, { shape }, retryAfter);
 }
 
 describe('success shapes', () => {

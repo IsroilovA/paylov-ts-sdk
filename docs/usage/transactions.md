@@ -20,24 +20,42 @@ if (transaction === null) {
   merchant keeps no money from it; read `holds.get` to tell a release from a capture.
 - Recovery per method: [errors.md](errors.md#recovery-after-an-ambiguous-failure).
 
+## Refund state
+
+```ts
+import { readRefundState } from '@isroilov_an/paylov';
+
+const state = readRefundState({ transaction: await paylov.transactions.get({ transactionId }) });
+if (state.kind === 'refunded') await orders.markRefunded(orderId, state.refundedAt);
+else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
+```
+
+- `refunded` needs a non-hold transaction reading `refunded` with `cancelledAt`; `not_refunded`
+  needs `paid` with no `cancelledAt`. Everything else is `unknown`: `null`, other statuses, and a
+  hold reading `refunded`, which may be an expiry rather than a refund.
+- `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
+  before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
+
 ## Settled sales
 
 ```ts
 import type { Transaction } from '@isroilov_an/paylov';
 
 const sales: Transaction[] = [];
-for (let page = 1; ; page += 1) {
-  const result = await paylov.transactions.list({
-    fromDate: '2026-11-01',
-    toDate: '2026-11-30',
-    page,
-  });
-  sales.push(...result.transactions);
-  if (result.transactions.length === 0 || sales.length >= result.total) break;
+for await (const transaction of paylov.transactions.iterate({
+  fromDate: '2026-11-01',
+  toDate: '2026-11-30',
+})) {
+  sales.push(transaction);
 }
 ```
 
 - Only currently paid transactions appear, merchant-wide: a refunded payment disappears. Never use
   the list to reconcile one payment or to find refunds.
-- Page until a page is empty or you have `total` rows; the page size is undocumented.
-- Dates are Tashkent calendar days; `toDate` is included.
+- Dates are Tashkent calendar days, UTC+05:00; `toDate` is included.
+- `iterate` requests pages from 1 and stops at `total` rows or an empty page; the page size is
+  undocumented. Two pages in a row with no new row throw `PaylovProtocolError` instead of looping.
+  Pass `{ signal }` to stop it; breaking out of the loop stops it too. Use `list` for one page.
+- Rows already seen are skipped, so none repeats when a sale paid mid-loop pushes rows to a later
+  page. A refund made mid-loop can shift an unseen row to an earlier page and out of reach. Iterate
+  a closed date range for reconciliation.

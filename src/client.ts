@@ -1,8 +1,10 @@
 import { TokenManager } from './core/auth.js';
+import { configError } from './core/errors.js';
 import { readSurfaceTransport } from './core/config.js';
 import { createHttpClient } from './core/http.js';
 import { ClientLifecycle } from './core/lifecycle.js';
-import { readCallSignal, readConfig } from './core/params.js';
+import { readCallSignal, readConfig, type Params } from './core/params.js';
+import { isClock, readClock, systemClock, type Clock } from './core/time.js';
 import type { PaylovCallOptions, PaylovTransportConfig } from './core/types.js';
 import { createCardsResource, type CardsResource } from './cards/resource.js';
 import {
@@ -16,7 +18,7 @@ import { createSplitsResource, type SplitsResource } from './splits/resource.js'
 import { createSubMerchantsResource, type SubMerchantsResource } from './subMerchants/resource.js';
 import { createTransactionsResource, type TransactionsResource } from './transactions/resource.js';
 
-/** Configuration for `PaylovClient`. Retries are not configurable: only GET requests retry. */
+/** Configuration for `PaylovClient`. Only GET requests retry; see `maxGetRetries`. */
 export interface PaylovClientConfig extends PaylovTransportConfig {
   /**
    * Gateway origin with no path: DEV `https://dev.gw.paylov.uz`, PROD `https://gw2.paylov.uz`.
@@ -29,6 +31,18 @@ export interface PaylovClientConfig extends PaylovTransportConfig {
   readonly username: string;
   /** Secret. Never logged, never quoted in an error message. */
   readonly password: string;
+  /**
+   * The clock behind token expiry and `holds.create`'s `clientCaptureDeadline`. Defaults to the
+   * system clock; inject one to make tests deterministic. It must return a valid `Date`.
+   */
+  readonly now?: () => Date;
+}
+
+function readClockConfig(params: Params): Clock {
+  const now = params.raw('now');
+  if (now === undefined) return systemClock;
+  if (!isClock(now)) throw configError('now must be a function', 'now', 'type');
+  return now;
 }
 
 /**
@@ -103,6 +117,9 @@ export class PaylovClient {
     const params = readConfig(config, 'PaylovClient config');
     const transport = readSurfaceTransport(params);
     const lifecycle = new ClientLifecycle();
+    const clock = readClockConfig(params);
+    // Fail at construction, not after a token grant has been spent.
+    readClock(clock, 'PaylovClient');
     // The token transport has neither auth nor the lifecycle: grants never recurse into the
     // manager, and revocation still runs after the client is closed.
     this.#auth = new TokenManager({
@@ -112,6 +129,7 @@ export class PaylovClient {
       consumerSecret: params.string('consumerSecret'),
       username: params.string('username'),
       password: params.string('password'),
+      now: () => readClock(clock, 'PaylovClient'),
     });
     const http = createHttpClient({ ...transport, lifecycle, auth: this.#auth });
     const anonymousHttp = createHttpClient({ ...transport, lifecycle });
@@ -120,7 +138,7 @@ export class PaylovClient {
     this.cards = createCardsResource(http);
     this.payments = createPaymentsResource(http);
     this.transactions = createTransactionsResource(http);
-    this.holds = createHoldsResource(http);
+    this.holds = createHoldsResource(http, clock);
     this.splits = createSplitsResource(http);
     this.fiscalization = createFiscalizationResource(http);
     this.subMerchants = createSubMerchantsResource(http);

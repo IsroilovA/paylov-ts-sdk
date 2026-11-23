@@ -46,6 +46,7 @@ export interface PaylovErrorDiagnostic {
   readonly path?: string | undefined;
   readonly timeoutMs?: number | undefined;
   readonly isSent?: boolean;
+  readonly isUnsettled?: boolean;
 }
 
 type DiagnosticDetails = Omit<PaylovErrorDiagnostic, 'name' | 'kind' | 'code' | 'message'>;
@@ -151,6 +152,11 @@ interface PaylovApiErrorInit {
   readonly endpoint: string;
   readonly fields?: readonly string[] | undefined;
   readonly retryAfterSeconds?: number | undefined;
+  /**
+   * A generic failure code from a call that can move money. Default `false`; HTTP 500 and above
+   * always count.
+   */
+  readonly isUnsettled?: boolean;
 }
 
 /**
@@ -181,6 +187,8 @@ export class PaylovApiError extends PaylovBaseError {
    * the rest of the card's block after repeated wrong one-time codes.
    */
   readonly retryAfterSeconds: number | undefined;
+  /** Whether the answer leaves the call's effect unknown; see {@link isPaylovOutcomeUnknown}. */
+  readonly isUnsettled: boolean;
 
   constructor(init: PaylovApiErrorInit) {
     super(`Paylov returned ${init.code} (HTTP ${init.httpStatus}) for ${init.endpoint}`);
@@ -189,6 +197,7 @@ export class PaylovApiError extends PaylovBaseError {
     this.endpoint = init.endpoint;
     this.fields = init.fields;
     this.retryAfterSeconds = init.retryAfterSeconds;
+    this.isUnsettled = init.httpStatus >= 500 || init.isUnsettled === true;
   }
 
   protected diagnosticDetails(): DiagnosticDetails {
@@ -197,6 +206,7 @@ export class PaylovApiError extends PaylovBaseError {
       endpoint: this.endpoint,
       fields: this.fields,
       retryAfterSeconds: this.retryAfterSeconds,
+      isUnsettled: this.isUnsettled,
     };
   }
 }
@@ -385,11 +395,24 @@ export function isPaylovError(error: unknown): error is PaylovError {
 }
 
 /**
+ * Generic failure codes that name no reason, so a money-moving endpoint answering one may still
+ * have acted, unless the endpoint lists the code in `definitiveCodes`.
+ */
+export const UNSETTLED_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'processing_error',
+  'unknown_error',
+  'error_at_pay',
+]);
+
+/**
  * True when the operation may have executed although the call failed: a protocol error, a
- * connection error once a request was sent, or a gateway error with HTTP status 500 or above.
- * Reconcile such a call through the method's documented status read before repeating it. False
- * for input and closed-client errors, for an abort before anything was sent, for other gateway
- * errors, and for anything the SDK did not throw.
+ * connection error once a request was sent, or a gateway error with `isUnsettled`. That is HTTP
+ * status 500 or above, or a generic failure code (`processing_error`, `unknown_error`,
+ * `error_at_pay`) from a method that can charge, reserve, capture, release, refund or split funds.
+ * The SDK assumes `processing_error` from `payments.pay` is a definitive decline. Reconcile such a
+ * call through the method's documented status read before repeating it. False for input and
+ * closed-client errors, an abort before anything was sent, other gateway errors (specific declines
+ * such as `insufficient_funds` included), and anything the SDK did not throw.
  *
  * @example
  * catch (error) {
@@ -399,7 +422,7 @@ export function isPaylovError(error: unknown): error is PaylovError {
  */
 export function isPaylovOutcomeUnknown(error: unknown): boolean {
   if (!isPaylovError(error)) return false;
-  if (error.kind === 'api') return error.httpStatus >= 500;
+  if (error.kind === 'api') return error.isUnsettled;
   if (error.kind === 'connection') return error.isSent;
   return error.kind === 'protocol';
 }

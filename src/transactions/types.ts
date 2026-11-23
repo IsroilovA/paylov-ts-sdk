@@ -13,6 +13,9 @@ export interface ListTransactionsParams {
   readonly page?: number;
 }
 
+/** Parameters for `transactions.iterate`: `transactions.list` without the page. */
+export type IterateTransactionsParams = Omit<ListTransactionsParams, 'page'>;
+
 /** Parameters for `transactions.getRrn`. */
 export interface GetRrnParams {
   readonly transactionId: string;
@@ -84,3 +87,23 @@ export interface TransactionPage {
   /** Paid transactions only, newest payment first. */
   readonly transactions: readonly Transaction[];
 }
+
+/** Parameters for `readRefundState`. */
+export interface ReadRefundStateParams {
+  /** A `transactions.get` result for a sale; `null` when the gateway knew no such transaction. */
+  readonly transaction: Transaction | null;
+}
+
+/**
+ * What a `transactions.get` read establishes about the refund of a paid sale, from
+ * `readRefundState`:
+ * - `refunded`: the sale reads `refunded`, with the refund time.
+ * - `not_refunded`: the sale still reads `paid`.
+ * - `unknown`: the read proves nothing: no transaction, a hold (whose `refunded` can also mark a
+ *   release), a transaction that was never paid, an unobserved status, or a refund without a
+ *   time. Read again later or check the Paylov business panel; never refund again on it.
+ */
+export type RefundState =
+  | { readonly kind: 'refunded'; readonly refundedAt: Date }
+  | { readonly kind: 'not_refunded' }
+  | { readonly kind: 'unknown' };

@@ -186,6 +186,45 @@ function create(params: unknown): string {
   return createCheckoutUrl(params as CreateCheckoutUrlParams);
 }
 
+describe('createCheckoutUrl — checkout host', () => {
+  it('defaults to the production checkout host', () => {
+    expect(createCheckoutUrl(PARAMS).startsWith(HOST)).toBe(true);
+  });
+
+  it('builds the same payload under an overridden https origin, normalized', () => {
+    const url = createCheckoutUrl({ ...PARAMS, baseUrl: ' https://Checkout.Example:8443/ ' });
+    expect(url.startsWith('https://checkout.example:8443/checkout/create/')).toBe(true);
+    expect(url.slice(url.lastIndexOf('/') + 1)).toBe(payloadOf(createCheckoutUrl(PARAMS)));
+  });
+
+  it.each([
+    ['cleartext http', 'http://checkout.example'],
+    ['a relative value', 'checkout.example'],
+    ['a path', 'https://checkout.example/checkout/create/'],
+    ['credentials', 'https://user:EXAMPLE-SECRET@checkout.example'],
+    ['a query', 'https://checkout.example/?token=EXAMPLE-SECRET'],
+    ['a fragment', 'https://checkout.example/#EXAMPLE-SECRET'],
+  ])('rejects a baseUrl with %s without quoting it', async (_label, baseUrl) => {
+    const error = await expectInputError(() => createCheckoutUrl({ ...PARAMS, baseUrl }), {
+      code: INPUT,
+      field: 'baseUrl',
+      rule: 'format',
+    });
+    expect(error.message).not.toContain('EXAMPLE-SECRET');
+  });
+
+  it('rejects a non-string baseUrl', async () => {
+    await expectInputError(
+      () => create({ ...PARAMS, baseUrl: new URL('https://checkout.example') }),
+      {
+        code: INPUT,
+        field: 'baseUrl',
+        rule: 'type',
+      },
+    );
+  });
+});
+
 describe('createCheckoutUrl — validation', () => {
   it.each([undefined, null, [], 'params', 42, true])('rejects the params %j', async (params) => {
     await expectInputError(() => create(params), { code: INPUT, field: undefined, rule: 'type' });

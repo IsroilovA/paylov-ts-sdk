@@ -40,6 +40,8 @@ export interface Params {
   integer(key: string): number;
   optionalInteger(key: string, range?: IntegerRange): number | undefined;
   optionalBoolean(key: string): boolean | undefined;
+  /** A `Date` with a valid time. */
+  date(key: string): Date;
   literal<const T extends string | number>(key: string, values: readonly T[]): T;
   optionalLiteral<const T extends string | number>(
     key: string,
@@ -48,6 +50,12 @@ export interface Params {
   /** An absolute `http(s)` URL. */
   url(key: string): string;
   optionalUrl(key: string): string | undefined;
+  /**
+   * A bare `https` origin, returned normalized. Credentials, a query or a fragment are checked on
+   * the text as given, before normalization.
+   */
+  httpsOrigin(key: string): string;
+  optionalHttpsOrigin(key: string): string | undefined;
   /** A JSON snapshot of that field only. */
   json(key: string): PaylovJsonObject;
   optionalJson(key: string): PaylovJsonObject | undefined;
@@ -115,6 +123,13 @@ class ParamsReader implements Params {
     return value === undefined ? undefined : this.#checkBoolean(key, value);
   }
 
+  date(key: string): Date {
+    const value = this.#required(key);
+    if (!(value instanceof Date)) throw this.#error(key, 'type', 'must be a Date');
+    if (!Number.isFinite(value.getTime())) throw this.#error(key, 'format', 'must be a valid Date');
+    return value;
+  }
+
   literal<const T extends string | number>(key: string, values: readonly T[]): T {
     return this.#checkLiteral(key, this.#required(key), values);
   }
@@ -134,6 +149,15 @@ class ParamsReader implements Params {
   optionalUrl(key: string): string | undefined {
     const value = this.#read(key);
     return value === undefined ? undefined : this.#checkUrl(key, value);
+  }
+
+  httpsOrigin(key: string): string {
+    return this.#checkHttpsOrigin(key, this.#required(key));
+  }
+
+  optionalHttpsOrigin(key: string): string | undefined {
+    const value = this.#read(key);
+    return value === undefined ? undefined : this.#checkHttpsOrigin(key, value);
   }
 
   json(key: string): PaylovJsonObject {
@@ -286,6 +310,20 @@ class ParamsReader implements Params {
       throw this.#error(key, 'format', 'must be an absolute http(s) URL');
     }
     return text;
+  }
+
+  #checkHttpsOrigin(key: string, value: unknown): string {
+    const text = this.#checkString(key, value).trim();
+    const url = URL.parse(text);
+    if (url === null || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
+      throw this.#error(key, 'format', 'must be an absolute https URL');
+    }
+    if (url.protocol !== 'https:') throw this.#error(key, 'format', 'must use https');
+    if (url.username !== '' || url.password !== '' || /[?#]/.test(text)) {
+      throw this.#error(key, 'format', 'must not include credentials, a query or a fragment');
+    }
+    if (url.pathname !== '/') throw this.#error(key, 'format', 'must be an origin without a path');
+    return url.origin;
   }
 
   /** Serializer exceptions are discarded: a cycle or a BigInt says nothing the caller needs. */

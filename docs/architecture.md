@@ -12,10 +12,13 @@ Consequential decisions and the rationale that prevents a wrong fix.
 - Zero runtime dependencies limit the payment supply chain. Framework adapters belong in consuming
   applications.
 - The `/testing` fake gateway answers at the `fetch` boundary, so applications test the real
-  transport and decoders. It never simulates gateway state, because most state transitions are
-  undocumented. It records each request decoded back into the method's own params, so tests assert
-  sent values in SDK units without wire names; it never keeps passwords and never puts requests in
-  errors.
+  transport and decoders. By default it answers only scripted calls. Its opt-in simulation keeps
+  cards, payments, transactions and holds in memory and encodes only transitions observed on DEV;
+  any other state answers `fake_unsimulated` and fails `assertDone()`, because most transitions are
+  undocumented and a guessed one would let application tests pass against behavior Paylov never
+  showed. Scripted answers take precedence over the simulation. It records each request decoded back
+  into the method's own params, so tests assert sent values in SDK units without wire names; it
+  never keeps passwords and never puts requests in errors.
 - Consumer guides ship with the package, so integrators work from types, JSDoc and usage guides
   without the internal Paylov reference.
 
@@ -65,8 +68,13 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   connection (timeout, network, abort). Never infer a class from a code's name; unknown codes stay
   plain API errors.
 - `isPaylovOutcomeUnknown` is the one definition of an ambiguous failure. Docs and JSDoc refer to it
-  instead of restating the predicate. A connection error records whether any attempt reached fetch
-  (`isSent`), because an abort before that provably sent nothing.
+  instead of restating the predicate. On an endpoint that moves money, the generic codes
+  `processing_error`, `unknown_error` and `error_at_pay` count as ambiguous: they name no reason,
+  and Paylov documents neither their triggers nor whether money moved (a maintainer decision). The
+  endpoint declaration carries that classification, so the predicate never matches routes. A pay
+  answered `processing_error` never ends up paid ([payments](paylov/payments.md#flow)), so that code
+  stays definitive there. Specific declines stay definitive. A connection error records whether any
+  attempt reached fetch (`isSent`), because an abort before that provably sent nothing.
 - Decoders report failures as an internal decode failure carrying only the path. It becomes a public
   protocol error only where a response exists; the webhook receiver maps it to an outcome. Any other
   exception from a decoder is an SDK bug and propagates.
@@ -97,8 +105,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 
 ## Transport
 
-- Failure retries are GET-only. POST and DELETE never retry: a lost response does not prove the
-  operation did not execute.
+- Failure retries are GET-only. POST and DELETE never retry, whatever `maxGetRetries` says: a lost
+  response does not prove the operation did not execute. The GET retry count is bounded so a
+  misconfiguration cannot turn one read into a request storm.
 - Nothing retries a 429: the gateway asks for tens of seconds, so callers read `retryAfterSeconds`.
   A 429 whose body read fails stays a 429, so it still starts the token cool-down.
 - One re-authentication replay follows a 401 carrying the enveloped `permission_denied`, for any
@@ -146,6 +155,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 
 - A partial capture's remainder counts as released ([holds](paylov/holds.md#charge)); callers keep
   the original held amount.
+- `holds.create` reports `clientCaptureDeadline`, read from the client clock before the request is
+  sent, so it can only precede the gateway's own creation time: a lower bound on expiry, never proof
+  of release. `readHoldState` therefore reports `possibly_expired`, not `released`, once it passes.
 - Dismiss is the only proof of release ([holds](paylov/holds.md#dismiss)): callers release every
   hold they will not capture, also after it expires. Release is never inferred from expiry or status
   reads.
@@ -165,6 +177,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 - The receiver is framework-neutral and stateless. Invalid input is a secret-safe `invalid` outcome;
   the host application owns the HTTP failure response, because Paylov documents none. Deduplication
   belongs to the application.
+- The receiver accepts a list of credential pairs so a callback password can rotate without
+  downtime. Every pair is compared in constant time, also after a match, so timing does not reveal
+  which pair matched.
 - Check and perform are answered with a semantic decision that maps to the documented status.
 - Only integer minor-unit fields supply money; the whole-currency `amount` is ignored. The checkout
   link is unsigned, so check handlers re-validate amount, currency and account.

@@ -41,6 +41,8 @@ of two states, even for the same decline code (W):
 - `created`, with `card_id: null` (W c615, c616). A later pay with another card succeeded, and a
   further pay answered `transaction_already_payed` (W c617–c619).
 
+A pay answered `processing_error` never ends up paid (M 2026-11-23).
+
 After an uncertain pay, read the transaction by id with backoff; a replay error alone does not
 establish the earlier outcome ([common rules](#common-rules)). Recovery assumption (M 2026-11-15):
 `payed` is done; `transfer`, `pending` and `waiting` are in progress, so keep reading; `failed`
@@ -57,10 +59,9 @@ Wire units: [amount units](README.md#amount-units-by-operation).
 - Unknown request fields are ignored; numeric strings are coerced (W c095).
 - `account` must be a JSON object wherever accepted; a string is `validation_error`
   `{"account": ["Input should be a valid dictionary"]}` (W c093, c173). REST reads return
-  `account: {}` whatever was sent (W c087, c346) [OPEN Q87], although Paylov keeps the keys: for a
-  receipt and a PWR payment the GraphQL `getCheck` read returns every sent key in `account`, with
-  `accountData` `"[]"` (W c1151–c1153, c1166–c1171). Callbacks carry the keys sent
-  ([callbacks](callbacks.md)).
+  `account: {}` whatever was sent (W c087, c346), although Paylov keeps the keys: for a receipt and
+  a PWR payment the GraphQL `getCheck` read returns every sent key in `account`, with `accountData`
+  `"[]"` (W c1151–c1153, c1166–c1171). Callbacks carry the keys sent ([callbacks](callbacks.md)).
 - No request takes an idempotency key: each create call makes a new transaction (W c095, c100). Two
   identical `receipts/create` or PWR bodies with an `Idempotency-Key` header and `externalId`,
   `external_id` and `extId` fields made two transactions, and neither stored an external id

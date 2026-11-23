@@ -19,6 +19,8 @@ const PUBLIC_EXPORTS = [
   'isPaylovApiError',
   'isPaylovError',
   'isPaylovOutcomeUnknown',
+  'readHoldState',
+  'readRefundState',
   'sumToTiyin',
 ];
 
