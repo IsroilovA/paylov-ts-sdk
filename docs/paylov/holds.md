@@ -31,8 +31,9 @@ transaction `payed` (W c561, c887, c1529, c1530).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
 only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`.
-After an uncertain create, look the hold up by its `externalId`; a duplicate-id error proves only
-that the hold exists, not that it still reserves funds ([create](#create), W c1284, c1285).
+Whether a hold's duration can be extended is [OPEN Q88]. After an uncertain create, look the hold up
+by its `externalId`; a duplicate-id error proves only that the hold exists, not that it still
+reserves funds ([create](#create), W c1284, c1285).
 
 ## Create
 

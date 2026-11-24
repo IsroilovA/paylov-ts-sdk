@@ -55,3 +55,12 @@ marked the refunded sale (W c113) and a dismissed hold, with `cancel_time` set a
 `hold_time_expired`, with `cancel_time` set and `is_hold: true` (W c1280). DEV answered
 `processing_error` to `payment/cancel` on a captured hold, which then still read `payed` (W c557,
 c559, c561, c887, c1529, c1530). Page: [Transactions](transactions.md#fields-of-transactions).
+
+## Q88
+
+Can a hold's duration be extended after create, and by how much?
+
+The hold pages document only create, charge, dismiss and status, with `time` fixed at create (D).
+`time` is 1 to 40320 minutes (W c202, c203), and a second create with the same `externalId` is
+`external_id_already_exists`, also after the first was released (W c183, c1270, c1284), so a
+re-create cannot reuse the booking's id. Page: [Holds](holds.md).
