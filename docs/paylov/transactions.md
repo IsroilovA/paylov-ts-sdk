@@ -14,8 +14,9 @@ reads a transaction's RRN where one exists. Vendor contract:
 
 Every payment flow ends in a transaction with one id ([statuses](#fields-of-transactions)): a
 receipt, PWR payment or checkout starts `created`, a hold `waiting`; payment or capture makes it
-`payed`; a declined saved-card pay can make it `failed`; a refund `cancel`, and a hold released
-after an expired charge `refunded` [OPEN Q86] (W c087, c113, c135, c187, c346, c352, c1280).
+`payed`; a declined saved-card pay can make it `failed`; a refund or a hold dismissal `cancel`, and
+a hold released after an expired charge `refunded` [OPEN Q86] (W c087, c113, c135, c187, c346, c352,
+c1280, c1526).
 
 Reconcile by the [id read](#get-one-transaction), which returns every state; the
 [list](#list-transactions) holds only `payed` rows (W c136, c346). REST reads return `account: {}`,
@@ -26,8 +27,8 @@ payments and holds, not for PWR or checkout, and does not prove completion.
 
 `GET {BASE_URL}/merchant/getTransactions/?id=<transactionId>`
 
-Reads receipts, PWR, holds and checkout payments in any status, unpaid and refunded included (W
-c087, c113, c170, c187, c352, c1280).
+Reads receipts, PWR, holds and checkout payments in any status, unpaid, refunded and dismissed
+included (W c087, c113, c170, c187, c352, c1280, c1526).
 
 | Query | Type | Description                                                                | Grade    |
 | ----- | ---- | -------------------------------------------------------------------------- | -------- |
@@ -105,7 +106,7 @@ charge `payedAt`) read `21:00:11` (W c194, c346).
 | `waiting`             | Uncaptured hold                                                                                                                                                                 | W (c187)             |
 | `payed`               | Paid; a captured hold too                                                                                                                                                       | W (c089, c346)       |
 | `failed`              | Declined `receipts/pay`, with `error_message`                                                                                                                                   | W (c135)             |
-| `cancel`              | Refunded by `payment/cancel`                                                                                                                                                    | W (c113)             |
+| `cancel`              | Refunded by `payment/cancel`; also a hold released by `hold/dismiss`, with `cancel_time` set and `is_hold` still `true`                                                         | W (c113, c1526)      |
 | `refunded`            | A 1-minute hold released after expiry, once a charge answered `hold_time_expired`; `cancel_time` is set and `is_hold` stays `true`. Not observed for a refunded sale [OPEN Q86] | W (c1280)            |
 | `transfer`, `pending` | Documented, never observed                                                                                                                                                      | D                    |
 

@@ -21,12 +21,13 @@ c180–c211). Amounts are whole SUM in both directions (W c181, c187, c194, c195
 
 The merchant creates a hold against a bound card, then captures it with charge or releases it with
 dismiss (D). Hold status reads `hold`, `paid` and `cancelled`; the transaction read of the same id
-reads `waiting`, then `payed` (W c187, c346;
+reads `waiting`, then `payed`, or `cancel` once dismissed (W c187, c346, c1526;
 [transactions](transactions.md#fields-of-transactions)). Whether a non-default `serviceId` changes
 who settles the funds is [OPEN Q10]; DEV has no second service.
 
 Charge captures once, possibly partially ([charge](#charge)). Refunding a captured hold failed on
-DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` (W c561, c887).
+DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the
+transaction `payed` (W c561, c887, c1529, c1530).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
 only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`.

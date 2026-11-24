@@ -19,10 +19,12 @@ has no second service. Page: [Holds](holds.md).
 What do `sms.hash` and `sms.templateId` change?
 
 Bind and PWR completed alike with `sms` omitted, `{}`, `{hash}` or `{hash, templateId: 1}` (W
-c725–c727, c729–c731, c733–c735, c737, c738, c1353–c1361, c1365–c1373); a string, an array or a
+c725–c727, c729–c731, c733–c735, c737, c738, c1353–c1361, c1365–c1373), and bind with
+`templateId: 999999`, so DEV checks no template list (W c1522, c1523); a string, an array or a
 non-integer `templateId` is `validation_error` (W c728, c732, c736, c739, c1363). Card binding lists
-`sms` without a description, and the PWR pages omit it (D). Page:
-[Cards](cards.md#create-user-card), [Payments](payments.md#payment-without-registration).
+`sms` without a description, and the PWR pages omit it (D). DEV OTPs are fixed, so the SMS itself
+cannot be observed there. Page: [Cards](cards.md#create-user-card),
+[Payments](payments.md#payment-without-registration).
 
 ## Q32
 
@@ -44,12 +46,12 @@ merchant (W c1452). Page: [Splits](splits.md).
 
 Which `getTransactions` status does each of these read, and is it the same on production as on DEV:
 a sale refunded by `payment/cancel`, a hold dismissed with `hold/dismiss`, a hold Paylov released
-after expiry, and a captured hold refunded by `payment/cancel`? Do `cancel` and `refunded` ever mark
-the same kind of event?
+after expiry, and a captured hold refunded by `payment/cancel`? Why does an expiry release read
+`refunded` while a dismissal reads `cancel`?
 
 The vendor page describes `cancel` as "Cancelled" and `refunded` as "Refunded" (D). On DEV, `cancel`
-marked the refunded sale (W c113); `refunded` appeared once, on a 1-minute hold released after a
-charge answered `hold_time_expired`, with `cancel_time` set and `is_hold: true` (W c1280). No
-dismissed hold was read through `getTransactions`, and DEV answered `processing_error` to
-`payment/cancel` on a captured hold (W c557, c559, c561, c887). Page:
-[Transactions](transactions.md#fields-of-transactions).
+marked the refunded sale (W c113) and a dismissed hold, with `cancel_time` set and `is_hold: true`
+(W c1526); `refunded` appeared once, on a 1-minute hold released after a charge answered
+`hold_time_expired`, with `cancel_time` set and `is_hold: true` (W c1280). DEV answered
+`processing_error` to `payment/cancel` on a captured hold, which then still read `payed` (W c557,
+c559, c561, c887, c1529, c1530). Page: [Transactions](transactions.md#fields-of-transactions).
