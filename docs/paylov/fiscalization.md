@@ -193,22 +193,22 @@ a paid card payment of a merchant without fiscalization, about 10 minutes after 
 `success` reports whether a receipt was found and `isRefund` whether it is a refund receipt; the
 other fields match register. That shape belongs to a known transaction, also given as an upper-case
 UUID or as a captured hold's id (W c859, c861). An unknown `transactionId` is
-`400 transaction_not_found` (W c1308; live run 2026-11-12), and one that is not a UUID (letters, SQL
-text, a path, `%00`, Cyrillic, 5000 characters, empty) is `validation_error` (W c849–c853, c856,
-c863). Every unknown `externalId` is `400 ofd_check_not_found`: spaces, `&` and `=`, HTML, Cyrillic,
-SQL text, 1000 and 2000 characters, and a hold's `externalId` (W c866–c869, c873, c874, c876). A
-5000-character `externalId` made the gateway close the HTTP/2 session without any HTTP response,
-twice (W c870, c872). No other merchant's transaction id was available, so that answer is
-unobserved.
+`400 transaction_not_found` (W c1308, c1514; live run 2026-11-12), and one that is not a UUID
+(letters, SQL text, a path, `%00`, Cyrillic, 5000 characters, empty) is `validation_error` (W
+c849–c853, c856, c863). Every unknown `externalId` is `400 ofd_check_not_found`: spaces, `&` and
+`=`, HTML, Cyrillic, SQL text, 1000 and 2000 characters, and a hold's `externalId` (W c866–c869,
+c873, c874, c876, c1513). A 5000-character `externalId` made the gateway close the HTTP/2 session
+without any HTTP response, twice (W c870, c872). No other merchant's transaction id was available,
+so that answer is unobserved.
 
-| Code                    | Description                                                                                                                                                          | Grade                                                                         |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `validation_error`      | Neither identifier, or an empty `externalId`; `data` is the bare string `"transactionId or externalId is required"`                                                  | W (c273, c875)                                                                |
-| `validation_error`      | `transactionId` not a UUID; `data` `{"transactionId": ["transactionId must be a valid UUID"]}`                                                                       | W (c849, c863)                                                                |
-| `transaction_not_found` | Unknown `transactionId` ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.transactionNotFound.synthesized.json); the capture redacts the message) | W (c1308); live run 2026-11-12 ([Observed behavior](#observed-behavior))      |
-| `ofd_check_not_found`   | Unknown `externalId`, message "Ofd check not found." ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.checkNotFound.synthesized.json))           | W (c866, c876); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
-| No HTTP response        | A 5000-character `externalId`: the HTTP/2 session closes                                                                                                             | W (c870, c872)                                                                |
-| `method_not_allowed`    | `POST` instead of `GET`                                                                                                                                              | W (c275)                                                                      |
+| Code                    | Description                                                                                                                                                          | Grade                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `validation_error`      | Neither identifier, or an empty `externalId`; `data` is the bare string `"transactionId or externalId is required"`                                                  | W (c273, c875)                                                                       |
+| `validation_error`      | `transactionId` not a UUID; `data` `{"transactionId": ["transactionId must be a valid UUID"]}`                                                                       | W (c849, c863)                                                                       |
+| `transaction_not_found` | Unknown `transactionId` ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.transactionNotFound.synthesized.json); the capture redacts the message) | W (c1308, c1514); live run 2026-11-12 ([Observed behavior](#observed-behavior))      |
+| `ofd_check_not_found`   | Unknown `externalId`, message "Ofd check not found." ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.checkNotFound.synthesized.json))           | W (c866, c876, c1513); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
+| No HTTP response        | A 5000-character `externalId`: the HTTP/2 session closes                                                                                                             | W (c870, c872)                                                                       |
+| `method_not_allowed`    | `POST` instead of `GET`                                                                                                                                              | W (c275)                                                                             |
 
 ## Set fiscal receipt
 
@@ -339,7 +339,7 @@ Didox responses, not activity-type responses).
 
 ## Observed behavior
 
-DEV live runs 2026-11-12 and 2026-11-24 (raw probe); no numbered capture.
+DEV live run 2026-11-12, without a numbered capture, and a raw probe on 2026-11-24 (W c1513, c1514).
 
 - `GET status/` with an unknown `transactionId` (a random UUID) answered HTTP 400
   `transaction_not_found`, and with an unknown `externalId` HTTP 400 `ofd_check_not_found`; neither
