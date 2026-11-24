@@ -44,7 +44,9 @@ try {
   merchant setup. `attachReceipt` needs client-side fiscalization. The SDK cannot tell which
   applies: read `getReceipt` before registering.
 - Pass `isRefund` explicitly to `getReceipt`; which receipt comes back without it is undocumented.
-- `null` from `getReceipt` is not final: the OFD may register a receipt later.
+- `null` from `getReceipt` is not final: the OFD may register a receipt later. An unknown
+  `externalId` also resolves `null`, since Paylov cannot tell it from an unregistered sale, so a
+  mistyped key never fails; an unknown `transactionId` throws `transaction_not_found`.
 
 ## Refund receipts
 

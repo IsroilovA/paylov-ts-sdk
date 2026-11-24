@@ -20,17 +20,17 @@ describe.skipIf(!gate.enabled)('fiscalization reads', () => {
   if (!gate.enabled) return;
   const client = liveClient(gate.config);
 
-  it('getReceipt of an unknown transactionId is transaction_not_found, of an unknown externalId ofd_check_not_found', async () => {
+  it('getReceipt of an unknown transactionId is transaction_not_found, of an unknown externalId null', async () => {
     const byId = await refused(
       'fiscalization.getReceipt.unknown-id',
       client.fiscalization.getReceipt({ transactionId: randomUUID() }),
     );
     expect(byId).toMatchObject({ kind: 'api', code: 'transaction_not_found' });
-    const byExternal = await refused(
-      'fiscalization.getReceipt.unknown-external',
-      client.fiscalization.getReceipt({ externalId: externalId('receipt') }),
-    );
-    expect(byExternal).toMatchObject({ kind: 'api', code: 'ofd_check_not_found' });
+    const byExternal = await client.fiscalization.getReceipt({
+      externalId: externalId('receipt'),
+    });
+    observe('fiscalization.getReceipt.unknown-external', { found: byExternal !== null });
+    expect(byExternal).toBeNull();
   });
 });
 

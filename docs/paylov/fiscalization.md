@@ -339,12 +339,12 @@ Didox responses, not activity-type responses).
 
 ## Observed behavior
 
-DEV live run 2026-11-12; no numbered capture.
+DEV live runs 2026-11-12 and 2026-11-24 (raw probe); no numbered capture.
 
 - `GET status/` with an unknown `transactionId` (a random UUID) answered HTTP 400
   `transaction_not_found`, and with an unknown `externalId` HTTP 400 `ofd_check_not_found`; neither
   is the no-receipt `success: false` shape (W c274), which a paid transaction without a receipt
-  returns.
+  returns. The SDK resolves the `ofd_check_not_found` answer to `null`, like the no-receipt shape.
 
 ## Deviations from vendor docs
 
