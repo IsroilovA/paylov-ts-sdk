@@ -3,6 +3,15 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `/testing`: the simulated `PaylovFakeGateway` answers `transactions.get` of a hold released by
+  `holds.release` before it expired: `refunded` with `isHold: true` and the release time as
+  `cancelledAt`, as Paylov reports it. A hold released after it expired still answers
+  `fake_unsimulated`.
+
 ## [0.0.4] - 2026-11-23
 
 ### Changed (breaking)

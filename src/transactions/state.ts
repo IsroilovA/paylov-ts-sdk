@@ -33,7 +33,7 @@ export function readRefundState(params: ReadRefundStateParams): RefundState {
 function stateOf(transaction: Transaction): RefundState {
   const { status, isHold, cancelledAt } = transaction;
   if (status === 'paid' && cancelledAt === null) return { kind: 'not_refunded' };
-  // On a hold, `refunded` has also marked a release after expiry [OPEN Q86].
+  // On a hold, `refunded` has marked a dismissal and a release after expiry [OPEN Q86].
   if (status === 'refunded' && !isHold && cancelledAt instanceof Date) {
     return { kind: 'refunded', refundedAt: cancelledAt };
   }

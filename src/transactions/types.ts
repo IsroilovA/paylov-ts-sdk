@@ -24,7 +24,8 @@ export interface GetRrnParams {
 /**
  * `created` (not yet paid), `held` (an uncaptured hold, as in `HoldStatus`), `paid` (a captured
  * hold too), `failed` (declined; see `declineCode`) or `refunded`. A refunded sale reads
- * `refunded`; so can an expired hold Paylov released, seen once with `isHold` true and no capture.
+ * `refunded`; so does a released hold, with `isHold` true: one dismissed before it expired, or an
+ * expired one Paylov released when a capture failed.
  * `transfer` and `pending` are documented but were never observed. Other values pass through
  * unchanged.
  */

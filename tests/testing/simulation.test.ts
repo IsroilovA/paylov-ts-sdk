@@ -243,6 +243,18 @@ describe('the simulated gateway: holds', () => {
     fake.assertDone();
   });
 
+  it('reads a dismissed hold as refunded, still a hold, with the release time', async () => {
+    const { fake, paylov, advance, now } = simulated();
+    const created = await paylov.holds.create(HOLD);
+
+    advance(1);
+    await paylov.holds.release(created);
+    const read = await paylov.transactions.get(created);
+    expect(read).toMatchObject({ status: 'refunded', isHold: true, cancelledAt: now() });
+    expect(readRefundState({ transaction: read })).toEqual({ kind: 'unknown' });
+    fake.assertDone();
+  });
+
   it('releases an expired hold without a capture attempt', async () => {
     const { fake, paylov, advance } = simulated();
     const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
@@ -389,9 +401,10 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'payments.refund',
     ],
     [
-      'a transaction read of a dismissed hold',
-      async ({ paylov }: Simulated) => {
-        const created = await paylov.holds.create(HOLD);
+      'a transaction read of a hold dismissed after it expired',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
+        advance(3);
         await paylov.holds.release(created);
         return paylov.transactions.get(created);
       },

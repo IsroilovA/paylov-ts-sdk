@@ -71,7 +71,6 @@ interface SimulatedHold {
   readonly capturedAmountTiyin: number | null;
   readonly capturedAt: Date | null;
   readonly releasedAt: Date | null;
-  /** Only an expired capture's release has been read back through `getTransactions` (W c1280). */
   readonly releasedBy: 'dismiss' | 'expiry' | null;
 }
 
@@ -227,8 +226,10 @@ export class GatewaySimulation {
 
   getTransaction({ transactionId }: GetTransactionParams): SimulatedOutcome<Transaction | null> {
     const hold = this.#holds.get(transactionId);
-    // No dismissed hold has been read through `getTransactions` [OPEN Q86].
-    if (hold?.releasedBy === 'dismiss') return unsimulated('transactions.get of a released hold');
+    // Only a hold dismissed before it expired has been read through `getTransactions` [OPEN Q86].
+    if (hold !== undefined && isDismissedAfterExpiry(hold)) {
+      return unsimulated('transactions.get of a hold dismissed after it expired');
+    }
     return result(this.#transactions.get(transactionId) ?? null); // W c144
   }
 
@@ -374,18 +375,26 @@ export class GatewaySimulation {
 
   release({ transactionId }: ReleaseHoldParams): SimulatedOutcome<TransactionReference> {
     const hold = this.#holds.get(transactionId);
-    if (hold === undefined)
+    const transaction = this.#transactions.get(transactionId);
+    if (hold === undefined || transaction === undefined)
       return unsimulated('holds.release of an unknown or non-hold transaction');
     // After a capture (W c197), a release (W c200), or an expired capture's release (W c1278).
     if (hold.status !== 'held') return error('hold_not_found');
     if (!this.#cards.has(hold.cardId))
       return unsimulated('holds.release after the card was deleted');
     // Also after the duration ran out, without a capture attempt (W c198, c199, c1036, c1037).
+    // `cancel` on the transaction, with the release time and `is_hold` kept (W c1525, c1526).
+    const releasedAt = this.#wireNow();
     this.#holds.set(transactionId, {
       ...hold,
       status: 'released',
-      releasedAt: this.#wireNow(),
+      releasedAt,
       releasedBy: 'dismiss',
+    });
+    this.#transactions.set(transactionId, {
+      ...transaction,
+      status: 'refunded',
+      cancelledAt: releasedAt,
     });
     return result({ transactionId });
   }
@@ -418,6 +427,14 @@ export class GatewaySimulation {
     this.#nextId += 1;
     return id;
   }
+}
+
+function isDismissedAfterExpiry(hold: SimulatedHold): boolean {
+  return (
+    hold.releasedBy === 'dismiss' &&
+    hold.releasedAt !== null &&
+    hold.releasedAt.getTime() >= hold.expiresAtMs
+  );
 }
 
 /**

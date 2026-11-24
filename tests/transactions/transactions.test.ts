@@ -18,6 +18,7 @@ const FAILED_ID = '5eed0000-0000-4000-8000-000000000003';
 const HOLD_ID = '5eed0000-0000-4000-8000-000000000009';
 const CHECKOUT_ID = '5eed0000-0000-4000-8000-00000000000a';
 const RELEASED_HOLD_ID = '5eed0000-0000-4000-8000-00000000000f';
+const DISMISSED_HOLD_ID = '5eed0000-0000-4000-8000-000000000011';
 const DOCS_ID = '3667c3fb-68a5-4d1c-bd86-99df49c895d9';
 const FULL_PAN = ['860000', '123456', '7890'].join('');
 
@@ -117,6 +118,19 @@ describe('transactions.get', () => {
       status: 'refunded',
       isHold: true,
       cancelledAt: new Date('2026-11-14T12:04:50+05:00'),
+      amountTiyin: 100_000,
+    });
+  });
+
+  it('reads a dismissed hold (wire cancel) as refunded, still a hold', async () => {
+    const { resource } = setup([wireResponse('transactions/get.dismissedHold.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: DISMISSED_HOLD_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'refunded',
+      isHold: true,
+      cancelledAt: new Date('2026-11-24T16:48:44+05:00'),
       amountTiyin: 100_000,
     });
   });

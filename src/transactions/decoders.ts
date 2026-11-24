@@ -28,9 +28,9 @@ export const TRANSACTION_STATUS_BY_WIRE: ReadonlyMap<string, TransactionStatus> 
   ['waiting', 'held'],
   ['payed', 'paid'],
   ['cancel', 'refunded'],
-  // `cancel` marked a refunded sale and `refunded` an expired hold Paylov released, against the
-  // vendor's "Refunded"; which marks what in general is unsettled, so both read `refunded`
-  // [OPEN Q86].
+  // `cancel` marked a refunded sale and a dismissed hold, `refunded` an expired hold Paylov
+  // released, against the vendor's "Refunded"; which marks what in general is unsettled, so both
+  // read `refunded` [OPEN Q86].
   ['refunded', 'refunded'],
 ]);
 

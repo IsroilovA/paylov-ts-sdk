@@ -57,8 +57,9 @@ if (booking.visited) {
   Paylov does not document release after expiry. For a date beyond 28 days, create the hold when the
   date enters the window.
 - **Poll to reconcile.** Paylov sends no hold webhook: read `holds.get({ externalId })` for every
-  open booking. `transactions.get` uses other words for a hold: `paid` once captured, and an expired
-  hold Paylov released has read `refunded` there, like a refunded sale.
+  open booking. `transactions.get` uses other words for a hold: `paid` once captured, and `refunded`
+  once released, by `holds.release` before expiry or by Paylov when a capture after expiry fails,
+  like a refunded sale.
 
 ## Hold state
 

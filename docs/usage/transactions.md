@@ -15,9 +15,10 @@ if (transaction === null) {
 ```
 
 - `status` is open: handle values you do not know. A refunded sale reads `refunded`. A hold reads
-  `held`, as in `holds.get`, until captured (`paid` here, `captured` in `holds.get`). An expired
-  hold Paylov released has also read `refunded`, so for a hold `refunded` means only that the
-  merchant keeps no money from it; read `holds.get` to tell a release from a capture.
+  `held`, as in `holds.get`, until captured (`paid` here, `captured` in `holds.get`). A released
+  hold also reads `refunded`, whether dismissed before expiry or released by Paylov after a failed
+  capture, so for a hold `refunded` means only that the merchant keeps no money from it; read
+  `holds.get` to tell a release from a capture.
 - Recovery per method: [errors.md](errors.md#recovery-after-an-ambiguous-failure).
 
 ## Refund state
@@ -32,7 +33,7 @@ else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
 
 - `refunded` needs a non-hold transaction reading `refunded` with `cancelledAt`; `not_refunded`
   needs `paid` with no `cancelledAt`. Everything else is `unknown`: `null`, other statuses, and a
-  hold reading `refunded`, which may be an expiry rather than a refund.
+  hold reading `refunded`, which may be a release rather than a refund.
 - `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
   before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
 
