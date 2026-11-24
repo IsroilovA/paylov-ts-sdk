@@ -30,8 +30,8 @@
  *   immediately. Closing releases holds, then deletes cards, even after a thrown probe, and rejects
  *   when any cleanup fails.
  *
- * Every response, including the grant and cleanup, is written to `PAYLOV_CAPTURE_DIR` (refused
- * inside this checkout) as `NNN_<label>.json`, numbered across labels. A capture keeps the redacted
+ * Every response, including the grant and cleanup, is written to the git-ignored `captures/`, or to
+ * `PAYLOV_CAPTURE_DIR` outside this checkout, as `NNN_<label>.json`, numbered across labels. A capture keeps the redacted
  * request with query values replaced, the status, `content-type`, `retry-after` and `keepHeaders`,
  * and the redacted body. A re-read scan deletes the capture and throws when a known secret,
  * Luhn-valid PAN or JWT remains; that is a backstop, not permission to send unregistered secrets.

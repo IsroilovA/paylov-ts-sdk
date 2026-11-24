@@ -53,21 +53,21 @@ Procedure:
 Repository-only probe scripts in [scripts/probes/](../scripts/probes/) send raw HTTP to DEV for
 request shapes the SDK would refuse or reshape. The wrapper API, redaction and capture format are
 documented in [probe.mjs](../scripts/probes/probe.mjs); the audit scanner in
-[scanCaptures.mjs](../scripts/probes/scanCaptures.mjs). Captures are grade W evidence and never
-enter the repository.
+[scanCaptures.mjs](../scripts/probes/scanCaptures.mjs). Captures are grade W evidence kept in the
+git-ignored `captures/` and never committed: they hold unredacted DEV identifiers.
 
 1. Copy [the placeholder env file](../scripts/probes/.env.example) to the gitignored `.env` at the
    repository root, or outside the repository, restrict it to mode `600`, and fill it from your own
    secret store. Double-quote every value: `--env-file` reads an unquoted `#` as a comment and
-   silently truncates the value. Point `PAYLOV_CAPTURE_DIR` at an external directory, and list every
-   test card used in the run in `PAYLOV_LIVE_TEST_CARDS` and the test PINFL, phone and other secrets
-   in `PAYLOV_PROBE_SECRETS` so copied data is redacted.
+   silently truncates the value. Leave `PAYLOV_CAPTURE_DIR` unset to capture into `captures/`, and
+   list every test card used in the run in `PAYLOV_LIVE_TEST_CARDS` and the test PINFL, phone and
+   other secrets in `PAYLOV_PROBE_SECRETS` so copied data is redacted.
 2. Run the read-only check first: `node --env-file=<env file> scripts/probes/checkSandbox.mjs`.
    Never probe wrong credentials.
 3. Run other probes with `node --env-file=<env file> scripts/probes/<probe>.mjs`. State-changing
    probes track every card and hold they create for cleanup.
-4. Audit the captures with `node --env-file=<env file> scripts/probes/scanCaptures.mjs <dir>`. Back
-   up the directory before a `--fix` run, then scan again to confirm zero hits.
+4. Audit the captures with `node --env-file=<env file> scripts/probes/scanCaptures.mjs`. Back up the
+   directory before a `--fix` run, then scan again to confirm zero hits.
 5. If cleanup fails or a resource was created untracked or ambiguously, reconcile it by hand before
    the next run.
 6. Delete temporary credential files. Promote evidence through the

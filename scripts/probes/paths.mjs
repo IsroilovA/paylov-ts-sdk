@@ -1,9 +1,13 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { ProbeError } from './probeError.mjs';
 
 export const repositoryRoot = resolve(import.meta.dirname, '../..');
+
+/** The default capture directory: inside the checkout, accepted only while git ignores it. */
+export const repositoryCaptures = resolve(repositoryRoot, 'captures');
 
 /** @param {unknown} error @param {string} code */
 export function hasErrorCode(error, code) {
@@ -33,13 +37,36 @@ export async function outsideRepository(path) {
   return target;
 }
 
+/** Whether git ignores files inside `directory`, tracked or not. @param {string} directory */
+function ignoresFilesIn(directory) {
+  try {
+    execFileSync('git', ['check-ignore', '--quiet', '--no-index', join(directory, '001_.json')], {
+      cwd: repositoryRoot,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Outside the checkout, or exactly its git-ignored `captures/` directory.
+ * @param {string} path @returns {Promise<string>}
+ */
+async function allowedCaptureTarget(path) {
+  const target = await realDestination(resolve(path));
+  const captures = await realDestination(repositoryCaptures);
+  if (target !== captures) return outsideRepository(target);
+  if (!ignoresFilesIn(target)) throw new ProbeError('captures/ must stay ignored by git');
+  return target;
+}
+
 /** Checks the path again after creation, so a directory swapped in meanwhile is refused.
- * @param {string | undefined} path
+ * @param {string | undefined} path defaults to {@link repositoryCaptures}
  */
 export async function captureDirectory(path) {
-  if (path === undefined || path.trim() === '')
-    throw new ProbeError('PAYLOV_CAPTURE_DIR is required');
-  const target = await outsideRepository(path);
+  const chosen = path === undefined || path.trim() === '' ? repositoryCaptures : path;
+  const target = await allowedCaptureTarget(chosen);
   await mkdir(target, { recursive: true, mode: 0o700 });
-  return outsideRepository(target);
+  return allowedCaptureTarget(target);
 }

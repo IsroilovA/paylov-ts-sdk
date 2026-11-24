@@ -121,8 +121,8 @@ Additional routes and their evidence limits. SDK scope decisions belong to
 - **S:** request forms and examples in the sandbox page bundle. They often contradict D and W with
   mock fields and units, so they prove at most that a route exists.
 - **W:** a DEV gateway response, cited as `W (cNNN)` in the maintainer’s numbered live-capture set
-  of redacted request/response pairs kept outside the repository. W is DEV evidence only; production
-  may differ.
+  of redacted request/response pairs, kept in the git-ignored `captures/` and never committed. W is
+  DEV evidence only; production may differ.
 - **Live run:** a DEV live-suite observation without a numbered capture, cited as
   `live run YYYY-MM-DD`. It supports logged codes, HTTP statuses, counts, booleans and clock skew,
   never a body shape.

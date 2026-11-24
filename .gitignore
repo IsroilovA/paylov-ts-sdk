@@ -6,6 +6,8 @@ coverage/
 .env
 .env.*
 !.env.example
+# Probe captures (scripts/probes/); the tooling refuses this directory once it is not ignored.
+/captures/
 
 npm-debug.log*
 yarn-error.log*

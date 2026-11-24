@@ -2,9 +2,9 @@
 /**
  * Audits existing probe captures for secrets that survived redaction.
  *
- * Usage: `node --env-file=<external env file> scripts/probes/scanCaptures.mjs <dir> [--fix]`
+ * Usage: `node --env-file=<env file> scripts/probes/scanCaptures.mjs [<dir>] [--fix]`
  *
- * - Scans every `*.json` file in `<dir>`, which must lie outside this checkout, against the
+ * - Scans every `*.json` file in `<dir>` (default: the git-ignored `captures/`), against the
  *   credentials and `PAYLOV_LIVE_TEST_CARDS` from the environment, Luhn-valid PANs, JWTs and
  *   personal-data field shapes.
  * - `PAYLOV_PROBE_SECRETS` optionally lists more `key=value` entries separated by `;`. Keys such as
@@ -74,14 +74,14 @@ export function scanCaptureSources(captures, redactor, fix) {
   return { lines, fixes, status: files > 0 && !fix ? 1 : 0 };
 }
 
-/** @param {string[]} args @returns {{ directory: string, fix: boolean }} */
+/** @param {string[]} args @returns {{ directory: string | undefined, fix: boolean }} */
 function parseArgs(args) {
-  const [directory, ...flags] = args;
-  const fix = flags.length === 1 && flags[0] === '--fix';
-  if (directory === undefined || (flags.length > 0 && !fix)) {
-    throw new ProbeError('usage: scanCaptures.mjs <dir> [--fix]');
+  const directories = args.filter((arg) => arg !== '--fix');
+  const fixes = args.length - directories.length;
+  if (directories.length > 1 || fixes > 1) {
+    throw new ProbeError('usage: scanCaptures.mjs [<dir>] [--fix]');
   }
-  return { directory, fix };
+  return { directory: directories[0], fix: fixes === 1 };
 }
 
 /** @param {string[]} args @returns {Promise<number>} the exit status */

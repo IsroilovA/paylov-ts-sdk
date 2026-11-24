@@ -43,8 +43,8 @@ description:
 ## Live observations
 
 - Run the live suite or probes against DEV following `docs/runbook.md`.
-- Keep each redacted capture in the maintainer's numbered capture set outside the repository and
-  cite it on the owning page as `W (cNNN)`. A capture records the UTC timestamp, SDK commit,
+- Keep each redacted capture in the maintainer's numbered capture set in the git-ignored `captures/`
+  and cite it on the owning page as `W (cNNN)`. A capture records the UTC timestamp, SDK commit,
   environment, method and path without query values, auth mode, HTTP status, and the minimum
   field-level evidence. A money observation needs an independently known tiyin amount.
 - Never commit raw bodies, credentials, PANs, card tokens, OTPs, PINFLs, phones, customer or account

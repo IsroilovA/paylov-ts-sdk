@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,6 +10,7 @@ import { writeCapture } from '../../scripts/probes/captures.mjs';
 import {
   captureDirectory,
   outsideRepository,
+  repositoryCaptures,
   repositoryRoot,
 } from '../../scripts/probes/paths.mjs';
 import { openProbe, withProbe } from '../../scripts/probes/probe.mjs';
@@ -402,8 +403,10 @@ describe('probe redaction', () => {
 });
 
 describe('capture storage', () => {
-  it('refuses repository paths and symlinks before creating directories', async () => {
-    await expect(captureDirectory(undefined)).rejects.toThrow('required');
+  it('accepts only the ignored captures directory inside the repository, refusing symlinks', async () => {
+    expect(await captureDirectory(undefined)).toBe(await realpath(repositoryCaptures));
+    expect(await captureDirectory(repositoryCaptures)).toBe(await realpath(repositoryCaptures));
+    await expect(captureDirectory(join(repositoryCaptures, 'nested'))).rejects.toThrow('outside');
     await expect(captureDirectory(repositoryRoot)).rejects.toThrow('outside');
     await expect(captureDirectory(join(repositoryRoot, 'captureCanary', 'nested'))).rejects.toThrow(
       'outside',
