@@ -119,7 +119,7 @@ export async function openProbe({ label }) {
   if (typeof loaded === 'string') throw new Error(loaded);
   const config = loaded;
   const directory = await captureDirectory(env('PAYLOV_CAPTURE_DIR'));
-  const redactor = await loadRedactor();
+  const redactor = loadRedactor();
   const commit = sdkCommit();
   const basic = `Basic ${Buffer.from(`${config.consumerKey}:${config.consumerSecret}`).toString('base64')}`;
   /** @type {Promise<Tokens> | undefined} */

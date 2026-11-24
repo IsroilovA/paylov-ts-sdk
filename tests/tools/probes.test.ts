@@ -51,7 +51,7 @@ beforeEach(async () => {
     vi.stubEnv(name, canary);
   }
   vi.stubEnv('PAYLOV_LIVE_TEST_CARDS', `${cardPan}:${expiry}:${otp}`);
-  vi.stubEnv('PAYLOV_PROBE_SECRETS_FILE', undefined);
+  vi.stubEnv('PAYLOV_PROBE_SECRETS', undefined);
   vi.stubEnv('PAYLOV_CAPTURE_DIR', directory);
 });
 
@@ -139,8 +139,8 @@ describe('shared DEV configuration', () => {
 });
 
 describe('probe redaction', () => {
-  it('redacts known and discovered secrets, consistently maps ids, and preserves evidence values', async () => {
-    const redactor = await loadRedactor();
+  it('redacts known and discovered secrets, consistently maps ids, and preserves evidence values', () => {
+    const redactor = loadRedactor();
     redactor.register('EXAMPLE-EXTRA-NOT-A-REAL-SECRET', '<extra>');
     const body = {
       copied: `PAN ${cardPan} expiry ${expiry} OTP ${otp}`,
@@ -206,12 +206,17 @@ describe('probe redaction', () => {
     expect(redactor.scan(JSON.stringify(cleaned)).hits).toEqual([]);
   });
 
-  it('refuses to load with a malformed test card list', async () => {
+  it('refuses to load with a malformed test card list', () => {
     vi.stubEnv('PAYLOV_LIVE_TEST_CARDS', `${cardPan}:${expiry}`);
-    await expect(loadRedactor()).rejects.toThrow('PAYLOV_LIVE_TEST_CARDS is malformed');
+    expect(() => loadRedactor()).toThrow('PAYLOV_LIVE_TEST_CARDS is malformed');
   });
 
-  it('redacts documented sub-merchant director and bank fields, in their own fields only', async () => {
+  it('refuses to load with a malformed secret entry', () => {
+    vi.stubEnv('PAYLOV_PROBE_SECRETS', `pinfl=${pinfl};${phone}`);
+    expect(() => loadRedactor()).toThrow('PAYLOV_PROBE_SECRETS entries must be key=value');
+  });
+
+  it('redacts documented sub-merchant director and bank fields, in their own fields only', () => {
     const organization = {
       name: 'Example Shop LLC',
       director_fio: ['Review', 'Example', 'Person'].join(' '),
@@ -234,7 +239,7 @@ describe('probe redaction', () => {
       { kind: 'nationality', count: 1 },
       { kind: 'account', count: 1 },
     ]);
-    const redactor = await loadRedactor();
+    const redactor = loadRedactor();
     redactor.learn(capture);
     expect(redactor.clean(capture)).toEqual({
       request: {
@@ -257,8 +262,8 @@ describe('probe redaction', () => {
     });
   });
 
-  it('maps the cid that bind start returns to the same placeholder as cardId', async () => {
-    const redactor = await loadRedactor();
+  it('maps the cid that bind start returns to the same placeholder as cardId', () => {
+    const redactor = loadRedactor();
     const started = { result: { cid: 'EXAMPLE-CARD-NOT-A-REAL-ID' } };
     const confirmed = { body: { cardId: 'EXAMPLE-CARD-NOT-A-REAL-ID' } };
     redactor.learn(started);
@@ -266,8 +271,8 @@ describe('probe redaction', () => {
     expect(redactor.clean(confirmed)).toEqual({ body: { cardId: '<card A>' } });
   });
 
-  it('finds Luhn PANs and JWTs in arbitrary strings, but preserves unrelated short values', async () => {
-    const redactor = await loadRedactor();
+  it('finds Luhn PANs and JWTs in arbitrary strings, but preserves unrelated short values', () => {
+    const redactor = loadRedactor();
     const source = JSON.stringify({
       message: `CANARY ${cardPan} ${expiry} ${otp} ${jwt}`,
       amount: 9912,
@@ -291,8 +296,8 @@ describe('probe redaction', () => {
     );
   });
 
-  it('recognizes escaped secrets, contextual numeric values and incomplete historical secret lists', async () => {
-    const redactor = await loadRedactor();
+  it('recognizes escaped secrets, contextual numeric values and incomplete historical secret lists', () => {
+    const redactor = loadRedactor();
     const source = JSON.stringify({
       message: cardPan,
       expireDate: 9912,
@@ -311,8 +316,8 @@ describe('probe redaction', () => {
     expect(redactor.scan(result.text).hits).toEqual([]);
   });
 
-  it('never labels an unlisted value as the test-card value and keeps validation messages', async () => {
-    const redactor = await loadRedactor();
+  it('never labels an unlisted value as the test-card value and keeps validation messages', () => {
+    const redactor = loadRedactor();
     const capture = {
       request: { body: { otp: wrongOtp, password: wrongPassword } },
       response: {
@@ -345,8 +350,8 @@ describe('probe redaction', () => {
     });
   });
 
-  it('redacts card-record numbers without treating receipt numbers or expiry timestamps as card data', async () => {
-    const redactor = await loadRedactor();
+  it('redacts card-record numbers without treating receipt numbers or expiry timestamps as card data', () => {
+    const redactor = loadRedactor();
     const value = {
       cards: [{ number: cardPan }],
       receipt: { number: 'canary-receipt' },
@@ -365,7 +370,7 @@ describe('probe redaction', () => {
   });
 
   it('fails closed on secrets hidden in field names while preserving ordinary field names', async () => {
-    const redactor = await loadRedactor();
+    const redactor = loadRedactor();
     await expect(
       writeCapture(directory, 'keyLeak', { [cardPan]: 'canary' }, redactor),
     ).rejects.toThrow('capture rejected: PAN');
@@ -378,7 +383,7 @@ describe('probe redaction', () => {
   it.each(['registered secret', 'PAN', 'JWT', 'expiry', 'OTP'])(
     'deletes a capture if the final scan finds %s',
     async (kind) => {
-      const redactor = await loadRedactor();
+      const redactor = loadRedactor();
       redactor.register('EXAMPLE-EXTRA-NOT-A-REAL-SECRET', '<extra>');
       const bodies: Record<string, unknown> = {
         'registered secret': { message: 'EXAMPLE-EXTRA-NOT-A-REAL-SECRET' },
@@ -612,14 +617,12 @@ describe('raw probe lifecycle', () => {
 });
 
 describe('capture scanner', () => {
-  it('fixes secret literals only, preserves bytes and ignores short values in amounts, dates and ids', async () => {
-    const secrets = join(directory, 'canarySecrets.txt');
-    await writeFile(
-      secrets,
-      `pan=${cardPan}\nexpiry=${expiry} # YYMM comment\notp=${otp}\npinfl=${pinfl}\nphone=${phone}\n`,
+  it('fixes secret literals only, preserves bytes and ignores short values in amounts, dates and ids', () => {
+    vi.stubEnv(
+      'PAYLOV_PROBE_SECRETS',
+      `pan=${cardPan}; expiry=${expiry};otp=${otp};pinfl=${pinfl};phone=${phone};`,
     );
-    vi.stubEnv('PAYLOV_PROBE_SECRETS_FILE', secrets);
-    const redactor = await loadRedactor();
+    const redactor = loadRedactor();
     const name = '001_canary.json';
     const source = `{
   "message" : "${cardPan} ${expiry} ${otp}",

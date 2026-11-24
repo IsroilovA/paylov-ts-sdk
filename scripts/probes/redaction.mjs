@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-
 import { CREDENTIAL_NAMES, env, parseTestCards } from '../sandboxConfig.mjs';
 import {
   cardNumberInText,
@@ -9,7 +7,6 @@ import {
   isCardRecord,
   isLuhnValid,
 } from '../sensitiveData.mjs';
-import { outsideRepository } from './paths.mjs';
 import { ProbeError } from './probeError.mjs';
 
 /** @typedef {import('../sensitiveData.mjs').SensitiveKind} SensitiveKind */
@@ -264,10 +261,10 @@ export class Redactor {
   }
 }
 
-/** Reads only known variable names; the optional secret list is data, never an env file.
- * @returns {Promise<Redactor>}
+/** Reads only known variable names; `PAYLOV_PROBE_SECRETS` is data, never an env file.
+ * @returns {Redactor}
  */
-export async function loadRedactor() {
+export function loadRedactor() {
   const redactor = new Redactor();
   for (const name of CREDENTIAL_NAMES) {
     const value = env(name);
@@ -283,9 +280,7 @@ export async function loadRedactor() {
     );
   }
   loadCards(redactor, env('PAYLOV_LIVE_TEST_CARDS'));
-  const file = env('PAYLOV_PROBE_SECRETS_FILE');
-  if (file !== undefined)
-    loadSecretLines(redactor, await readFile(await outsideRepository(file), 'utf8'));
+  loadSecretEntries(redactor, env('PAYLOV_PROBE_SECRETS'));
   return redactor;
 }
 
@@ -305,13 +300,15 @@ function loadCards(redactor, input) {
   }
 }
 
-/** `key=value` lines; a key without a personal kind is a credential.
- * @param {Redactor} redactor @param {string} content
+/** `key=value` entries separated by `;`; a key without a personal kind is a credential.
+ * @param {Redactor} redactor @param {string | undefined} input
  */
-function loadSecretLines(redactor, content) {
-  for (const line of content.split(/\r?\n/)) {
-    const match = /^\s*([\w.-]+)\s*=\s*([^#]*?)\s*(?:#.*)?$/.exec(line);
-    if (match === null) continue;
+function loadSecretEntries(redactor, input) {
+  if (input === undefined) return;
+  for (const entry of input.split(';')) {
+    if (entry.trim() === '') continue;
+    const match = /^\s*([\w.-]+)\s*=\s*(\S(?:.*\S)?)\s*$/.exec(entry);
+    if (match === null) throw new ProbeError('PAYLOV_PROBE_SECRETS entries must be key=value');
     const kind = fieldKind(match[1] ?? '') ?? 'credential';
     redactor.register(
       match[2] ?? '',

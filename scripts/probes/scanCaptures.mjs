@@ -7,10 +7,9 @@
  * - Scans every `*.json` file in `<dir>`, which must lie outside this checkout, against the
  *   credentials and `PAYLOV_LIVE_TEST_CARDS` from the environment, Luhn-valid PANs, JWTs and
  *   personal-data field shapes.
- * - `PAYLOV_PROBE_SECRETS_FILE` optionally names an external file of `key=value` lines. Keys such
- *   as `pan`, `expiry`, `otp`, `pinfl` and `phone` set the kind; any other key is a credential.
- *   Inline `#` comments are allowed. Short expiry and OTP values match only in card fields or in
- *   strings containing a full PAN.
+ * - `PAYLOV_PROBE_SECRETS` optionally lists more `key=value` entries separated by `;`. Keys such as
+ *   `pan`, `expiry`, `otp`, `pinfl` and `phone` set the kind; any other key is a credential. Short
+ *   expiry and OTP values match only in card fields or in strings containing a full PAN.
  * - Output names files, kinds, counts and the scanner's own value-free messages, never values. A
  *   file that cannot be read or parsed is reported and the scan goes on.
  * - Exit status: `0` clean or fixed, `1` hits found, `2` any scan error.
@@ -89,7 +88,7 @@ function parseArgs(args) {
 async function main(args) {
   const { directory, fix } = parseArgs(args);
   const target = await captureDirectory(directory);
-  const redactor = await loadRedactor();
+  const redactor = loadRedactor();
   const entries = (await readdir(target, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
     .toSorted((a, b) => a.name.localeCompare(b.name));

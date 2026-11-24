@@ -60,7 +60,8 @@ enter the repository.
    repository root, or outside the repository, restrict it to mode `600`, and fill it from your own
    secret store. Double-quote every value: `--env-file` reads an unquoted `#` as a comment and
    silently truncates the value. Point `PAYLOV_CAPTURE_DIR` at an external directory, and list every
-   test card used in the run in `PAYLOV_LIVE_TEST_CARDS` so copied card data is redacted.
+   test card used in the run in `PAYLOV_LIVE_TEST_CARDS` and the test PINFL, phone and other secrets
+   in `PAYLOV_PROBE_SECRETS` so copied data is redacted.
 2. Run the read-only check first: `node --env-file=<env file> scripts/probes/checkSandbox.mjs`.
    Never probe wrong credentials.
 3. Run other probes with `node --env-file=<env file> scripts/probes/<probe>.mjs`. State-changing
