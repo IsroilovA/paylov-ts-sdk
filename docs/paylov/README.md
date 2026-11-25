@@ -37,8 +37,10 @@ is read separately from the call that made it.
 
 No request takes an idempotency key, and a replayed money-moving call answers a state code that does
 not prove the earlier outcome ([payments](payments.md#common-rules)). Merchant permission gates
-splits, sub-merchants, fiscalization and Card Bind (D); the DEV merchant has only Card Bind (W c082,
-c271, c1452, c1453).
+splits, sub-merchants, fiscalization and Card Bind (D). Permissions change per merchant over time:
+the DEV merchant's captures through 2026-11-14 pass only Card Bind and refuse fiscalization, splits
+and sub-merchants (W c082, c271, c1452, c1453), while its captures of 2026-11-25 register a fiscal
+receipt and create a split (W c1629, c1740, c1741).
 
 ## Hosts
 

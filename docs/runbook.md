@@ -43,9 +43,10 @@ Procedure:
    reason; fix that reason rather than loosening a gate.
 3. Add `PAYLOV_LIVE_WRITES=1`, `PAYLOV_LIVE_REFUND=1` or `PAYLOV_LIVE_SLOW=1` as needed. Write lanes
    delete the cards they bind and release the holds they leave open.
-4. Read the `[paylov live] <label> {...}` lines. An assertion failure means the
-   documentation-derived contract is wrong: record it, then fix the decoder and replace the
-   `.docs.json` fixture.
+4. Read the `[paylov live] <label> {...}` lines. The live suite asserts both documentation-derived
+   contracts and SDK behavior, so on an assertion failure first diagnose which artifact is wrong:
+   the reference and its `.docs.json` fixture, the decoder, or the SDK. Record a contract finding,
+   then fix the decoder and replace the fixture; fix an SDK defect in the SDK.
 5. Record observations through the
    [sync-paylov-reference skill](../.agents/skills/sync-paylov-reference/SKILL.md) and update the
    matching [open question](paylov/open-questions.md).
@@ -91,8 +92,8 @@ maintainer. Never tag or publish by hand.
    `## [X.Y.Z] - YYYY-MM-DD` heading with its `[X.Y.Z]:` release link; `check:changelog` fails
    without them.
 2. Run `npm run check` and review the complete release diff and the packed file list: built
-   JavaScript and declarations, usage docs, `package.json`, README, CHANGELOG and LICENSE, and
-   nothing else.
+   JavaScript, declarations and their source maps, usage docs, `package.json`, README, CHANGELOG and
+   LICENSE, and nothing else.
 3. Once CI passes on `dev`, obtain maintainer approval, then fast-forward `main` to `dev`. Release
    runs queue in push order, so the next fast-forward need not wait.
 

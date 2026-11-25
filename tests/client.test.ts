@@ -58,6 +58,12 @@ describe('PaylovClient configuration', () => {
     ['another scheme', 'ftp://api.paylov.uz', 'baseUrl must be an absolute https URL'],
     ['cleartext http', 'http://dev.gw.paylov.uz', 'baseUrl must use https'],
     ['a /merchant path', `${BASE_URL}/merchant`, 'baseUrl must be an origin without a path'],
+    [
+      'a path that resolves away',
+      `${BASE_URL}/merchant/..`,
+      'baseUrl must be an origin without a path',
+    ],
+    ['a dot segment', `${BASE_URL}/.`, 'baseUrl must be an origin without a path'],
   ])('rejects a baseUrl with %s', async (_label, baseUrl, message) => {
     const error = await expectInputError(() => new PaylovClient({ ...VALID, baseUrl }), {
       code: CONFIG,

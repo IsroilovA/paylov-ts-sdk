@@ -27,10 +27,13 @@ function encodePaymentRefunded(refund: PaymentRefunded): unknown {
   };
 }
 
+/** The SDK sends no `extId`, which the gateway then echoes as `null`; `code` is always `null` (W c178). */
 function encodePanPaymentStarted(started: PanPaymentStarted): unknown {
   return {
     ...encodeTransactionReference(started),
     otpSentPhone: started.otpSentPhone,
+    extId: null,
+    code: null,
   };
 }
 

@@ -62,8 +62,7 @@ try {
 
 ## Activity types
 
-`checkActivityType` may answer a negative result as `gateway_not_working` instead of
-`isConfirmed: false`: treat it as not confirmed, and retry later if the tax service may have been
-down.
+`checkActivityType` answers a negative result as `isConfirmed: false`. A thrown gateway error, such
+as `gateway_not_working`, means the check failed, not that the tax service answered; retry it later.
 
 Recovery: [errors.md](errors.md#recovery-after-an-ambiguous-failure).

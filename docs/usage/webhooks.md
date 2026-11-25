@@ -54,8 +54,8 @@ const rotating = new PaylovWebhookReceiver({
 });
 ```
 
-Every pair is compared in constant time, so the response time does not reveal which one matched.
-`credentialIndex` is for your metrics; never return it to the caller.
+The receiver compares the request's digests with every pair, using a constant-time comparison, and
+does not stop at a match. `credentialIndex` is for your metrics; never return it to the caller.
 
 ## Cap the body size
 
@@ -87,9 +87,9 @@ export async function serveFetch(request: Request): Promise<Response> {
 }
 ```
 
-With plain `node:http`, do not return from a `for await` loop over the request: that destroys the
-socket before the 413 is sent. Stop buffering instead, answer with `Connection: close`, and destroy
-the request once the answer is written:
+With plain `node:http`, on a route that receives only `transaction.cancel`, do not return from a
+`for await` loop over the request: that destroys the socket before the 413 is sent. Stop buffering
+instead, answer with `Connection: close`, and destroy the request once the answer is written:
 
 ```ts
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -137,9 +137,15 @@ createServer((req, res) => {
   or no response.
 - **Invalid input** has no documented response; choose the status yourself.
 - **Only the documented notification decodes.** Any other method, such as a hosted checkout
-  `transaction.check` or `transaction.perform` request, is `unknown_method`; a `transaction.cancel`
-  with a JSON-RPC `id` is `invalid_request`, and one whose `params.status` is not `cancelled` is
-  `invalid_params`. The amount comes from `amount_in_tiyin`; the whole-SUM `amount` is ignored.
+  `transaction.check` or `transaction.perform` request, and a missing or non-string `method` are
+  `unknown_method`; a `transaction.cancel` with a JSON-RPC `id` is `invalid_request`, and one whose
+  `params.status` is not `cancelled` is `invalid_params`. The amount comes from `amount_in_tiyin`;
+  the whole-SUM `amount` is ignored.
+- **Keep hosted checkout off this route.** A `transaction.check` or `transaction.perform` request
+  expects a JSON-RPC result echoing its `id`, which this receiver does not produce; the handlers
+  above answer only a status.
+- **`transactionId` must be a UUID.** Paylov documents it as a string; the SDK's own check rejects
+  any other value as `invalid_params`.
 - **Duplicate `Authorization` headers** are `unauthorized`, also as header-record keys that differ
   only in case. With `node:http`, pass `req.headersDistinct`: `req.headers` keeps only the first
   `Authorization` value, so a repeat goes unseen.

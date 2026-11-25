@@ -9,7 +9,7 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse, wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 // Expectations come from docs/paylov/holds.md.
@@ -343,6 +343,19 @@ describe('holds.get', () => {
     await expectInputError(resource.get(params), { field: undefined, rule: 'exclusive' });
     expect(fetchImpl.calls).toHaveLength(0);
   });
+
+  // The sandbox page bundle's mock spells statuses with the SDK's words; read as is, `held` would
+  // pass for the wire `hold`.
+  it.each(['held', 'captured', 'released', 'declined'])(
+    'rejects the SDK word %s sent as a wire status',
+    async (status) => {
+      const { resource } = setup([
+        patchedResponse('holds/get.hold.wire.json', ['result'], (hold) => ({ ...hold, status })),
+      ]);
+
+      await expectMalformed(resource.get({ transactionId: HOLD_ID }), 'result.status');
+    },
+  );
 
   it.each([
     ['get.fractionalAmount', 'result.amount'],

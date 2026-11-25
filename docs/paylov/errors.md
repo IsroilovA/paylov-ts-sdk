@@ -36,18 +36,20 @@ c336).
 
 ### Success shape by endpoint
 
-| Shape      | Success body                               | Endpoints                                                                | Grade                                     |
-| ---------- | ------------------------------------------ | ------------------------------------------------------------------------ | ----------------------------------------- |
-| `envelope` | `{"result": <non-null>, "error": null}`    | Every REST endpoint not listed below, `receipts/create/` included        | W (c086 and every other captured success) |
-| `flat`     | The record itself                          | `oauth2/token/`, `oauth2/revoke/`, `status/`, `onboarding/` GET and POST | W (c001, c002, c395); onboarding D        |
-| `array`    | A bare JSON array                          | `bankList/`                                                              | W (c014)                                  |
-| `raw`      | GraphQL `{"data": …}` or `{"errors": […]}` | `https://<graphql host>/graphql/`                                        | W (c340–c357)                             |
+| Shape      | Success body                                                         | Endpoints                                                                | Grade                              |
+| ---------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------- |
+| `envelope` | `{"result": <non-null>, "error": null}`, or `result` without `error` | Every REST endpoint not listed below, `receipts/create/` included        | W (c086, c1629 without `error`)    |
+| `flat`     | The record itself                                                    | `oauth2/token/`, `oauth2/revoke/`, `status/`, `onboarding/` GET and POST | W (c001, c002, c395); onboarding D |
+| `array`    | A bare JSON array                                                    | `bankList/`                                                              | W (c014)                           |
+| `raw`      | GraphQL `{"data": …}` or `{"errors": […]}`                           | `https://<graphql host>/graphql/`                                        | W (c340–c357)                      |
 
 - `result` may be a primitive: `true` on `deleteUserCard/` (W c324). No captured success has
   `result: null`.
 - Extra keys appear: top-level `"is_cached": false` on `getCard/` and `getAllUserCards/` (W c052,
   c055, c056).
-- Every captured enveloped success and error carries both `result` and `error` (W, 80 successes).
+- Every captured enveloped error carries both `result: null` and `error`. Enveloped successes carry
+  `result`, nearly always beside `error: null`; a fiscal register success carried `result` without
+  an `error` key (W c1629).
 
 ### Error envelope
 
@@ -78,7 +80,7 @@ Messages that carry detail:
 | Code                  | Message                                                                                                       | Grade                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | `invalid_grant`       | The grant failure reason, e.g. "Invalid consumer secret" ([token failures](authentication.md#token-failures)) | W (c003–c006, c010, c370, c371) |
-| `field_required`      | `field_required: <field>`                                                                                     | W (c110)                        |
+| `field_required`      | `field_required: <field>` on saved-card pay; "A required field is missing." with `data.field` on split resend | W (c110, c1744)                 |
 | `rate_limit_exceeded` | `Too many requests. Retry after <N>s.`                                                                        | W (c012, c904)                  |
 
 `validation_error` messages and `data` details are generic validator text ("This field is
@@ -87,19 +89,19 @@ captured `validation_error` responses).
 
 ### `data` shapes
 
-| `data`                                               | Codes                                                                                                                                                                                                                                            | Grade                      |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
-| Key absent                                           | Business codes, auth codes, `server_error`, `field_required`; `validation_error` sometimes                                                                                                                                                       | W (c015, c110, c209, c246) |
-| `null`                                               | `not_found`, `method_not_allowed`, `payload_too_large`, `rate_limit_exceeded`                                                                                                                                                                    | W (c012, c013, c021, c336) |
-| Field map `{"<field>": ["<message>"]}`               | `validation_error`                                                                                                                                                                                                                               | W (c009, c091)             |
-| Nested index map `{"items": {"0": {"count": […]}}}`  | `validation_error` on array fields (OFD register, split)                                                                                                                                                                                         | W (c220, c270, c272)       |
-| `{"non_field_errors": […]}`                          | `validation_error` for a wrong body type or a cross-field rule                                                                                                                                                                                   | W (c069, c302, c366)       |
-| Character-offset key `{"14": ["JSON decode error"]}` | `validation_error` for malformed JSON                                                                                                                                                                                                            | W (c363, c364)             |
-| Bare string                                          | `validation_error` (`"transactionId or externalId is required"`), `field_not_valid` (`"time"`), `service_not_found` (`""`)                                                                                                                       | W (c202, c249, c273)       |
-| `{"field": "<name>"}`                                | `field_not_valid`                                                                                                                                                                                                                                | W (c096, c151, c265)       |
-| Upstream object with Uzbek text                      | `gateway_not_working` from Didox                                                                                                                                                                                                                 | W (c318, c322)             |
-| `{"sec_to_retry": <seconds>}`                        | `card_is_blocked` on card and PWR confirm                                                                                                                                                                                                        | W (c937, c948)             |
-| Code-specific details                                | `card_temporarily_blocked` (`blocked_until`, `reason`), `card_not_active` (`is_active`, `status_message`, `sms_info`), `ofd_commitent_or_subcommission_not_active` (`itemIndex`, `tin`, `pinfl`), `recipient_not_found` (`notFoundRecipientIds`) | D                          |
+| `data`                                               | Codes                                                                                                                                                                                                                                            | Grade                       |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| Key absent                                           | Business codes, auth codes, `server_error`, `field_required` on saved-card pay; `validation_error` sometimes                                                                                                                                     | W (c015, c110, c209, c246)  |
+| `null`                                               | `not_found`, `method_not_allowed`, `payload_too_large`, `rate_limit_exceeded`                                                                                                                                                                    | W (c012, c013, c021, c336)  |
+| Field map `{"<field>": ["<message>"]}`               | `validation_error`                                                                                                                                                                                                                               | W (c009, c091)              |
+| Nested index map `{"items": {"0": {"count": […]}}}`  | `validation_error` on array fields (OFD register, split)                                                                                                                                                                                         | W (c220, c270, c272)        |
+| `{"non_field_errors": […]}`                          | `validation_error` for a wrong body type or a cross-field rule                                                                                                                                                                                   | W (c069, c302, c366)        |
+| Character-offset key `{"14": ["JSON decode error"]}` | `validation_error` for malformed JSON                                                                                                                                                                                                            | W (c363, c364)              |
+| Bare string                                          | `validation_error` (`"transactionId or externalId is required"`), `field_not_valid` (`"time"`), `service_not_found` (`""`)                                                                                                                       | W (c202, c249, c273)        |
+| `{"field": "<name>"}`                                | `field_not_valid`; `field_required` on split resend                                                                                                                                                                                              | W (c096, c151, c265, c1744) |
+| Upstream object with Uzbek text                      | `gateway_not_working` from Didox                                                                                                                                                                                                                 | W (c318, c322)              |
+| `{"sec_to_retry": <seconds>}`                        | `card_is_blocked` on card and PWR confirm                                                                                                                                                                                                        | W (c937, c948)              |
+| Code-specific details                                | `card_temporarily_blocked` (`blocked_until`, `reason`), `card_not_active` (`is_active`, `status_message`, `sms_info`), `ofd_commitent_or_subcommission_not_active` (`itemIndex`, `tin`, `pinfl`), `recipient_not_found` (`notFoundRecipientIds`) | D                           |
 
 ## HTTP status
 
@@ -108,11 +110,11 @@ captured `validation_error` responses).
 | 200  | Captured successes; GraphQL business errors                                                                                                                                                       | W                                                  |
 | 201  | Sub-merchant create success                                                                                                                                                                       | D                                                  |
 | 400  | Validation and business errors; `permission_denied` for a feature the merchant lacks; `invalid_request`, `unsupported_grant_type`, `invalid_token`, `invalid_or_expired`; GraphQL variable errors | W                                                  |
-| 401  | `permission_denied`, `invalid_grant` ([authentication](authentication.md))                                                                                                                        | W (c003, c015–c019, c389, c400)                    |
+| 401  | `permission_denied`, `invalid_grant`, `invalid_client` ([authentication](authentication.md))                                                                                                      | W (c003, c015–c019, c389, c400, c499)              |
 | 404  | `not_found` ([routing](authentication.md#bearer-failures)); `card_not_found`, `card_is_already_activated` ([cards](cards.md))                                                                     | W (c021, c028, c034, c036, c048, c160, c243, c325) |
 | 405  | `method_not_allowed`                                                                                                                                                                              | W (c013, c023, c058)                               |
 | 413  | `payload_too_large` for a body over 64 KB                                                                                                                                                         | W (c336)                                           |
-| 429  | `rate_limit_exceeded`: [token limit](authentication.md#rate-limit); [sub-merchant limit](sub-merchants.md#create-sub-merchant)                                                                    | W (c012, c904); sub-merchant D, W (c1455–c1469)    |
+| 429  | `rate_limit_exceeded`: [token limit](authentication.md#rate-limit); [sub-merchant limit](sub-merchants.md#create-sub-merchant)                                                                    | W (c012, c904); sub-merchant D                     |
 | 500  | `server_error`                                                                                                                                                                                    | W (c246, c253)                                     |
 
 Status-dependent codes:
@@ -154,10 +156,10 @@ HTTP status is 400 unless stated. D-only codes are unobserved on DEV.
 
 ### Infrastructure
 
-| Code                  | HTTP | Meaning / endpoint triggers                                                 | Grade          |
-| --------------------- | ---- | --------------------------------------------------------------------------- | -------------- |
-| `rate_limit_exceeded` | 429  | Too many requests; the delay is in the message and the `Retry-After` header | W (c012, c904) |
-| `server_error`        | 500  | Unexpected server error                                                     | W (c246, c253) |
+| Code                  | HTTP | Meaning / endpoint triggers                                                                                                           | Grade          |
+| --------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `rate_limit_exceeded` | 429  | Too many requests; the delay is in the message (W c012, c904) and the `Retry-After` header (W c904; c012's headers were not recorded) | W (c012, c904) |
+| `server_error`        | 500  | Unexpected server error                                                                                                               | W (c246, c253) |
 
 ### Card
 
@@ -223,15 +225,15 @@ Issuer, limit, deposit and merchant-configuration refusals, each as named (D): `
 
 ### Fiscalization
 
-| Code                                        | HTTP | Meaning / endpoint triggers                                                                                                                      | Grade              |
-| ------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `ofd_commitent_or_subcommission_not_active` | 400  | [Register](fiscalization.md#register-fiscal-receipt), [split](splits.md#create-split-payment)                                                    | D                  |
-| `ofd_comitent_not_provided`                 | 400  | [Split](splits.md#create-split-payment) item without `tin` or `pinfl`                                                                            | W (c1739)          |
-| `ofd_check_already_generated`               | 400  | [Register](fiscalization.md#register-fiscal-receipt), [attach](fiscalization.md#set-fiscal-receipt), [split resend](splits.md#resend-to-the-ofd) | D; W (c1784) split |
-| `ofd_too_many_requests_for_this_receipt`    | 400  | [Attach](fiscalization.md#set-fiscal-receipt)                                                                                                    | D                  |
-| `ofd_check_not_found`                       | 400  | [Receipt status](fiscalization.md#get-fiscal-receipt-status)                                                                                     | W (c866, c876)     |
-| `ofd_error`                                 | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                                                             | D                  |
-| `fiscal_receipt_not_generated`              | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                                                             | D                  |
+| Code                                        | HTTP | Meaning / endpoint triggers                                                                                                                                                                        | Grade                                |
+| ------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `ofd_commitent_or_subcommission_not_active` | 400  | [Register](fiscalization.md#register-fiscal-receipt), [split](splits.md#create-split-payment)                                                                                                      | D                                    |
+| `ofd_comitent_not_provided`                 | 400  | [Split](splits.md#create-split-payment) item without `tin` or `pinfl`                                                                                                                              | W (c1739)                            |
+| `ofd_check_already_generated`               | 400  | [Register](fiscalization.md#register-fiscal-receipt), [attach](fiscalization.md#set-fiscal-receipt), [split resend](splits.md#resend-to-the-ofd), [refund](fiscalization.md#refund-fiscal-receipt) | D; W (c1784) split, W (c1694) refund |
+| `ofd_too_many_requests_for_this_receipt`    | 400  | [Attach](fiscalization.md#set-fiscal-receipt)                                                                                                                                                      | D                                    |
+| `ofd_check_not_found`                       | 400  | [Receipt status](fiscalization.md#get-fiscal-receipt-status), [refund](fiscalization.md#refund-fiscal-receipt) of an unknown `receiptId`                                                           | W (c866, c876, c1600)                |
+| `ofd_error`                                 | 400  | [Register](fiscalization.md#register-fiscal-receipt); `data.ofd_response` holds the OFD's answer                                                                                                   | D, W (c1611)                         |
+| `fiscal_receipt_not_generated`              | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                                                                                                               | D                                    |
 
 ### Splits and sub-merchants
 
@@ -284,15 +286,16 @@ on [cards](cards.md#deviations-from-vendor-docs).
 - The changelog envelopes every response except `oauth2/token/`, `oauth2/revoke/` and `onboarding/`.
   Live, `status/` is also flat, `bankList/` is a bare array, and `receipts/create/` is enveloped
   although its page shows a flat success (W c001, c014, c086).
-- Several examples omit `error` on success or `result` on failure; every captured enveloped response
-  carries both.
+- Several examples omit `error` on success or `result` on failure. Every captured enveloped error
+  carries both; one captured success omitted `error` (W c1629).
 - The docs make only `not_found` a 404 and every other business error a 400. Live, `card_not_found`
   is 404 on card create, confirm and delete and 400 on get and the checks, and
   `card_is_already_activated` is 404 (W c028, c034, c048, c053, c325).
 - The docs give `permission_denied` as 401 or 400; live it is also 403 on card monitoring (W c294).
 - The docs give `pinfl_not_match` as 403; on card confirm it is 400 (W c049).
 - The docs give `data` as `{field}` for `field_required` and `field_not_valid`. Live,
-  `field_required` has no `data` and names the field in its message (W c110); `field_not_valid` has
+  `field_required` on saved-card pay has no `data` and names the field in its message (W c110),
+  while on split resend it carries `{"field": "items"}` (W c1744); `field_not_valid` has
   `{"field": …}` or a bare string (W c096, c202).
 - The sub-merchant page tells clients to honor a `Retry-After` header; the token endpoint's 429
   sends one too, beside the delay in the message (W c904).

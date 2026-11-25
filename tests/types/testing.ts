@@ -1,6 +1,7 @@
 /** Compile-time contracts for the `@isroilov_an/paylov/testing` entry point. */
 
 import type {
+  Card,
   CaptureHoldParams,
   CreateHoldParams,
   HoldsResource,
@@ -17,6 +18,7 @@ import type {
 import {
   createWebhookRequest,
   PaylovFakeGateway,
+  type PaylovFakeCardOptions,
   type PaylovFakeMethod,
   type PaylovFakeSurface,
 } from '../../src/testing.js';
@@ -122,6 +124,18 @@ const simulatedFake = new PaylovFakeGateway({ simulate: true, now: () => new Dat
 // @ts-expect-error the simulation clock returns a Date
 const numericClockFake = new PaylovFakeGateway({ now: () => 0 });
 void [simulatedFake, numericClockFake];
+const refundingFake = new PaylovFakeGateway({ simulate: true, refundWindowMinutes: 60 });
+// @ts-expect-error the refund window is a number of minutes
+const textWindowFake = new PaylovFakeGateway({ simulate: true, refundWindowMinutes: '1h' });
+void [refundingFake, textWindowFake];
+declare const card: Card;
+const cardOptions: PaylovFakeCardOptions = { spendableTiyin: 10_000_000 };
+refundingFake.addCard(card, cardOptions);
+refundingFake.addCard(card);
+// @ts-expect-error the spending allowance is integer tiyin, never a SUM string
+refundingFake.addCard(card, { spendableTiyin: '100000' });
+// @ts-expect-error the allowance is not the reported balance
+refundingFake.addCard(card, { balanceTiyin: 100_000 });
 fake.token.fail('invalid_grant', { grant: 'refresh_token' });
 fake.token.fail('rate_limit_exceeded', { retryAfterSeconds: 48 }, { persist: true });
 // @ts-expect-error grants are the two the SDK sends

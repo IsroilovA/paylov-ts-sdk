@@ -10,13 +10,14 @@ Consequential decisions and the rationale that prevents a wrong fix.
 - Zero runtime dependencies limit the payment supply chain. Framework adapters belong in consuming
   applications.
 - The `/testing` fake gateway answers at the `fetch` boundary, so applications test the real
-  transport and decoders. By default it answers only scripted calls. Its opt-in simulation keeps
-  cards, payments, transactions and holds in memory and encodes only transitions observed on DEV;
-  any other state answers `fake_unsimulated` and fails `assertDone()`, because most transitions are
-  undocumented and a guessed one would let application tests pass against behavior Paylov never
-  showed. Scripted answers take precedence over the simulation. It records each request decoded back
-  into the method's own params, so tests assert sent values in SDK units without wire names; it
-  never keeps passwords and never puts requests in errors.
+  transport and decoders. By default it answers the token and revocation routes itself and every
+  other call only as scripted. Its opt-in simulation keeps cards, payments, transactions and holds
+  in memory and encodes only transitions observed on DEV; any other state answers `fake_unsimulated`
+  and fails `assertDone()`, because most transitions are undocumented and a guessed one would let
+  application tests pass against behavior Paylov never showed. Scripted answers take precedence over
+  the simulation. It records each request decoded back into the method's own params, so tests assert
+  sent values in SDK units without wire names; it never keeps passwords and never puts requests in
+  errors.
 - Consumer guides ship with the package, so integrators work from types, JSDoc and usage guides
   without the internal Paylov reference.
 
@@ -100,9 +101,12 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   only converter of either into a public error, and runs only where a response exists; the webhook
   receiver maps a decode failure to an outcome. Any other exception from a decoder is an SDK bug and
   propagates.
-- API errors never read `message`, which Paylov documents as display text not to be parsed, and
-  never give a code a meaning by HTTP status, which Paylov does not document: callers branch on
-  `code`.
+- API errors never read `message`, which Paylov documents as display text not to be parsed: callers
+  branch on `code`. HTTP status gives a code no meaning except where the reference records one: an
+  authenticated 401 `permission_denied` is the Bearer rejection the transport replays, while 400 or
+  403 `permission_denied` is a feature the merchant lacks
+  ([HTTP status](paylov/errors.md#http-status)), and only `invalid_grant` at 401 is a credential
+  verdict.
 - A method maps an error code to a value only where the code is the method's documented answer:
   `invalid_or_expired` is `PaylovOnboarding.checkToken`'s `false`. A lookup miss stays an error.
   `phone_not_match` is no such answer: DEV answers it for the card's own phone too
@@ -129,21 +133,25 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 
 ## Transport
 
-- Failure retries are GET-only. POST and DELETE never retry, whatever `maxGetRetries` says: a lost
-  response does not prove the operation did not execute. The GET retry count is bounded so a
-  misconfiguration cannot turn one read into a request storm.
+- Failure retries are GET-only. POST and DELETE never retry a failure, whatever `maxGetRetries`
+  says: a lost response does not prove the operation did not execute. The Bearer replay below is the
+  only second send of a POST or DELETE. The GET retry count is bounded so a misconfiguration cannot
+  turn one read into a request storm.
 - Nothing retries a 429: the gateway asks for tens of seconds, so callers read `retryAfterSeconds`.
-  A 429 whose body read fails stays a 429, and any 429 keeps its `Retry-After` delay whatever its
-  body holds, a delay in the body included, so it still starts the token cool-down for that long. A
-  429 is never a credential verdict: no `invalid_grant` it carries latches the client or falls back
-  to the password grant.
-- One re-authentication replay follows a 401 carrying the enveloped `permission_denied`, for any
-  method. Replaying a POST is safe because Bearer authentication rejects before the handler runs: a
-  `hold/create` refused with 401 for a superseded or malformed token left no transaction, while the
-  same body with a valid token created a hold (W c1493–c1505,
-  [Bearer failures](paylov/authentication.md#bearer-failures)). A bare 401 comes from a proxy,
-  proves nothing about the token, and is never replayed; nor is an envelope without `result: null`,
-  which contradicts the documented rejection and so does not prove the request did not execute.
+  A 429 whose body read fails stays a 429, unless the caller aborted during the read, which stays
+  `sdk_aborted`. A 429's `Retry-After` header sets the delay whatever its body holds, a delay in the
+  body included, but only as delta-seconds from 1 to 3600; without a usable delay the token
+  cool-down lasts 60 seconds. A 429 is never a credential verdict: no `invalid_grant` it carries
+  latches the client or falls back to the password grant.
+- One re-authentication replay follows an authenticated 401 carrying `permission_denied` in a
+  complete envelope (`result: null` and a string `error.message`), for any method. The replay uses a
+  new token, or the newer one a concurrent grant already supplied. Replaying a POST is safe because
+  Bearer authentication rejects before the handler runs: a `hold/create` refused with 401 for a
+  superseded or malformed token left no transaction, while the same body with a valid token created
+  a hold (W c1493–c1505, [Bearer failures](paylov/authentication.md#bearer-failures)). A bare 401
+  comes from a proxy, proves nothing about the token, and is never replayed; nor is an incomplete
+  envelope, which contradicts the documented rejection and so does not prove the request did not
+  execute.
 - A caller's abort is final and abandons only that caller's wait on a shared token grant, never the
   grant.
 - Redirects are not followed. Deadlines cover body reading even when an injected fetch ignores
@@ -158,18 +166,20 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 ## Authentication lifecycle
 
 - Tokens are lazy, process-local and single-flight. Token generations stop a stale 401 from
-  invalidating a newer token. A rejected refresh falls back to one password grant; connection
-  failures do not.
-- Only `invalid_grant` from the password grant locks the client, because repeated failed attempts
-  can lock the merchant account. Recovery is a new client.
+  invalidating a newer token. A refresh rejected with a usable `invalid_grant` envelope at HTTP 401
+  falls back to one password grant; nothing else does, neither `invalid_client` (a credential
+  rejection the password grant would repeat), a 429, nor a connection failure.
+- Only a usable `invalid_grant` envelope at HTTP 401 from the password grant locks the client,
+  because repeated failed attempts can lock the merchant account. Recovery is a new client.
 - A token-endpoint 429 starts a cool-down without I/O instead of a lock.
 - `close()` waits for an in-flight grant, revokes the newest token, and always resolves once closed
   locally; a failed revocation, or one answered with anything but the recorded acknowledgement,
-  appears only in logger events and leaves the token valid until it expires. Later calls throw
-  `sdk_client_closed`. It does not wait for requests already sent: production revocation is assumed
-  immediate ([authentication](paylov/authentication.md#revoke-tokens)), so one still in flight may
-  answer 401 and its single replay fails with `sdk_client_closed`. The 401 proves it never ran, so
-  draining is left to the caller.
+  appears only in logger events and leaves the token's validity uncertain until it expires. A
+  rejected refresh does not stop it revoking an access token that is still valid. Later calls throw
+  `sdk_client_closed`. It does not wait for requests already sent: production revocation is
+  immediate by a maintainer statement ([authentication](paylov/authentication.md#revoke-tokens)), so
+  one still in flight may answer 401 and its single replay fails with `sdk_client_closed`. The 401
+  proves it never ran, so draining is left to the caller.
 - One long-lived client per credential set per process. A shared token cache cannot coordinate
   rotation safely, because a refresh invalidates the old refresh token; distributed auth needs a
   separately approved design with locking and time bounds.
@@ -189,11 +199,14 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 - A partial capture's remainder counts as released ([holds](paylov/holds.md#charge)); callers keep
   the original held amount.
 - `holds.create` reports `clientCaptureDeadline`, read from the client clock before the request is
-  sent, so it can only precede the gateway's own creation time: a lower bound on expiry, never proof
-  of release. `readHoldState` therefore reports `possibly_expired`, not `released`, once it passes.
-- Dismiss is the only proof of release ([holds](paylov/holds.md#dismiss)): callers release every
-  hold they will not capture, also after it expires. Release is never inferred from expiry or status
-  reads.
+  sent: a conservative client-side cut-off that assumes a consistent clock, because Paylov's timer
+  origin and exact cut-off are not established ([holds](paylov/holds.md#flow)). It is never proof of
+  release: `readHoldState` reports `possibly_expired`, not `released`, once it passes.
+- Expiry alone proves nothing ([holds](paylov/holds.md#dismiss)): an expired hold keeps reading
+  `hold` and a dismiss after expiry has succeeded, so callers release every hold they will not
+  capture, also after it expires. A consistent `released` read establishes the hold's current
+  gateway state, not which call caused it nor when funds reach the cardholder: a capture attempt
+  after expiry also releases the hold, and dismiss then answers `hold_not_found`.
 - Nothing that moves money is retried automatically. After an ambiguous failure callers reconcile
   through a read and retry with the same `externalId` or `transactionId`, unless the read shows the
   call ran and failed ([usage/errors.md](usage/errors.md#recovery-after-an-ambiguous-failure)).
@@ -220,8 +233,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   the host application owns the HTTP failure response, because Paylov documents none. Deduplication
   belongs to the application.
 - The receiver accepts a list of credential pairs so a callback password can rotate without
-  downtime. Every pair is compared in constant time, also after a match, so timing does not reveal
-  which pair matched.
+  downtime. The request's digests are compared with every pair's in constant time, also after a
+  match, so the comparison itself does not branch on which pair matched; that is all it establishes
+  about timing.
 - Only the integer `amount_in_tiyin` supplies money; the whole-SUM `amount` is ignored.
 
 ## Contract eligibility

@@ -53,10 +53,16 @@ export function respond(
   return { kind: 'respond', httpStatus, body, retryAfter };
 }
 
-/** The success answer for `payload`, or the error a `FakeRefusal` names. */
-export function replyAnswer(endpoint: Endpoint, payload: unknown): Answer {
+/** The success answer for `payload` at `httpStatus`, or the error a `FakeRefusal` names. */
+export function replyAnswer(endpoint: Endpoint, payload: unknown, httpStatus = 200): Answer {
   if (payload instanceof FakeRefusal) return failureAnswer(payload.code, {});
-  return respond(200, endpoint.shape === 'envelope' ? { result: payload, error: null } : payload);
+  const body = endpoint.shape === 'envelope' ? { result: payload, error: null } : payload;
+  return respond(httpStatus, body);
+}
+
+/** The method's success answer for `result`, at the status its spec declares. */
+export function successAnswer<T>(spec: FakeMethodSpec<T, unknown>, result: T): Answer {
+  return replyAnswer(spec.endpoint, spec.encode(result), spec.successStatus);
 }
 
 /** Settles only when `signal` aborts, as a request the gateway never answers. */

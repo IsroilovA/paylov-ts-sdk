@@ -47,13 +47,17 @@ export interface PaylovFakeSchedule {
 
 /**
  * The script of one SDK method. Each answer serves one HTTP attempt, unless `{ persist: true }`
- * keeps it for every attempt; the fake serves one-time answers in order. A GET that fails
- * transiently is retried, so script one answer per attempt or a persistent one.
+ * keeps it for every attempt; the fake serves one-time answers in order. What the call then
+ * resolves or rejects with follows the SDK's own rules: a GET that fails transiently is retried
+ * against the next answer, a 401 `permission_denied` is replayed once after a new token, and a
+ * method whose decoder reads a gateway error as a result returns that result.
  */
 export interface PaylovFakeMethod<T, P> {
   /**
-   * Answers with `result` encoded as the gateway sends it, so the SDK's own decoding runs. Throws
-   * `TypeError` for a value the wire cannot carry, such as a fractional SUM or sub-second time.
+   * Answers one attempt with a success body that the SDK's decoder reads back as `result`, in the
+   * gateway's wire shape; fields the SDK discards, such as upstream diagnostic text, are omitted.
+   * Throws `TypeError` for a value the wire cannot carry, such as a fractional SUM or sub-second
+   * time.
    *
    * @example
    * fake.payments.create.reply({ transactionId: '00000000-0000-4000-8000-000000000001' });
@@ -61,7 +65,10 @@ export interface PaylovFakeMethod<T, P> {
   reply(result: T, schedule?: PaylovFakeSchedule): void;
 
   /**
-   * Answers with a gateway error; the call rejects with `PaylovApiError` `code`. Throws
+   * Answers one attempt with gateway error `code` as the gateway reports it for this method,
+   * usually an error response, for a lookup miss Paylov sends as a success body that body. The
+   * SDK decodes it as it would the gateway's answer: most methods reject with `PaylovApiError`
+   * `code`, while `onboarding.checkToken` resolves `false` for `invalid_or_expired`. Throws
    * `TypeError` for a failure the gateway cannot report, such as `fields` on a code without them.
    *
    * @example
@@ -71,8 +78,10 @@ export interface PaylovFakeMethod<T, P> {
   fail(code: PaylovErrorCode, failure?: PaylovFakeFailure, schedule?: PaylovFakeSchedule): void;
 
   /**
-   * Fails the attempt before any response: the call rejects with `PaylovConnectionError`
-   * `sdk_network_error`, and the outcome of a method that writes is unknown.
+   * Fails one attempt before any response, as a dropped connection. The SDK retries a GET against
+   * the next answer while `maxGetRetries` allows; a call it does not retry rejects with
+   * `PaylovConnectionError` `sdk_network_error`, and the outcome of a method that changes state is
+   * unknown.
    *
    * @example
    * fake.payments.pay.disconnect();
@@ -80,8 +89,9 @@ export interface PaylovFakeMethod<T, P> {
   disconnect(schedule?: PaylovFakeSchedule): void;
 
   /**
-   * Never answers the attempt: the call rejects with `sdk_timeout` after `timeoutMs`, or with
-   * `sdk_aborted` when its signal aborts.
+   * Never answers one attempt. The SDK abandons it after `timeoutMs` and retries a GET against the
+   * next answer while `maxGetRetries` allows; a call it does not retry rejects with `sdk_timeout`.
+   * An abort of the call's signal ends the call with `sdk_aborted`.
    *
    * @example
    * fake.payments.pay.hang();
@@ -162,6 +172,8 @@ export interface FakeMethodSpec<T, P> {
   /** The success payload, unwrapped, or a `FakeRefusal`. */
   readonly encode: (result: T) => unknown;
   readonly decodeRequest: RequestDecoder<P>;
+  /** The HTTP status of a success, as the gateway sends it. Default 200. */
+  readonly successStatus?: number;
   /** For methods sharing an endpoint: whether a request is this method's. */
   readonly matches?: RequestMatcher;
   readonly miss?: FakeMiss;

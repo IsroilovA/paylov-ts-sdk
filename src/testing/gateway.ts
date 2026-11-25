@@ -18,6 +18,8 @@ import {
   type RequestMatcher,
   type RequestOf,
 } from '../core/fake.js';
+import { isTiyin } from '../core/money.js';
+import { isNonNegativeSafeInteger } from '../core/numbers.js';
 import { isClock, systemClock } from '../core/time.js';
 import type { Endpoint, FetchLike } from '../core/types.js';
 import { FISCALIZATION_FAKES } from '../fiscalization/fake.js';
@@ -44,9 +46,9 @@ import {
   isRetryableAnswer,
   jsonResponse,
   methodFailureAnswer,
-  replyAnswer,
   respond,
   respondWith,
+  successAnswer,
   type Answer,
 } from './answers.js';
 import { isRouteOf, parseBody, requestFor } from './requests.js';
@@ -106,6 +108,26 @@ export interface PaylovFakeGatewayOptions {
    * Defaults to the system clock.
    */
   readonly now?: () => Date;
+  /**
+   * How long after a saved-card payment the simulation refunds it, in whole minutes, measured
+   * between the whole-second times the gateway reports; a later refund answers
+   * `transaction_not_available_for_cancel` and the payment stays paid. Paylov agrees the refund
+   * cut-off with each merchant, so set yours; unset, every refund of a paid payment answers
+   * `fake_unsimulated`. A non-negative safe integer; needs `simulate: true`.
+   */
+  readonly refundWindowMinutes?: number;
+}
+
+/** What `addCard` assumes about a card beyond what `cards.get` reports. */
+export interface PaylovFakeCardOptions {
+  /**
+   * The total that simulated pays and holds may take from this card before it approves no more:
+   * your test's assumption, not a Paylov rule. Paylov documents no link between a card's reported
+   * `balanceTiyin` and whether a charge is approved, so without this every pay and hold on the card
+   * answers `fake_unsimulated`; script the approval or decline instead. A non-negative safe
+   * integer.
+   */
+  readonly spendableTiyin?: number;
 }
 
 /** The simulation clock, failing loudly on a value the wire cannot carry. */
@@ -190,11 +212,19 @@ export class PaylovFakeGateway {
   #lastServed: ServedRequest | undefined;
 
   constructor(options: PaylovFakeGatewayOptions = {}) {
-    const { simulate = false, now } = options;
+    const { simulate = false, now, refundWindowMinutes } = options;
     if (typeof simulate !== 'boolean') throw new TypeError('simulate must be a boolean');
     if (now !== undefined && !isClock(now)) throw new TypeError('now must be a function');
+    if (refundWindowMinutes !== undefined && !isNonNegativeSafeInteger(refundWindowMinutes)) {
+      throw new TypeError('refundWindowMinutes must be a non-negative safe integer');
+    }
+    if (refundWindowMinutes !== undefined && !simulate) {
+      throw new TypeError('refundWindowMinutes needs simulate: true');
+    }
     const clock = checkedClock(now ?? systemClock);
-    this.#simulation = simulate ? new GatewaySimulation(clock) : undefined;
+    this.#simulation = simulate
+      ? new GatewaySimulation({ now: clock, refundWindowMinutes })
+      : undefined;
     this.token = this.#token;
 
     // Each surface lists its methods once; the spec, label and simulator follow from the key.
@@ -268,20 +298,29 @@ export class PaylovFakeGateway {
   }
 
   /**
-   * Binds a card in the simulation, as a finished PAN binding would: `cards.get`,
-   * `cards.list`, payments and holds then find it. Throws `TypeError` without `simulate: true` or
-   * for a card id already bound.
+   * Binds a card in the simulation, as a finished PAN binding would: `cards.get`, `cards.list`,
+   * payments and holds then find it, and pays and holds approve up to `spendableTiyin` in total.
+   * A card the simulation deleted stays deleted: bind a new card with a fresh `cardId`. Throws
+   * `TypeError` without `simulate: true`, for a card id already bound or deleted, or for an
+   * invalid `spendableTiyin`.
    *
    * @example
-   * fake.addCard({ ...savedCard, cardId: '00000000-0000-4000-8000-000000000002', userId: 'user-42' });
+   * fake.addCard(
+   *   { ...savedCard, cardId: '00000000-0000-4000-8000-000000000002', userId: 'user-42' },
+   *   { spendableTiyin: 10_000_000 },
+   * );
    */
-  addCard(card: Card): void {
+  addCard(card: Card, options: PaylovFakeCardOptions = {}): void {
     if (this.#simulation === undefined) {
       throw new TypeError(
         'PaylovFakeGateway: addCard() needs new PaylovFakeGateway({ simulate: true })',
       );
     }
-    this.#simulation.addCard(card);
+    const { spendableTiyin } = options;
+    if (spendableTiyin !== undefined && !isTiyin(spendableTiyin)) {
+      throw new TypeError('spendableTiyin must be a non-negative safe integer');
+    }
+    this.#simulation.addCard(card, spendableTiyin);
   }
 
   /**
@@ -336,7 +375,7 @@ export class PaylovFakeGateway {
     return {
       requests,
       reply: (result, schedule) => {
-        this.#answers.add(route, replyAnswer(endpoint, spec.encode(result)), schedule);
+        this.#answers.add(route, successAnswer(spec, result), schedule);
       },
       fail: (code, details = {}, schedule) => {
         this.#answers.add(route, methodFailureAnswer(spec, code, details), schedule);
@@ -420,7 +459,7 @@ export class PaylovFakeGateway {
     spec: FakeMethodSpec<T, unknown>,
     outcome: SimulatedOutcome<T>,
   ): Answer {
-    if (outcome.kind === 'result') return replyAnswer(spec.endpoint, spec.encode(outcome.value));
+    if (outcome.kind === 'result') return successAnswer(spec, outcome.value);
     if (outcome.kind === 'error') return methodFailureAnswer(spec, outcome.code, outcome.failure);
     return this.#unsimulated(label, outcome.reason);
   }

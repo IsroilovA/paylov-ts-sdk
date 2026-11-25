@@ -4,7 +4,7 @@ import type { Card } from '../../src/cards/types.js';
 import { PaylovClient } from '../../src/client.js';
 import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
 import { readHoldState } from '../../src/holds/state.js';
-import { PaylovFakeGateway } from '../../src/testing/gateway.js';
+import { PaylovFakeGateway, type PaylovFakeGatewayOptions } from '../../src/testing/gateway.js';
 import { readRefundState } from '../../src/transactions/state.js';
 import { captureAsync, expectApiError } from '../helpers/asserts.js';
 import { recordingLogger } from '../helpers/testHttp.js';
@@ -33,16 +33,17 @@ const INACTIVE_CARD: Card = {
   isActive: false,
   processingStatus: 'blocked',
 };
-const EMPTY_CARD: Card = {
+const EMPTY_CARD: Card = { ...CARD, cardId: '00000000-0000-4000-8000-0000000000c3' };
+const RICH_CARD: Card = { ...CARD, cardId: '00000000-0000-4000-8000-0000000000c4' };
+/** A card the test grants no spending allowance, whatever balance it reports. */
+const REPORTED_ONLY_CARD: Card = {
   ...CARD,
-  cardId: '00000000-0000-4000-8000-0000000000c3',
-  balanceTiyin: 0,
-};
-const RICH_CARD: Card = {
-  ...CARD,
-  cardId: '00000000-0000-4000-8000-0000000000c4',
+  cardId: '00000000-0000-4000-8000-0000000000c5',
   balanceTiyin: 20_000_000_000_000,
 };
+/** What the tests let pays and holds take from `CARD`. */
+const SPENDABLE_TIYIN = 10_000_000;
+const REFUND_WINDOW_MINUTES = 24 * 60;
 const UNKNOWN_ID = '00000000-0000-4000-8000-0000000000ff';
 const SERVICE_ID = '00000000-0000-4000-8000-0000000000e1';
 const PAY = { cardId: CARD.cardId, userId: CARD.userId };
@@ -56,16 +57,43 @@ const HOLD = {
 
 type Simulated = ReturnType<typeof simulated>;
 
-function simulated() {
-  let now = START;
-  const fake = new PaylovFakeGateway({ simulate: true, now: () => now });
-  fake.addCard(CARD);
+function simulated(
+  options: PaylovFakeGatewayOptions = { refundWindowMinutes: REFUND_WINDOW_MINUTES },
+  start = START,
+) {
+  let now = start;
+  const fake = new PaylovFakeGateway({ ...options, simulate: true, now: () => now });
+  fake.addCard(CARD, { spendableTiyin: SPENDABLE_TIYIN });
   const { logger, responses } = recordingLogger();
-  const paylov = new PaylovClient({ ...fake.clientConfig, logger });
+  /** The wire `status` of each transaction row the fake sent. */
+  const wireStatuses: unknown[] = [];
+  const paylov = new PaylovClient({
+    ...fake.clientConfig,
+    logger,
+    fetch: async (input, init) => {
+      const response = await fake.fetch(input, init);
+      const body: unknown = await response.clone().json();
+      wireStatuses.push(...wireTransactionStatuses(body));
+      return response;
+    },
+  });
   const advance = (minutes: number): void => {
     now = new Date(now.getTime() + minutes * 60_000);
   };
-  return { fake, paylov, responses, advance, now: () => now };
+  return { fake, paylov, responses, wireStatuses, advance, now: () => now };
+}
+
+function wireTransactionStatuses(body: unknown): unknown[] {
+  const rows: unknown =
+    typeof body === 'object' && body !== null && 'result' in body
+      ? typeof body.result === 'object' && body.result !== null && 'transactions' in body.result
+        ? body.result.transactions
+        : undefined
+      : undefined;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row: unknown) =>
+    typeof row === 'object' && row !== null && 'status' in row ? row.status : undefined,
+  );
 }
 
 async function sell({ paylov }: Simulated, amountTiyin: number) {
@@ -152,6 +180,75 @@ describe('the simulated gateway: sales', () => {
       code: 'card_not_found',
     });
     expect(await paylov.transactions.get({ transactionId })).toMatchObject({ status: 'created' });
+    expect(() => {
+      fake.addCard(CARD, { spendableTiyin: SPENDABLE_TIYIN });
+    }).toThrow('bind a new card with a fresh cardId');
+    fake.assertDone();
+  });
+
+  it('approves no pay or hold on a card added without a spending allowance', async () => {
+    const { fake, paylov } = simulated();
+    fake.addCard(REPORTED_ONLY_CARD);
+    const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+
+    await expectApiError(
+      paylov.payments.pay({ transactionId, ...PAY, cardId: REPORTED_ONLY_CARD.cardId }),
+      { code: 'fake_unsimulated', httpStatus: 501 },
+    );
+    await expectApiError(paylov.holds.create({ ...HOLD, cardId: REPORTED_ONLY_CARD.cardId }), {
+      code: 'fake_unsimulated',
+      httpStatus: 501,
+    });
+    expect(await paylov.transactions.get({ transactionId })).toMatchObject({ status: 'created' });
+    expect(() => {
+      fake.assertDone();
+    }).toThrow(
+      'unsimulated payments.pay: payments.pay on a card added without spendableTiyin; its reported balance does not decide approval; script this call; unsimulated holds.create: holds.create on a card added without spendableTiyin',
+    );
+  });
+
+  it('refunds within the refund window and refuses later, as the gateway refuses a late refund', async () => {
+    const simulation = simulated({ refundWindowMinutes: 10 });
+    const { fake, paylov, advance } = simulation;
+    const early = await sell(simulation, 100_000);
+    const late = await sell(simulation, 100_000);
+
+    advance(9);
+    await paylov.payments.refund(early);
+    advance(1);
+    await expectApiError(paylov.payments.refund(late), {
+      code: 'transaction_not_available_for_cancel',
+    });
+    expect(await paylov.transactions.get(early)).toMatchObject({ status: 'refunded' });
+    expect(await paylov.transactions.get(late)).toMatchObject({ status: 'paid' });
+    fake.assertDone();
+  });
+
+  it('leaves every refund of a payment unsimulated without a refund window', async () => {
+    const simulation = simulated({});
+    const sale = await sell(simulation, 100_000);
+
+    await expectApiError(simulation.paylov.payments.refund(sale), {
+      code: 'fake_unsimulated',
+      httpStatus: 501,
+    });
+    expect(await simulation.paylov.transactions.get(sale)).toMatchObject({ status: 'paid' });
+    expect(() => {
+      simulation.fake.assertDone();
+    }).toThrow(
+      'unsimulated payments.refund: payments.refund without refundWindowMinutes, a per-merchant cut-off',
+    );
+  });
+
+  it('refuses a payment of zero with the gateway answer', async () => {
+    const { fake, paylov } = simulated();
+    await expectApiError(paylov.payments.create({ amountTiyin: 0 }), {
+      code: 'field_not_valid',
+      httpStatus: 400,
+      fields: ['amount'],
+    });
+    const largest = await paylov.payments.create({ amountTiyin: 1_000_000_000_000 });
+    expect(await paylov.transactions.get(largest)).toMatchObject({ status: 'created' });
     fake.assertDone();
   });
 
@@ -225,7 +322,7 @@ describe('the simulated gateway: holds', () => {
   });
 
   it('keeps an expired hold reading held, until a capture fails with hold_time_expired', async () => {
-    const { fake, paylov, advance, now } = simulated();
+    const { fake, paylov, wireStatuses, advance, now } = simulated();
     const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
 
     advance(46);
@@ -256,24 +353,44 @@ describe('the simulated gateway: holds', () => {
       cancelledAt: now(),
       isHold: true,
     });
+    // The release a failed expired capture causes reads `refunded` on the wire (W c1280).
+    expect(wireStatuses.at(-1)).toBe('refunded');
     await expectApiError(paylov.holds.release(created), { code: 'hold_not_found' });
     fake.assertDone();
   });
 
   it('reads a dismissed hold as refunded, still a hold, with the release time', async () => {
-    const { fake, paylov, advance, now } = simulated();
+    const { fake, paylov, wireStatuses, advance, now } = simulated();
     const created = await paylov.holds.create(HOLD);
 
     advance(1);
     await paylov.holds.release(created);
     const read = await paylov.transactions.get(created);
     expect(read).toMatchObject({ status: 'refunded', isHold: true, cancelledAt: now() });
+    // A dismissal reads `cancel` on the wire (W c1526).
+    expect(wireStatuses.at(-1)).toBe('cancel');
     expect(readRefundState({ transaction: read })).toEqual({ kind: 'unknown' });
     fake.assertDone();
   });
 
+  it('keeps a dismissal after expiry from a sub-second clock as after expiry', async () => {
+    const simulation = simulated(undefined, new Date('2026-11-12T10:00:00.250Z'));
+    const { fake, paylov, advance } = simulation;
+    const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
+
+    advance(1);
+    await paylov.holds.release(created);
+    await expectApiError(paylov.holds.capture({ ...created, amountTiyin: 100_000 }), {
+      code: 'fake_unsimulated',
+      httpStatus: 501,
+    });
+    expect(() => {
+      fake.assertDone();
+    }).toThrow('unsimulated holds.capture: holds.capture of a hold released after it expired');
+  });
+
   it('releases an expired hold without a capture attempt', async () => {
-    const { fake, paylov, advance, now } = simulated();
+    const { fake, paylov, wireStatuses, advance, now } = simulated();
     const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
 
     advance(3);
@@ -287,6 +404,8 @@ describe('the simulated gateway: holds', () => {
       isHold: true,
       cancelledAt: now(),
     });
+    // A dismissal after expiry still reads `cancel` (W c1544).
+    expect(wireStatuses.at(-1)).toBe('cancel');
     await expectApiError(paylov.holds.release(created), { code: 'hold_not_found' });
     fake.assertDone();
   });
@@ -306,7 +425,7 @@ describe('the simulated gateway: holds', () => {
 });
 
 describe('the simulated gateway: card funds', () => {
-  const FULL = { ...HOLD, amountTiyin: CARD.balanceTiyin };
+  const FULL = { ...HOLD, amountTiyin: SPENDABLE_TIYIN };
   const NEXT = { ...HOLD, externalId: 'booking-2', amountTiyin: 6_000_000 };
 
   it('gives a dismissed hold back to the card for the next hold', async () => {
@@ -332,7 +451,7 @@ describe('the simulated gateway: card funds', () => {
     [
       'a pay that only a refund would cover',
       async (simulation: Simulated) => {
-        const { transactionId } = await sell(simulation, CARD.balanceTiyin);
+        const { transactionId } = await sell(simulation, SPENDABLE_TIYIN);
         await simulation.paylov.payments.refund({ transactionId });
         return sell(simulation, 6_000_000);
       },
@@ -443,6 +562,16 @@ describe('the simulated gateway: evidenced refusals', () => {
     fake.assertDone();
   });
 
+  it('answers a read of an id that is not a UUID with the recorded HTTP 400 validation_error', async () => {
+    const { fake, paylov } = simulated();
+    await expectApiError(paylov.transactions.get({ transactionId: 'not-a-uuid' }), {
+      code: 'validation_error',
+      httpStatus: 400,
+      fields: ['transactionId'],
+    });
+    fake.assertDone();
+  });
+
   it.each([
     [
       'a pay of an unknown transaction',
@@ -472,6 +601,18 @@ describe('the simulated gateway: evidenced refusals', () => {
       'a hold on an unknown card',
       ({ paylov }: Simulated) => paylov.holds.create({ ...HOLD, cardId: UNKNOWN_ID }),
       'card_not_found',
+    ],
+    [
+      'a pay of an id that is not a UUID',
+      ({ paylov }: Simulated) => paylov.payments.pay({ transactionId: 'not-a-uuid', ...PAY }),
+      'validation_error',
+      ['transactionId'],
+    ],
+    [
+      'a refund of an id that is not a UUID',
+      ({ paylov }: Simulated) => paylov.payments.refund({ transactionId: 'not-a-uuid' }),
+      'validation_error',
+      ['transactionId'],
     ],
     [
       'a list with a malformed end date',
@@ -590,9 +731,21 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'cards.list',
     ],
     [
-      'a payment of zero',
-      async ({ paylov }: Simulated) => paylov.payments.create({ amountTiyin: 0 }),
+      'a payment above 10 000 000 000 SUM',
+      async ({ paylov }: Simulated) => paylov.payments.create({ amountTiyin: 1_000_000_000_100 }),
       'payments.create',
+    ],
+    [
+      'a sale read by a UUID in another spelling',
+      async ({ paylov }: Simulated) =>
+        paylov.transactions.get({ transactionId: UNKNOWN_ID.replaceAll('-', '') }),
+      'transactions.get',
+    ],
+    [
+      'a capture of an id that is not a UUID',
+      async ({ paylov }: Simulated) =>
+        paylov.holds.capture({ transactionId: 'not-a-uuid', amountTiyin: 100_000 }),
+      'holds.capture',
     ],
     [
       'a pay by a user other than the payment was created for',
@@ -608,37 +761,37 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     [
       'a pay with an inactive card',
       async ({ fake, paylov }: Simulated) => {
-        fake.addCard(INACTIVE_CARD);
+        fake.addCard(INACTIVE_CARD, { spendableTiyin: SPENDABLE_TIYIN });
         const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
         return paylov.payments.pay({ transactionId, ...PAY, cardId: INACTIVE_CARD.cardId });
       },
       'payments.pay',
     ],
     [
-      'a pay the card balance does not cover',
+      'a pay the spending allowance does not cover',
       async ({ fake, paylov }: Simulated) => {
-        fake.addCard(EMPTY_CARD);
+        fake.addCard(EMPTY_CARD, { spendableTiyin: 0 });
         const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
         return paylov.payments.pay({ transactionId, ...PAY, cardId: EMPTY_CARD.cardId });
       },
       'payments.pay',
     ],
     [
-      'a pay the balance left after earlier charges does not cover',
+      'a pay the allowance left after earlier charges does not cover',
       async ({ paylov }: Simulated) => {
         const pay = async (amountTiyin: number) => {
           const { transactionId } = await paylov.payments.create({ amountTiyin });
           return paylov.payments.pay({ transactionId, ...PAY });
         };
-        await pay(CARD.balanceTiyin - 100_000);
+        await pay(SPENDABLE_TIYIN - 100_000);
         return pay(100_100);
       },
       'payments.pay',
     ],
     [
-      'a hold the card balance does not cover',
+      'a hold the spending allowance does not cover',
       async ({ fake, paylov }: Simulated) => {
-        fake.addCard(EMPTY_CARD);
+        fake.addCard(EMPTY_CARD, { spendableTiyin: 0 });
         return paylov.holds.create({ ...HOLD, cardId: EMPTY_CARD.cardId });
       },
       'holds.create',
@@ -646,7 +799,7 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     [
       'a hold above 1 000 000 000 SUM',
       async ({ fake, paylov }: Simulated) => {
-        fake.addCard(RICH_CARD);
+        fake.addCard(RICH_CARD, { spendableTiyin: 20_000_000_000_000 });
         return paylov.holds.create({
           ...HOLD,
           cardId: RICH_CARD.cardId,
@@ -681,28 +834,6 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'cards.list',
     ],
     [
-      'a refund 11 days after the payment',
-      async ({ paylov, advance }: Simulated) => {
-        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
-        await paylov.payments.pay({ transactionId, ...PAY });
-        advance(11 * 24 * 60);
-        return paylov.payments.refund({ transactionId });
-      },
-      'payments.refund',
-    ],
-    [
-      'a refund on the Tashkent day after the payment',
-      async ({ paylov, advance }: Simulated) => {
-        // 18:59 UTC is 23:59 in Tashkent; two minutes later is the next Tashkent day.
-        advance(8 * 60 + 59);
-        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
-        await paylov.payments.pay({ transactionId, ...PAY });
-        advance(2);
-        return paylov.payments.refund({ transactionId });
-      },
-      'payments.refund',
-    ],
-    [
       'a list of rows paid in the same second',
       async ({ paylov }: Simulated) => {
         for (let index = 0; index < 2; index += 1) {
@@ -726,7 +857,7 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     [
       'a hold on an inactive card',
       async ({ fake, paylov }: Simulated) => {
-        fake.addCard(INACTIVE_CARD);
+        fake.addCard(INACTIVE_CARD, { spendableTiyin: SPENDABLE_TIYIN });
         return paylov.holds.create({ ...HOLD, cardId: INACTIVE_CARD.cardId });
       },
       'holds.create',
@@ -832,6 +963,15 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     expect(() => new PaylovFakeGateway({ simulate: 'yes' })).toThrow(TypeError);
     // @ts-expect-error malformed JavaScript input
     expect(() => new PaylovFakeGateway({ now: START })).toThrow(TypeError);
+    expect(() => {
+      fake.addCard(EMPTY_CARD, { spendableTiyin: 1.5 });
+    }).toThrow('spendableTiyin must be a non-negative safe integer');
+    expect(() => new PaylovFakeGateway({ simulate: true, refundWindowMinutes: -1 })).toThrow(
+      'refundWindowMinutes must be a non-negative safe integer',
+    );
+    expect(() => new PaylovFakeGateway({ refundWindowMinutes: 60 })).toThrow(
+      'refundWindowMinutes needs simulate: true',
+    );
   });
 });
 

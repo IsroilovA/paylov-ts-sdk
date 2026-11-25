@@ -181,12 +181,13 @@ will be sent by Uzcard/Humo to the phone number linked to your card: `********00
 
 `POST {BASE_URL}/merchant/userCard/confirmUserCardCreate/`
 
-| Field      | Type   | Required | Notes                                    | Grade          |
-| ---------- | ------ | -------- | ---------------------------------------- | -------------- |
-| `cardId`   | string | Yes      | The `cid`; must be a UUID                | W (c047)       |
-| `otp`      | string | Yes      | An integer is coerced                    | W (c046, c051) |
-| `cardName` | string | No       | Stored and echoed; `""` when omitted     | W (c027, c051) |
-| `pinfl`    | string | No       | 14 characters; must match the cardholder | W (c049, c050) |
+| Field      | Type   | Required | Notes                                                                                                                                 | Grade          |
+| ---------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `cardId`   | string | Yes      | The `cid`; must be a UUID                                                                                                             | W (c047)       |
+| `otp`      | string | Yes      | An integer is coerced                                                                                                                 | W (c046, c051) |
+| `cardName` | string | No       | Stored and echoed; `""` when omitted                                                                                                  | W (c027, c051) |
+| `pinfl`    | string | No       | 14 characters; must match the cardholder                                                                                              | W (c049, c050) |
+| `sms`      | object | No       | Undocumented here; `{hash, templateId: 999999}` was accepted on a successful confirm. Its effect is unknown; the SDK does not send it | W (c1523)      |
 
 Success is `{"result": {"card": <card>}}` with a flat `status` (W c027, c045, c051, c962, c1354,
 c1357, c1360). The docs say the status "might include error response" without a shape (D). Read with

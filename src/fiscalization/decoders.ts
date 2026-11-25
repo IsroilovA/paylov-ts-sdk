@@ -57,10 +57,25 @@ const decodeActivityTypeDetails: Decoder<ActivityTypeDetails> = (value, path) =>
   };
 };
 
-/** The upstream `reason` is free text from the tax service and is never read. */
-export const decodeActivityTypeCheck: Decoder<ActivityTypeCheck> = (value, path) => {
-  const field = readFields(value, path);
-  const success = field('success', asBoolean);
-  const { status = true, activityNames } = field('data', decodeActivityTypeDetails);
-  return { isConfirmed: success && status, activityNames };
-};
+/**
+ * The answer as confirmed by `success` and a `data.status` that is not `false`, where an absent
+ * `data.status` counts as `isConfirmedWithoutStatus`. The upstream `reason` is free text from the
+ * tax service and is never read.
+ */
+function activityTypeCheck(isConfirmedWithoutStatus: boolean): Decoder<ActivityTypeCheck> {
+  return (value, path) => {
+    const field = readFields(value, path);
+    const success = field('success', asBoolean);
+    const { status = isConfirmedWithoutStatus, activityNames } = field(
+      'data',
+      decodeActivityTypeDetails,
+    );
+    return { isConfirmed: success && status, activityNames };
+  };
+}
+
+/** Entrepreneur and self-employed checks, whose `success` is the answer. */
+export const decodeActivityTypeCheck: Decoder<ActivityTypeCheck> = activityTypeCheck(true);
+
+/** The high-income check, which only `data.status` confirms; `success` says the check ran. */
+export const decodeHighIncomeCheck: Decoder<ActivityTypeCheck> = activityTypeCheck(false);

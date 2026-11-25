@@ -131,29 +131,29 @@ password grant.
 
 All token failures are enveloped (W c003–c013).
 
-| HTTP | Code                     | Message                                         | Cause                                                                                  | Grade          |
-| ---- | ------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------- | -------------- |
-| 401  | `invalid_grant`          | Invalid credentials                             | Wrong password or unknown username                                                     | W (c003, c004) |
-| 401  | `invalid_grant`          | Invalid consumer secret                         | Wrong consumer secret                                                                  | W (c005)       |
-| 401  | `invalid_grant`          | Invalid consumer key                            | Unknown consumer key, on the password grant                                            | W (c006)       |
-| 401  | `invalid_grant`          | this account not activated                      | Paylov has not activated the account                                                   | D              |
-| 401  | `invalid_grant`          | IP address not in whitelist                     | Source IP not allowlisted                                                              | D              |
-| 401  | `invalid_grant`          | User account is locked                          | Too many failed password attempts                                                      | D              |
-| 401  | `invalid_grant`          | Invalid refresh token                           | Unknown refresh token                                                                  | W (c010)       |
-| 401  | `invalid_grant`          | Refresh token invalid or expired                | Rotated (already used) refresh token                                                   | W (c370)       |
-| 401  | `invalid_grant`          | Not a refresh token                             | An access token sent as `refresh_token`                                                | W (c371)       |
-| 401  | `invalid_grant`          | Refresh token expired, User credential inactive | Expired refresh token, inactive credential                                             | D              |
-| 401  | `invalid_client`         | Invalid consumer key                            | Refresh grant with a wrong consumer key; the refresh token stays usable                | W (c499, c500) |
-| 400  | `invalid_request`        | Basic Authorization header required             | No Basic header                                                                        | W (c007, c362) |
-| 400  | `invalid_request`        | Invalid Authorization header format             | Malformed Basic value                                                                  | D              |
-| 400  | `invalid_request`        | username and password required                  | Password grant without credentials                                                     | D              |
-| 400  | `invalid_request`        | refresh_token required                          | Refresh grant without `refresh_token`                                                  | W (c011)       |
-| 400  | `unsupported_grant_type` | Grant type '...' is not supported               | Any other `grant_type`                                                                 | W (c008)       |
-| 400  | `validation_error`       |                                                 | `{}` body: `data` `{"grant_type": [...]}`                                              | W (c009)       |
-| 400  | `validation_error`       |                                                 | Malformed JSON: `data` keyed by character offset, e.g. `{"14": ["JSON decode error"]}` | W (c363, c364) |
-| 400  | `validation_error`       |                                                 | Form-encoded body: `data` `{"non_field_errors": [...]}`                                | W (c366)       |
-| 405  | `method_not_allowed`     | Method not allowed.                             | `GET`; `data` `null`                                                                   | W (c013)       |
-| 429  | `rate_limit_exceeded`    | Too many requests. Retry after <N>s.            | Rate limit (below); `data` `null`; the same delay in a `Retry-After` header            | W (c012, c904) |
+| HTTP | Code                     | Message                                         | Cause                                                                                                                  | Grade          |
+| ---- | ------------------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 401  | `invalid_grant`          | Invalid credentials                             | Wrong password or unknown username                                                                                     | W (c003, c004) |
+| 401  | `invalid_grant`          | Invalid consumer secret                         | Wrong consumer secret                                                                                                  | W (c005)       |
+| 401  | `invalid_grant`          | Invalid consumer key                            | Unknown consumer key, on the password grant                                                                            | W (c006)       |
+| 401  | `invalid_grant`          | this account not activated                      | Paylov has not activated the account                                                                                   | D              |
+| 401  | `invalid_grant`          | IP address not in whitelist                     | Source IP not allowlisted                                                                                              | D              |
+| 401  | `invalid_grant`          | User account is locked                          | Too many failed password attempts                                                                                      | D              |
+| 401  | `invalid_grant`          | Invalid refresh token                           | Unknown refresh token                                                                                                  | W (c010)       |
+| 401  | `invalid_grant`          | Refresh token invalid or expired                | Rotated (already used) refresh token                                                                                   | W (c370)       |
+| 401  | `invalid_grant`          | Not a refresh token                             | An access token sent as `refresh_token`                                                                                | W (c371)       |
+| 401  | `invalid_grant`          | Refresh token expired, User credential inactive | Expired refresh token, inactive credential                                                                             | D              |
+| 401  | `invalid_client`         | Invalid consumer key                            | Refresh grant with a wrong consumer key; the refresh token stays usable                                                | W (c499, c500) |
+| 400  | `invalid_request`        | Basic Authorization header required             | No Basic header                                                                                                        | W (c007, c362) |
+| 400  | `invalid_request`        | Invalid Authorization header format             | Malformed Basic value                                                                                                  | D              |
+| 400  | `invalid_request`        | username and password required                  | Password grant without credentials                                                                                     | D              |
+| 400  | `invalid_request`        | refresh_token required                          | Refresh grant without `refresh_token`                                                                                  | W (c011)       |
+| 400  | `unsupported_grant_type` | Grant type '...' is not supported               | Any other `grant_type`                                                                                                 | W (c008)       |
+| 400  | `validation_error`       |                                                 | `{}` body: `data` `{"grant_type": [...]}`                                                                              | W (c009)       |
+| 400  | `validation_error`       |                                                 | Malformed JSON: `data` keyed by character offset, e.g. `{"14": ["JSON decode error"]}`                                 | W (c363, c364) |
+| 400  | `validation_error`       |                                                 | Form-encoded body: `data` `{"non_field_errors": [...]}`                                                                | W (c366)       |
+| 405  | `method_not_allowed`     | Method not allowed.                             | `GET`; `data` `null`                                                                                                   | W (c013)       |
+| 429  | `rate_limit_exceeded`    | Too many requests. Retry after <N>s.            | Rate limit (below); `data` `null`; the same delay in a `Retry-After` header (W c904; c012's headers were not recorded) | W (c012, c904) |
 
 ## Rate limit
 

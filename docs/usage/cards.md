@@ -25,8 +25,13 @@ await userCards.save('user-42', card.cardId);
 - A card without SMS notifications receives no OTP: ask for another card instead of waiting.
 - Store `cardId`, never the card number; keep card numbers, expiries and OTPs out of your logs.
 - After a wrong code, re-prompt; after `otp_expired`, `try_new_otp` or `too_many_attempts`, start
-  again. Stop prompting after the third wrong code: the fourth blocks the card for about five
-  minutes across users, bindings and payments (`card_is_blocked`).
+  again. Stop prompting after the third wrong code: the fourth answers `card_is_blocked` and blocks
+  binding of that card, also for another user, for about five minutes on Paylov's test environment.
+  A card-number payment counts its own wrong codes: during that block its confirm still answered
+  `invalid_otp` three times before `card_is_blocked`.
+- While the OTP is valid, starting the binding again answers `otp_code_already_sent`; after it
+  expires, about 90 seconds on Paylov's test environment, a new start returns the same `cardId` with
+  a new OTP.
 
 ## Saved cards
 

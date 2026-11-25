@@ -61,8 +61,16 @@ expect(isPaylovOutcomeUnknown(error)).toBe(true);
 fake.assertDone();
 ```
 
-- Each SDK method has a script with `reply`, `fail`, `disconnect` and `hang`. Scripting a value or a
-  failure the gateway cannot send throws `TypeError`.
+- Each SDK method has a script with `reply`, `fail`, `disconnect` and `hang`. Each scripts one HTTP
+  attempt, not the call's result: the SDK's retries, token replay and decoding decide that, so
+  `fake.onboarding.checkToken.fail('invalid_or_expired')` resolves `false`, and a GET that meets
+  `disconnect()` succeeds on its next scripted answer.
+- `reply` sends the wire shape the SDK decodes back into the scripted value, without the diagnostic
+  fields the SDK discards. Scripting what the wire cannot carry throws `TypeError`: a fractional
+  SUM, a sub-second time, a raw status spelling, a bank id that is not plain decimal digits, or
+  failure details the gateway cannot report for the code. A value the SDK's own decoder refuses,
+  such as an unmasked card number, passes the script and fails the call with
+  `sdk_malformed_response`.
 - A lookup miss is a failure: `fake.holds.get.fail('transaction_not_found')`.
   `fake.transactions.get.fail('transaction_not_found')` answers as Paylov does, with an empty list
   at HTTP 200 that the SDK reads as the miss: the error has `httpStatus` 200 and takes no failure
@@ -71,10 +79,11 @@ fake.assertDone();
 - A status outside the SDK's vocabulary passes through; a raw gateway spelling the SDK renames, such
   as a hold's `'paid'`, throws `TypeError`.
 - An unscripted request fails with `fake_unscripted`, and a request the fake cannot read back into
-  its method's params with `fake_unreadable_request`, both HTTP 501; `assertDone()` reports each by
-  its route template, such as `GET /merchant/userCard/getCard/{cardId}/`.
-- `hang()` ends the call with `sdk_timeout` after `timeoutMs`, or `sdk_aborted` when its signal
-  aborts.
+  its method's params with `fake_unreadable_request`, both HTTP 501; `assertDone()` names each by
+  its route template, such as `GET /merchant/userCard/getCard/{cardId}/`, and names an unserved
+  answer or an unsimulated state by its method, such as `holds.get`.
+- `hang()` leaves one attempt unanswered until `timeoutMs` ends it with `sdk_timeout`, after which a
+  GET is retried; an abort of the call's signal ends the call with `sdk_aborted`.
 - `PaylovOnboarding` takes `fake.onboardingConfig` and is scripted through `fake.onboarding`.
 
 ### Sent params
@@ -127,9 +136,10 @@ import { PaylovClient } from '@isroilov_an/paylov';
 import { PaylovFakeGateway } from '@isroilov_an/paylov/testing';
 
 let now = new Date('2026-11-12T10:00:00Z');
-const fake = new PaylovFakeGateway({ simulate: true, now: () => now });
+const fake = new PaylovFakeGateway({ simulate: true, now: () => now, refundWindowMinutes: 60 });
 const paylov = new PaylovClient(fake.clientConfig); // hold deadlines use the same clock
-fake.addCard(card); // a card as `cards.get` returns it, already bound
+// A card as `cards.get` returns it, already bound; pays and holds may take 100 000 SUM in total.
+fake.addCard(card, { spendableTiyin: 10_000_000 });
 
 const hold = await paylov.holds.create({ ...holdParams, cardId: card.cardId, durationMinutes: 30 });
 now = new Date(now.getTime() + 31 * 60_000);
@@ -147,23 +157,47 @@ fake.assertDone();
   partial capture ends the hold and charges only the captured amount, a dismiss before expiry makes
   the held funds available to the card again, an expired hold still reads `held`, capture after
   expiry fails with `hold_time_expired` and releases the hold, an `externalId` is never reused, a
-  second pay answers `transaction_already_payed`, a second refund
-  `transaction_not_available_for_cancel`, an unknown transaction reads as the HTTP 200 miss, and the
-  list shows paid rows only, newest first, by Tashkent day.
+  second pay answers `transaction_already_payed`, a second refund or a refund of an unpaid payment
+  `transaction_not_available_for_cancel`, a payment of zero `field_not_valid` on `amount`, a
+  transaction id that is not a UUID `validation_error` on `transactionId` (read, pay and refund), an
+  unknown transaction reads as the HTTP 200 miss, and the list shows paid rows only, newest first,
+  by Tashkent day. A dismissed hold's transaction reads `cancel` on the wire, one released by a
+  failed expired capture `refunded`; both decode as `refunded`.
+- Two answers are the test's to choose, as Paylov's do not follow from what it reports. `addCard`'s
+  `spendableTiyin` is what pays and holds may take from that card in total: Paylov documents no link
+  between a reported `balanceTiyin` and an approval, so the balance never decides one.
+  `refundWindowMinutes` is how long after a payment a refund succeeds; a later one answers
+  `transaction_not_available_for_cancel` and the payment stays paid, as Paylov answers once its
+  per-merchant cut-off passed.
+- A deleted card stays deleted: `addCard` with its id throws `TypeError`, so bind a new card with a
+  fresh `cardId`.
 - A state it does not simulate answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`:
-  script that call instead. Among them:
-  - a pay or hold that the card's `balanceTiyin`, less what the simulation charged or still holds on
-    that card, does not cover; script the decline or the approval;
+  script that call instead.
+- Paylov has a known answer, which the fake leaves to a script, for:
+  - a hold below 10 SUM, outside 1 to 40 320 minutes, or with an `externalId` over 64 characters,
+    and a capture below 10 SUM (`validation_error` or `field_not_valid`);
+  - a refund of a captured hold (`processing_error` on Paylov's test environment).
+- Paylov's behavior is unknown, so script what your case assumes, for:
+  - a pay or hold on a card added without `spendableTiyin` or past it, and every refund without
+    `refundWindowMinutes`;
   - a pay or hold that fits only once funds Paylov returns on its own schedule reach the card: a
     refund, the uncaptured rest of a partial capture, or a hold released after it expired, by a
     dismiss or by `hold_time_expired`;
-  - a hold above 1 000 000 000 SUM, where Paylov answers `invalid_amount` from a bound it does not
-    state;
-  - a refund after the Tashkent day of the payment, since each merchant's refund window differs;
-  - `cards.get` or `cards.list` of a card the simulation charged or held, also after a release or
-    refund, whose balance it cannot report;
-  - a `transactions.list` with two rows paid in the same second, whose order is unobserved;
-  - refunding a captured hold, or a hold with a `serviceId`.
+  - a payment above 10 000 000 000 SUM, and a hold above 1 000 000 000 SUM, where Paylov answers
+    `invalid_amount` from a bound it does not state;
+  - a hold with another user's card, a pay or hold with an inactive card, a pay by another user than
+    the payment was created for, and a hold with a `serviceId`;
+  - a capture or release after the card was deleted; a capture both expired and above the held
+    amount; a capture after a hold released after it expired; a second capture after
+    `hold_time_expired`;
+  - a release of an unknown or non-hold transaction, `holds.get` of a sale, a `payments.pay` of a
+    hold, and a `payments.refund` of a hold that is not captured;
+  - a transaction id in another UUID spelling, and a capture or `holds.get` by an id that is not a
+    UUID;
+  - `cards.get` or `cards.list` of a card the simulation charged, held or deleted, also after a
+    release or refund, whose balance or cached read it cannot report;
+  - a `transactions.list` with a day the calendar lacks, a `fromDate` after its `toDate`, or two
+    rows paid in the same second, whose order is unobserved.
 - A scripted answer takes precedence over the simulation for the call it matches and does not change
   the stored state. Use it for declines and transient failures. A scripted `holds.create` decline
   stores no record, unlike Paylov, which keeps a `declined` hold and its used-up `externalId`:
@@ -213,7 +247,9 @@ const request = createWebhookRequest(
 );
 ```
 
-Change the request's header, method or body to cover the `invalid` outcomes.
+It sends the documented headers and body, `params.amount` in whole SUM included. An event the
+receiver would not decode, such as a `transactionId` that is not a UUID, throws `TypeError`. Change
+the request's header, method or body to cover the `invalid` outcomes.
 
 ## Fixtures
 

@@ -18,16 +18,18 @@ Some endpoints take whole SUM on the wire, so their amounts must be multiples of
 (`sdk_invalid_amount` otherwise): `sumToTiyin('10.50')` is a valid fiscal item price but fails on
 `payments.create`. Paylov checks the bounds itself.
 
-| Methods                                                                  | Wire unit | Pitfall                                                |
-| ------------------------------------------------------------------------ | --------- | ------------------------------------------------------ |
-| `payments.create`, `payments.startPanPayment`                            | Whole SUM | Zero is rejected by the gateway                        |
-| `holds.create`, `holds.capture`                                          | Whole SUM | At least 10 SUM; a capture above the held amount fails |
-| `splits.create` recipients, fiscal item `priceTiyin` and `discountTiyin` | Tiyin     | Amounts must add up to the transaction amount          |
+| Methods                                       | Wire unit | Pitfall                                                                                                                  |
+| --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `payments.create`, `payments.startPanPayment` | Whole SUM | Zero is rejected by the gateway                                                                                          |
+| `holds.create`, `holds.capture`               | Whole SUM | At least 10 SUM; a capture above the held amount fails                                                                   |
+| `splits.create` recipient `amountTiyin`       | Tiyin     | The recipient amounts must add up to the transaction amount                                                              |
+| Fiscal item `priceTiyin` and `discountTiyin`  | Tiyin     | For `registerReceipt`, lines must total the transaction amount ([fiscalization.md](fiscalization.md#register-a-receipt)) |
 
 ## Dates and times
 
-Fields ending in `At` are `Date` values. Paylov sends most timestamps without a zone; the SDK
-applies the zone observed on the development gateway:
+Fields ending in `At` are `Date` values; some are `Date | null` until the event happens, such as a
+hold's `capturedAt` and `releasedAt` and a transaction's `cancelledAt`. Paylov sends most timestamps
+without a zone; the SDK applies the zone observed on the development gateway:
 
 | Fields                                                                                                               | Zone applied              |
 | -------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -38,4 +40,6 @@ applies the zone observed on the development gateway:
 - One event can arrive in two zones (a hold capture in UTC, its transaction in Tashkent); as `Date`
   values they compare correctly.
 - Date filters (`fromDate`, `toDate`) are `YYYY-MM-DD` calendar days.
-- A timestamp in an unexpected format fails as `sdk_malformed_response` rather than being guessed.
+- A REST response timestamp in an unexpected format fails as `sdk_malformed_response` rather than
+  being guessed. A webhook with a malformed `cancel_time` reads as
+  `{ kind: 'invalid', reason: 'invalid_params' }`.

@@ -220,8 +220,8 @@ function isTransientFailure(outcome: Attempt<unknown>): boolean {
  * Only the gateway's own authentication rejection is replayed. Bearer authentication rejects
  * before any handler runs: a `hold/create` refused with 401 left no transaction
  * (docs/architecture.md), so the rejected request did not execute. Only the documented envelope
- * proves that: a bare 401 (a proxy) or an envelope without `result: null` normalizes to a protocol
- * error and is never replayed.
+ * proves that: a bare 401 (a proxy) or an incomplete envelope (no `result: null`, or an error
+ * without a string `message`) normalizes to a protocol error and is never replayed.
  * The token transport has no AuthProvider.
  */
 function isTokenRejection<T>(

@@ -6,6 +6,8 @@ import { PaylovOnboarding } from '../../src/onboarding/client.js';
 import type { Card } from '../../src/cards/types.js';
 import type { Transaction } from '../../src/transactions/types.js';
 import { PaylovFakeGateway } from '../../src/testing/gateway.js';
+import { capture } from '../helpers/asserts.js';
+import { loadWire } from '../helpers/fixtures.js';
 
 const id = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const AT = new Date('2026-01-02T03:04:05Z');
@@ -496,6 +498,172 @@ describe('PaylovFakeGateway replies', () => {
       expect(() => {
         context.fake.assertDone();
       }).not.toThrow();
+    },
+  );
+});
+
+interface SentAnswer {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+/** A client whose fetch also keeps each raw answer the fake sent. */
+function recordingSetup() {
+  const fake = new PaylovFakeGateway();
+  const sent: SentAnswer[] = [];
+  const paylov = new PaylovClient({
+    ...fake.clientConfig,
+    fetch: async (input, init) => {
+      const response = await fake.fetch(input, init);
+      sent.push({ status: response.status, body: await response.clone().json() });
+      return response;
+    },
+  });
+  return { fake, paylov, last: (): SentAnswer | undefined => sent.at(-1) };
+}
+
+function resultOf(body: unknown): Record<string, unknown> {
+  const result: unknown =
+    typeof body === 'object' && body !== null && 'result' in body ? body.result : undefined;
+  if (typeof result !== 'object' || result === null) throw new TypeError('no result');
+  return { ...result };
+}
+
+describe('PaylovFakeGateway wire shapes', () => {
+  it('starts a PAN binding with the recorded result fields', async () => {
+    const { fake, paylov, last } = recordingSetup();
+    fake.cards.startPanBinding.reply({ cardId: id(1), otpSentPhone: '+9989*****00' });
+    await paylov.cards.startPanBinding({ userId: 'user-42', cardNumber: PAN, cardExpiry: '9912' });
+
+    const recorded = resultOf(loadWire('cards/startPanBinding.success.wire.json').body);
+    const sent = resultOf(last()?.body);
+    expect(Object.keys(sent).toSorted()).toEqual(Object.keys(recorded).toSorted());
+    expect(sent['code']).toBeNull();
+  });
+
+  it('starts a PAN payment with the recorded result fields, extId null as none was sent', async () => {
+    const { fake, paylov, last } = recordingSetup();
+    fake.payments.startPanPayment.reply({ transactionId: id(2), otpSentPhone: '+9989*****00' });
+    await paylov.payments.startPanPayment({
+      cardNumber: PAN,
+      cardExpiry: '9912',
+      amountTiyin: 100,
+    });
+
+    const recorded = resultOf(loadWire('payments/startPanPayment.success.wire.json').body);
+    const sent = resultOf(last()?.body);
+    expect(Object.keys(sent).toSorted()).toEqual(Object.keys(recorded).toSorted());
+    expect(sent).toMatchObject({ extId: null, code: null });
+  });
+
+  it('sends a card without a name or bank name as the gateway does', async () => {
+    const { fake, paylov, last } = recordingSetup();
+    fake.cards.get.reply(CARD);
+    await expect(paylov.cards.get({ cardId: id(1) })).resolves.toEqual(CARD);
+
+    const { card } = resultOf(last()?.body);
+    expect(card).toMatchObject({ cardName: '' });
+    expect(card).not.toHaveProperty('bankName');
+  });
+
+  it('answers a created sub-merchant with HTTP 201', async () => {
+    const { fake, paylov, last } = recordingSetup();
+    fake.subMerchants.create.reply({ subMerchantId: '17', name: 'Shop' });
+    await paylov.subMerchants.create({ name: 'Shop', tin: '900000001' });
+
+    expect(last()?.status).toBe(201);
+  });
+
+  it.each(['0x10', '016', '1e3', '-1', '', 'abc', '9007199254740993'])(
+    'refuses a bankId %j that the gateway integer would not read back',
+    (bankId) => {
+      const { fake } = recordingSetup();
+      expect(
+        capture(() => {
+          fake.gateway.listBanks.reply([{ bankId, name: 'Bank', officialName: null }]);
+        }),
+      ).toBeInstanceOf(TypeError);
+    },
+  );
+});
+
+/** Posts `body` straight to the fake, as a request the SDK would never send. */
+async function post(fake: PaylovFakeGateway, path: string, body: unknown) {
+  const response = await fake.fetch(`https://gateway.example${path}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+describe('PaylovFakeGateway request readers', () => {
+  it('cannot read an onboarding completion without a password', async () => {
+    const { fake } = setup();
+    fake.onboarding.complete.reply({
+      consumerKey: 'EXAMPLE-CONSUMER-KEY-NOT-A-REAL-CREDENTIAL',
+      consumerSecret: 'EXAMPLE-CONSUMER-SECRET-NOT-A-REAL-CREDENTIAL',
+      username: 'EXAMPLE-USERNAME',
+    });
+
+    const answer = await post(fake, '/merchant/onboarding/?token=EXAMPLE-ONBOARDING-TOKEN', {
+      username: 'EXAMPLE-USERNAME',
+    });
+    expect(answer).toMatchObject({
+      status: 501,
+      body: { error: { code: 'fake_unreadable_request' } },
+    });
+    expect(fake.onboarding.complete.requests).toEqual([]);
+  });
+
+  it.each([
+    ['an organization without create_new_organization', { organization: { name: 'Shop LLC' } }],
+    ['create_new_organization without an organization', { create_new_organization: true }],
+  ])('cannot read a sub-merchant with %s', async (_case, extra) => {
+    const { fake } = setup();
+    fake.subMerchants.create.reply({ subMerchantId: '17', name: 'Shop' });
+
+    const answer = await post(fake, '/merchant/subMerchant/merchant-create/', {
+      name: 'Shop',
+      tin: '900000001',
+      ...extra,
+    });
+    expect(answer).toMatchObject({
+      status: 501,
+      body: { error: { code: 'fake_unreadable_request' } },
+    });
+    expect(fake.subMerchants.create.requests).toEqual([]);
+  });
+});
+
+describe('PaylovFakeGateway scripted attempts', () => {
+  it('scripts one attempt; the SDK decides the call', async () => {
+    const { fake, onboarding, paylov } = setup();
+    fake.onboarding.checkToken.fail('invalid_or_expired');
+    await expect(onboarding.checkToken({ token: 'EXAMPLE-ONBOARDING-TOKEN' })).resolves.toBe(false);
+
+    fake.cards.get.disconnect();
+    fake.cards.get.reply(CARD);
+    await expect(paylov.cards.get({ cardId: id(1) })).resolves.toEqual(CARD);
+    fake.assertDone();
+  });
+});
+
+describe('PaylovFakeGateway activity-type replies', () => {
+  it.each(['self_employed', 'high_income'] as const)(
+    'reads a scripted answer back for a %s check',
+    async (activityType) => {
+      const { fake, paylov } = setup();
+      const params = { pinfl: PINFL, activityType };
+      const answers = [
+        { isConfirmed: false, activityNames: [] },
+        { isConfirmed: true, activityNames: [] },
+      ];
+
+      for (const answer of answers) {
+        fake.fiscalization.checkActivityType.reply(answer);
+        await expect(paylov.fiscalization.checkActivityType(params)).resolves.toEqual(answer);
+      }
+      fake.assertDone();
     },
   );
 });

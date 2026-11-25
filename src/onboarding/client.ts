@@ -72,13 +72,14 @@ export class PaylovOnboarding {
   /**
    * Sets the merchant API username and password and returns the issued credentials
    * (`POST /merchant/onboarding/?token=`). The token is single-use and `consumerSecret` is shown
-   * only once: persist the whole result before doing anything else. The account stays inactive
-   * until Paylov activates it; until then a `PaylovClient` with these credentials fails with
-   * `invalid_grant`. Moves no money.
+   * only once: persist the whole result, with the password you chose, before doing anything else.
+   * The account stays inactive until Paylov activates it; until then every authenticated call of a
+   * `PaylovClient` with these credentials fails with `invalid_grant`. Moves no money.
    *
    * Recovery: never retried. When `isPaylovOutcomeUnknown(error)`, the credentials may have been
-   * issued and lost: call `checkToken`; `true` means `complete` can run again, `false` that the
-   * token was used, so ask Paylov to reissue the credentials.
+   * issued and lost: call `checkToken`; `true` means `complete` can run again. `false` means only
+   * that the token is unusable (used, expired or unknown), so whether credentials were issued stays
+   * unresolved: ask Paylov to confirm or reissue them.
    *
    * @throws {@link PaylovApiError} `validation_error` (see `fields`), or `invalid_or_expired`
    * for an unknown, used or expired token.
@@ -89,7 +90,7 @@ export class PaylovOnboarding {
    *   username: merchantUsername,
    *   password: merchantPassword,
    * });
-   * await secretManager.store('paylov', credentials);
+   * await secretManager.store('paylov', { ...credentials, password: merchantPassword });
    */
   async complete(
     params: CompleteOnboardingParams,

@@ -1,6 +1,6 @@
 /** Transaction shapes shared by the features that create, act on or read transactions. */
 
-import { asString, fieldOf, type Decoder } from '../core/decoding.js';
+import { asString, DecodeFailure, fieldOf, type Decoder } from '../core/decoding.js';
 
 /** The gateway transaction an operation created or acted on. */
 export interface TransactionReference {
@@ -10,12 +10,17 @@ export interface TransactionReference {
 
 /**
  * Decodes a status string, replacing each wire spelling in `statusByWire` with the SDK's word.
- * Other values pass through unchanged.
+ * Other values pass through unchanged, except an SDK word that is not its own wire spelling: it
+ * would read as the status it renames, so it fails to decode.
  */
 export function statusDecoder(statusByWire: ReadonlyMap<string, string>): Decoder<string> {
+  const sdkWords = new Set(statusByWire.values());
   return (value, path) => {
     const status = asString(value, path);
-    return statusByWire.get(status) ?? status;
+    const renamed = statusByWire.get(status);
+    if (renamed !== undefined) return renamed;
+    if (sdkWords.has(status)) throw new DecodeFailure(path);
+    return status;
   };
 }
 

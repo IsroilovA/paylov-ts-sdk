@@ -31,6 +31,12 @@ export function everyLiteral<T extends string | number>(): <const L extends read
   return (values) => values;
 }
 
+/**
+ * The path of an https URL as supplied, before normalization can resolve `/merchant/..` or `/.`
+ * away. A backslash counts as a separator, as the URL parser reads it.
+ */
+const SUPPLIED_PATH = /^https:\/\/[^/\\?#]*(?<path>.*)$/isu;
+
 interface IntegerRange {
   readonly min: number;
   readonly max: number;
@@ -95,8 +101,8 @@ export class Params {
   }
 
   /**
-   * A bare `https` origin, returned normalized. Credentials, a query or a fragment are checked on
-   * the text as given, before normalization.
+   * A bare `https` origin, returned normalized. Credentials, a query, a fragment or a path are
+   * checked on the text as given, before normalization.
    */
   httpsOrigin(key: string): string {
     return this.#checkHttpsOrigin(key, this.#required(key));
@@ -261,7 +267,10 @@ export class Params {
     if (url.username !== '' || url.password !== '' || /[?#]/.test(text)) {
       throw this.#error(key, 'format', 'must not include credentials, a query or a fragment');
     }
-    if (url.pathname !== '/') throw this.#error(key, 'format', 'must be an origin without a path');
+    const path = SUPPLIED_PATH.exec(text)?.groups?.['path'];
+    if (path !== '' && path !== '/') {
+      throw this.#error(key, 'format', 'must be an origin without a path');
+    }
     return url.origin;
   }
 

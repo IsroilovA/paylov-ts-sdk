@@ -14,8 +14,10 @@ documented (D). Vendor contracts: [create](../vendor/paylov/subscribe/hold-payme
 [charge](../vendor/paylov/subscribe/hold-payment/charge.md),
 [dismiss](../vendor/paylov/subscribe/hold-payment/dismiss.md) and
 [status](../vendor/paylov/subscribe/hold-payment/status.md). Grades: [evidence](README.md#evidence).
-Every success and error is the `{result, error}` envelope, and every failure below is HTTP 400 (W
-c180–c211). Amounts are whole SUM in both directions (W c181, c187, c194, c195, c346).
+Every success and error is the `{result, error}` envelope, and every failure in the trigger tables
+below is HTTP 400 (W c180–c211); a POST to status is 405 ([status](#status)), and a rejected Bearer
+token is 401 ([authentication](authentication.md#bearer-failures)). Amounts are whole SUM in both
+directions (W c181, c187, c194, c195, c346).
 
 ## Flow
 
@@ -30,13 +32,16 @@ DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `p
 transaction `payed` (W c561, c887, c1529, c1530).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
-only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. A
-hold's duration cannot be extended after create; 28 days is the maximum, per the Paylov team (answer
-relayed by the maintainer, 2026-11-25: "no, it cannot. 28 days max", translated from Russian). After
-an uncertain create, look the hold up by its `externalId`; a create the client aborted after sending
-still ran and read `hold` a second later (W c1581–c1587). A found record or a duplicate-id error
-proves only that a record with that `externalId` exists, not that it reserves funds: it may be
-released or declined ([create](#create), W c1284, c1285, c1555, c1557).
+only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. The
+docs state neither when the `time` countdown starts nor the exact moment charge starts answering
+`hold_time_expired` (D); captures bound it only coarsely, with a 1-minute hold refusing charge about
+2.5 minutes after create ([observed behavior](#observed-behavior)). A hold's duration cannot be
+extended after create; 28 days is the maximum, per the Paylov team (answer relayed by the
+maintainer, 2026-11-25: "no, it cannot. 28 days max", translated from Russian). After an uncertain
+create, look the hold up by its `externalId`; a create the client aborted after sending still ran
+and read `hold` a second later (W c1581–c1587). A found record or a duplicate-id error proves only
+that a record with that `externalId` exists, not that it reserves funds: it may be released or
+declined ([create](#create), W c1284, c1285, c1555, c1557).
 
 ## Create
 

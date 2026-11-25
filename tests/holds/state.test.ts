@@ -122,6 +122,14 @@ describe('readHoldState', () => {
     ['a capture without its time', { ...HELD, status: 'captured' }],
     ['a release without its time', { ...HELD, status: 'released' }],
     [
+      'a capture whose time is an invalid Date',
+      { ...HELD, status: 'captured', capturedAt: new Date(Number.NaN) },
+    ],
+    [
+      'a release whose time is an invalid Date',
+      { ...HELD, status: 'released', releasedAt: new Date(Number.NaN) },
+    ],
+    [
       'a capture whose amount is not money',
       { ...HELD, status: 'captured', capturedAt: CAPTURED_AT, amountTiyin: 1.5 },
     ],

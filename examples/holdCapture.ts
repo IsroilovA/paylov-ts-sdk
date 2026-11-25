@@ -72,7 +72,7 @@ async function findHold(): Promise<Hold | undefined> {
 async function recoverHold(): Promise<HeldBooking | undefined> {
   const hold = await findHold();
   if (hold === undefined) return undefined;
-  // That hold started after intentAt, so this stays a lower bound on its expiry.
+  // That hold started after intentAt, so this is a conservative client-side cut-off for it.
   const clientCaptureDeadline = new Date(intentAt.getTime() + durationMinutes * 60_000);
   return { hold, clientCaptureDeadline };
 }

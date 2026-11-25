@@ -63,9 +63,12 @@ function isRateLimited(error: unknown): error is PaylovApiError | PaylovProtocol
   );
 }
 
-/** The gateway's verdict on a grant's credentials; a 429 is a rate limit, never a verdict. */
+/**
+ * The gateway's verdict on a grant's credentials: `invalid_grant` at HTTP 401, the only status it
+ * is documented and recorded with. At any other status, a 429 included, it is no verdict.
+ */
 function isRejectedGrant(error: unknown): error is PaylovApiError {
-  return isPaylovApiError(error, 'invalid_grant') && !isRateLimited(error);
+  return isPaylovApiError(error, 'invalid_grant') && error.httpStatus === 401;
 }
 
 function basicAuthHeader(consumerKey: string, consumerSecret: string): string {
@@ -94,7 +97,8 @@ function decodeTokenSet(now: () => number): Decoder<TokenSet> {
   return (value, path) => {
     const asDeadline = deadlineFrom(now());
     const field = readFields(value, path);
-    field('token_type', asNonEmptyString);
+    // Every recorded grant sends exactly `Bearer`, the scheme the SDK then sends.
+    field('token_type', asLiteral('Bearer'));
     return {
       accessToken: field('access_token', asNonEmptyString),
       refreshToken: field('refresh_token', asNonEmptyString),
@@ -114,11 +118,14 @@ const decodeRevoked: Decoder<'success'> = fieldOf('status', asLiteral('success')
  * - A token-endpoint HTTP 429 starts a cool-down, whatever its body holds, `invalid_grant`
  *   included; until it ends `authorize()` rethrows it without I/O. It takes precedence over both
  *   rules below.
- * - A refresh rejected with `invalid_grant` falls back to one password grant. Nothing else does:
- *   `invalid_client`, a 429 or a connection failure would fail the password grant too, and
+ * - A refresh rejected with a 401 `invalid_grant` falls back to one password grant. Nothing else
+ *   does: `invalid_client`, a 429 or a connection failure would fail the password grant too, and
  *   failed password attempts lock the merchant account.
- * - An enveloped `invalid_grant` on the password grant is latched: every later `authorize()`
- *   rethrows it without I/O. A bare 401/403 (a proxy) is not a credential verdict and does not.
+ * - A 401 `invalid_grant` on the password grant is latched: every later `authorize()` rethrows it
+ *   without I/O. A bare 401/403 (a proxy) or `invalid_grant` at another status is not a
+ *   credential verdict and does not.
+ * - A rejected grant keeps the newest access token, which may still authorize, for `close()` to
+ *   revoke.
  */
 export class TokenManager implements AuthProvider {
   readonly #config: TokenManagerConfig;
@@ -195,7 +202,7 @@ export class TokenManager implements AuthProvider {
         });
       } catch (error) {
         if (!isRejectedGrant(error)) throw error;
-        this.#tokens = undefined;
+        this.#tokens = { ...tokens, refreshExpiresAt: 0 };
       }
     }
     this.#lifecycle.assertOpen();
@@ -206,10 +213,7 @@ export class TokenManager implements AuthProvider {
         password: this.#config.password,
       });
     } catch (error) {
-      if (isRejectedGrant(error)) {
-        this.#rejectedPassword = error;
-        this.#tokens = undefined;
-      }
+      if (isRejectedGrant(error)) this.#rejectedPassword = error;
       throw error;
     }
   }

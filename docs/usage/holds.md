@@ -58,16 +58,17 @@ if (booking.visited) {
 - **Track the deadline yourself.** An expired hold can still read `held`; capture then fails with
   `hold_time_expired`, and release has been seen both to fail and to succeed. Stop capturing a hold
   at `clientCaptureDeadline`, and release every hold you will not capture, also after it expires.
-  The SDK computes the deadline from its clock (`config.now`) before sending, so it is a lower bound
-  on Paylov's expiry, never proof that the hold was released. After an ambiguous `create` it is
-  missing; use the stored `intentAt` plus `durationMinutes`, as below. Release is the only
-  documented way to free a hold, so the SDK reads `hold_not_found` then as nothing left to release;
-  Paylov does not document release after expiry. For a date beyond 28 days, create the hold when the
-  date enters the window.
-- **Poll to reconcile.** Paylov sends no hold webhook: read `holds.get({ externalId })` for every
-  open booking. `transactions.get` uses other words for a hold: `paid` once captured, `failed` once
-  declined, and `refunded` once released, by `holds.release` before or after expiry or by Paylov
-  when a capture after expiry fails, like a refunded sale.
+  The SDK computes the deadline from its clock (`config.now`) before sending: a conservative cut-off
+  that assumes your clock is consistent, since Paylov's exact cut-off is not known. Expiry alone
+  proves nothing: an expired hold has kept reading `held`, and a release after expiry has succeeded.
+  `hold_not_found` after expiry has been seen after a capture attempt failed with
+  `hold_time_expired`, which itself released the hold. After an ambiguous `create` the deadline is
+  missing; use the stored `intentAt` plus `durationMinutes`, as below. For a date beyond 28 days,
+  create the hold when the date enters the window.
+- **Poll to reconcile.** Paylov documents no hold webhook: read `holds.get({ externalId })` for
+  every open booking. `transactions.get` uses other words for a hold: `paid` once captured, `failed`
+  once declined, and `refunded` once released, by `holds.release` before or after expiry or by
+  Paylov when a capture after expiry fails, like a refunded sale.
 
 ## Hold state
 
@@ -82,14 +83,16 @@ const state = readHoldState({
 ```
 
 - `open`: `held` before the deadline; capture or release it.
-- `captured`, with `amountTiyin` and `capturedAt`; `released`, with `releasedAt`.
+- `captured`, with `amountTiyin` and `capturedAt`; `released`, with `releasedAt`. `released` is the
+  hold's current state at the gateway; it does not say which call released it or when the money
+  reaches the cardholder.
 - `possibly_expired`: still reads `held` after the deadline. Capture would likely fail with
   `hold_time_expired`; release it.
 - `declined`: the hold reads `declined` and `transactions.get` reads its transaction `failed`, which
   `readHoldState` needs as `transaction`: the create was declined and reserved nothing, and its
   `externalId` is used up.
-- `unknown`: an unknown status, timestamps that contradict the status, or a `declined` hold without
-  its `failed` transaction. Read again later.
+- `unknown`: an unknown status, timestamps that contradict the status or are invalid `Date`s, or a
+  `declined` hold without its `failed` transaction. Read again later.
 
 ## Recovery
 
@@ -112,7 +115,7 @@ export async function reconcileHold(
   holdParams: CreateHoldParams,
   intentAt: Date, // stored before the first create
 ): Promise<void> {
-  // A hold the first attempt created started after intentAt, so this deadline stays a lower bound.
+  // A hold the first attempt created started after intentAt, so this deadline stays conservative.
   const deadline = new Date(intentAt.getTime() + holdParams.durationMinutes * 60_000);
   let found: Hold;
   try {
@@ -132,12 +135,22 @@ export async function reconcileHold(
     clientCaptureDeadline: deadline,
     now: new Date(),
   });
-  if (state.kind === 'declined') {
-    // Nothing is reserved and the externalId is used up: a new attempt stores a new one first.
-    return bookings.markHoldDeclined(bookingId);
+  switch (state.kind) {
+    case 'open':
+      return bookings.saveHold(bookingId, found.transactionId, deadline);
+    case 'possibly_expired':
+      // Past the deadline: never capture it; release it.
+      return bookings.markHoldToRelease(bookingId, found.transactionId);
+    case 'captured':
+      return bookings.markHoldCaptured(bookingId, state.amountTiyin, state.capturedAt);
+    case 'released':
+      return bookings.markHoldReleased(bookingId, state.releasedAt);
+    case 'declined':
+      // Nothing is reserved and the externalId is used up: a new attempt stores a new one first.
+      return bookings.markHoldDeclined(bookingId);
+    default:
+      return jobs.retryLater(bookingId); // a status the SDK cannot settle yet
   }
-  if (state.kind === 'unknown') return jobs.retryLater(bookingId); // a status the SDK cannot settle yet
-  return bookings.saveHold(bookingId, found.transactionId, deadline);
 }
 
 async function createAgain(bookingId: string, holdParams: CreateHoldParams): Promise<void> {

@@ -19,16 +19,17 @@ function encodeCardStatus(card: Card): unknown {
   };
 }
 
+/** A card without a name reads `""` (W c051); a missing bank name is absent, as in the docs. */
 function encodeCard(card: Card, status: unknown): unknown {
   return {
     cardId: card.cardId,
     userId: card.userId,
     owner: card.holderName,
-    cardName: card.cardName,
+    cardName: card.cardName ?? '',
     number: card.maskedCardNumber,
     balance: card.balanceTiyin,
     bankId: card.bankId,
-    bankName: card.bankName,
+    ...optionalEntry('bankName', card.bankName ?? undefined),
     vendor: card.vendor,
     processing: card.processing,
     status,
@@ -45,8 +46,9 @@ function encodeNestedCard(card: Card): unknown {
   return encodeCard(card, { result: encodeCardStatus(card) });
 }
 
+/** `code` is undocumented and `null` in every capture (W c025, c029). */
 function encodePanBindingStarted(started: PanBindingStarted): unknown {
-  return { cid: started.cardId, otpSentPhone: started.otpSentPhone };
+  return { cid: started.cardId, otpSentPhone: started.otpSentPhone, code: null };
 }
 
 function encodeConfirmedCard(card: Card): unknown {

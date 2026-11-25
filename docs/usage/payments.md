@@ -20,10 +20,12 @@ await orders.saveTransaction('A-1024', transactionId);
 await paylov.payments.pay({ transactionId, cardId, userId: 'user-42' });
 ```
 
-- `account` is your JSON, sent as given: plain objects, arrays, strings, finite numbers, booleans
-  and `null`. A property set to `undefined` is left out. Anything else (`NaN`, a `BigInt`, a `Date`,
-  a function, an `undefined` array entry, a cycle, or nesting deeper than 64 levels) fails with
-  `sdk_invalid_input` before any request.
+- `account` is your JSON object, sent as given; the SDK sends `{}` when you omit it. A top-level
+  array, string or other non-object fails with `sdk_invalid_input` before any request. Inside it,
+  values may be plain objects, arrays, strings, finite numbers, booleans and `null`. A property set
+  to `undefined` is left out. Anything else (`NaN`, a `BigInt`, a `Date`, a function, an `undefined`
+  array entry, a cycle, or nesting deeper than 64 levels) fails with `sdk_invalid_input` before any
+  request.
 - Store the `transactionId` with your order before calling `pay`: it is the key for reconciliation
   and for any repeat.
 - After a decline, read the transaction: `failed` can never be paid again; `created` can be paid
@@ -47,7 +49,9 @@ showOtpPrompt(`Uzcard/Humo sent a code to the phone linked to your card: ${start
 await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, otp: otpFromUser });
 ```
 
-- OTP delivery and wrong-code limits are those of PAN binding ([cards.md](cards.md#pan-binding)).
+- OTP delivery and lifetime match PAN binding ([cards.md](cards.md#pan-binding)). Wrong codes are
+  counted per flow: the fourth wrong code answers `card_is_blocked`, and a block that PAN binding
+  started still let this confirm answer `invalid_otp` three times first.
 - There is no external id; keep the `transactionId`.
 
 ## Refund

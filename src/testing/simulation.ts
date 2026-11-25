@@ -5,6 +5,7 @@
  */
 
 import type { Card, DeleteCardParams, GetCardParams, ListCardsParams } from '../cards/types.js';
+import { isUuid } from '../core/decoding.js';
 import type { PaylovKnownErrorCode } from '../core/errorCodes.js';
 import type { PaylovFakeFailure } from '../core/fake.js';
 import { MINUTE_MS, TASHKENT_OFFSET_MINUTES } from '../core/time.js';
@@ -23,6 +24,7 @@ import type {
   RefundPaymentParams,
 } from '../payments/types.js';
 import type { TransactionReference } from '../shared/transactions.js';
+import { withWireStatus } from '../transactions/fake.js';
 import type {
   GetTransactionParams,
   ListTransactionsParams,
@@ -54,6 +56,10 @@ const MAX_EXTERNAL_ID_LENGTH = 64;
  * so only holds up to 10^9 SUM have an evidenced answer.
  */
 const MAX_EVIDENCED_HOLD_TIYIN = 100_000_000_000;
+/** `receipts/create` was approved up to at least 10^10 SUM (W c103); above that is unobserved. */
+const MAX_EVIDENCED_PAYMENT_TIYIN = 1_000_000_000_000;
+/** Every spelling of a UUID carries 32 hex digits. */
+const UUID_HEX_DIGITS = 32;
 
 /** Where a hold stands; the hold record and its transaction row both derive from it. */
 type Settlement =
@@ -67,11 +73,16 @@ type Settlement =
       readonly kind: 'released';
       readonly at: Date;
       readonly by: 'dismiss' | 'expiry';
+      /** Decided against the hold's millisecond expiry when it was released, never from `at`. */
+      readonly wasExpired: boolean;
     };
 
-/** What the simulation moved on one card; the card's reported balance never changes. */
+/**
+ * What the simulation moved on one card, against the spending allowance the test gave it; the
+ * card's reported balance never changes and never decides an approval.
+ */
 interface CardLedger {
-  /** Paid or still held: no longer on the card. */
+  /** Paid or still held: no longer available. */
   readonly takenTiyin: number;
   /**
    * Refunded, left uncaptured by a partial capture, or released after the hold expired: Paylov
@@ -110,6 +121,26 @@ function unsimulated<T>(reason: string): SimulatedOutcome<T> {
   return { kind: 'unsimulated', reason };
 }
 
+/**
+ * The answer to a transaction id the simulation holds nothing for: `missing` for a canonical UUID;
+ * for an id with too few hex digits to be any UUID, the recorded `validation_error` on
+ * `transactionId` where `refusesNonUuid`; otherwise unsimulated, since which other UUID spellings
+ * Paylov accepts is unobserved.
+ */
+function unknownTransaction<T>(
+  transactionId: string,
+  method: string,
+  missing: SimulatedOutcome<T>,
+  refusesNonUuid: boolean,
+): SimulatedOutcome<T> {
+  const hexDigits = transactionId.replaceAll(/[^0-9a-f]/gi, '').length;
+  if (isUuid(transactionId)) return missing;
+  if (refusesNonUuid && hexDigits < UUID_HEX_DIGITS) {
+    return error('validation_error', { fields: ['transactionId'] });
+  }
+  return unsimulated(`${method} of a transaction id that is not a canonical UUID`);
+}
+
 /** The wire carries whole seconds. */
 function wholeSeconds(ms: number): Date {
   return new Date(Math.floor(ms / 1000) * 1000);
@@ -129,12 +160,13 @@ function tashkentDay(date: Date): string {
 /**
  * The hold's transaction row: `waiting` with `is_hold` and the external id (W c187); a capture
  * reports the captured amount with `date` replaced by the capture time (W c194–c197, c346); a
- * release reads `cancel` or `refunded` with the release time, `date` and `is_hold` kept (W c1276,
- * c1277, c1280, c1525, c1526, c1544).
+ * release keeps `date` and `is_hold` and adds the release time, reading `cancel` after a dismiss,
+ * also of an expired hold (W c1525, c1526, c1544), and `refunded` after the release a failed
+ * expired capture caused (W c1276, c1277, c1280).
  */
 function transactionOf(hold: SimulatedHold): Transaction {
   const { settlement } = hold;
-  return {
+  const transaction: Transaction = {
     transactionId: hold.transactionId,
     externalId: hold.externalId,
     userId: hold.userId,
@@ -150,6 +182,8 @@ function transactionOf(hold: SimulatedHold): Transaction {
     isA2c: false,
     fiscalReceipts: [],
   };
+  if (settlement.kind !== 'released') return transaction;
+  return withWireStatus(transaction, settlement.by === 'expiry' ? 'refunded' : 'cancel');
 }
 
 /** The hold's status record; a partial capture reports the captured amount (W c194). */
@@ -172,17 +206,26 @@ function holdOf(hold: SimulatedHold): Hold {
  */
 function captureOfSettled(hold: SimulatedHold): SimulatedOutcome<HoldCaptured> {
   const { settlement } = hold;
-  const releasedAfterExpiry =
-    settlement.kind === 'released' &&
-    (settlement.by === 'expiry' || settlement.at.getTime() >= hold.expiresAtMs);
-  if (releasedAfterExpiry) return unsimulated('holds.capture of a hold released after it expired');
+  if (settlement.kind === 'released' && settlement.wasExpired) {
+    return unsimulated('holds.capture of a hold released after it expired');
+  }
   return error('transaction_not_available_for_payment');
+}
+
+/** The simulation's clock, and the refund cut-off the test chooses, since Paylov agrees it per merchant. */
+export interface SimulationSettings {
+  readonly now: () => Date;
+  /** Unset: every refund of a paid sale is unsimulated. */
+  readonly refundWindowMinutes: number | undefined;
 }
 
 /** Each simulated SDK method takes the params its route decoded. */
 export class GatewaySimulation {
   readonly #now: () => Date;
+  readonly #refundWindowMinutes: number | undefined;
   readonly #cards = new Map<string, Card>();
+  /** What pays and holds may take from each card in total; a test assumption, never a balance. */
+  readonly #spendableTiyin = new Map<string, number>();
   readonly #deletedCards = new Map<string, Card>();
   /** An entry per card the simulation moved funds on; balance reads of those stay unsimulated. */
   readonly #ledgers = new Map<string, CardLedger>();
@@ -191,13 +234,22 @@ export class GatewaySimulation {
   readonly #holdIdsByExternalId = new Map<string, string>();
   #nextId = 1;
 
-  constructor(now: () => Date) {
+  constructor({ now, refundWindowMinutes }: SimulationSettings) {
     this.#now = now;
+    this.#refundWindowMinutes = refundWindowMinutes;
   }
 
-  addCard(card: Card): void {
+  /**
+   * A deleted id stays deleted: what Paylov answers for a card bound again under the same id is
+   * unobserved, and its reads stay unsimulated (W c326, c1074–c1088).
+   */
+  addCard(card: Card, spendableTiyin: number | undefined): void {
     if (this.#cards.has(card.cardId)) throw new TypeError(`card ${card.cardId} is already bound`);
+    if (this.#deletedCards.has(card.cardId)) {
+      throw new TypeError(`card ${card.cardId} was deleted; bind a new card with a fresh cardId`);
+    }
     this.#cards.set(card.cardId, card);
+    if (spendableTiyin !== undefined) this.#spendableTiyin.set(card.cardId, spendableTiyin);
   }
 
   // Cards. Reads after a delete may still return the card for a while (W c1074–c1088), and
@@ -235,8 +287,10 @@ export class GatewaySimulation {
 
   /** A new unpaid transaction with no card (W c086, c087). */
   createPayment(params: CreatePaymentParams): SimulatedOutcome<TransactionReference> {
-    // Zero is `field_not_valid` (W c096); its error data is not simulated.
-    if (params.amountTiyin === 0) return unsimulated('payments.create of a zero amount');
+    if (params.amountTiyin === 0) return error('field_not_valid', { fields: ['amount'] }); // W c096
+    if (params.amountTiyin > MAX_EVIDENCED_PAYMENT_TIYIN) {
+      return unsimulated('payments.create above 10 000 000 000 SUM');
+    }
     const transactionId = this.#newId();
     this.#transactions.set(transactionId, {
       transactionId,
@@ -259,7 +313,15 @@ export class GatewaySimulation {
 
   pay(params: PayPaymentParams): SimulatedOutcome<TransactionReference> {
     const transaction = this.#transactions.get(params.transactionId);
-    if (transaction === undefined) return error('transaction_not_found'); // W c106
+    if (transaction === undefined) {
+      // W c106, c107
+      return unknownTransaction(
+        params.transactionId,
+        'payments.pay',
+        error('transaction_not_found'),
+        true,
+      );
+    }
     if (transaction.isHold) return unsimulated('payments.pay of a hold transaction');
     if (transaction.status === 'paid') return error('transaction_already_payed'); // W c090
     if (transaction.status === 'refunded' || transaction.status === 'failed') {
@@ -272,7 +334,7 @@ export class GatewaySimulation {
       return unsimulated('payments.pay by a user other than the one the payment was created for');
     }
     if (!card.isActive) return unsimulated('payments.pay with an inactive card');
-    // DEV paid what its test cards could cover and declined more (W c570–c585).
+    // DEV paid small amounts and declined larger ones on the same card (W c570–c585, c615).
     const shortfall = this.#take(card, transaction.amountTiyin, 'payments.pay');
     if (shortfall !== undefined) return unsimulated(shortfall);
     // Paid, with the card attached and `date` replaced by the payment time (W c089).
@@ -289,7 +351,15 @@ export class GatewaySimulation {
 
   refund({ transactionId }: RefundPaymentParams): SimulatedOutcome<PaymentRefunded> {
     const transaction = this.#transactions.get(transactionId);
-    if (transaction === undefined) return error('transaction_not_found'); // W c115
+    if (transaction === undefined) {
+      // W c115, c116
+      return unknownTransaction(
+        transactionId,
+        'payments.refund',
+        error('transaction_not_found'),
+        true,
+      );
+    }
     if (transaction.isHold) return unsimulated('payments.refund of a hold transaction');
     // Already refunded (W c112) or never paid (W c114, c1272).
     if (transaction.status === 'refunded' || transaction.status === 'created') {
@@ -297,14 +367,18 @@ export class GatewaySimulation {
     }
     if (transaction.status !== 'paid')
       return unsimulated(`payments.refund of a ${transaction.status} transaction`);
-    // The refund window is agreed per merchant; DEV refunded a same-day payment (W c1579, c1580)
-    // and refused 11-day-old ones (W c1562–c1568).
-    if (tashkentDay(transaction.paidOrCreatedAt) !== tashkentDay(this.#now())) {
-      return unsimulated('payments.refund after the Tashkent day of the payment');
+    // The cut-off is agreed with each merchant, so the test sets it. A refund past it answers as
+    // DEV refused late refunds, the sale staying paid (W c1563, c1567, c1834).
+    const windowMinutes = this.#refundWindowMinutes;
+    if (windowMinutes === undefined) {
+      return unsimulated('payments.refund without refundWindowMinutes, a per-merchant cut-off');
     }
+    const refundedAt = this.#wireNow();
+    const elapsedMs = refundedAt.getTime() - transaction.paidOrCreatedAt.getTime();
+    if (elapsedMs >= windowMinutes * MINUTE_MS)
+      return error('transaction_not_available_for_cancel');
     // `cancel` with the refund time; `date` and the amount stay (W c111, c113). When the refunded
     // money reaches the card is unobserved.
-    const refundedAt = this.#wireNow();
     if (transaction.cardId !== null) {
       this.#giveBack(transaction.cardId, transaction.amountTiyin, 'unobserved');
     }
@@ -318,10 +392,19 @@ export class GatewaySimulation {
 
   // Transactions
 
-  /** The gateway's empty list for an unknown id reads as `transaction_not_found` (W c144). */
+  /**
+   * The gateway's empty list for an unknown id reads as `transaction_not_found` (W c144); a
+   * non-UUID id is `validation_error` (W c143).
+   */
   getTransaction({ transactionId }: GetTransactionParams): SimulatedOutcome<Transaction> {
     const transaction = this.#transactions.get(transactionId);
-    return transaction === undefined ? error('transaction_not_found') : result(transaction);
+    if (transaction !== undefined) return result(transaction);
+    return unknownTransaction(
+      transactionId,
+      'transactions.get',
+      error('transaction_not_found'),
+      true,
+    );
   }
 
   listTransactions(params: ListTransactionsParams): SimulatedOutcome<TransactionPage> {
@@ -386,7 +469,7 @@ export class GatewaySimulation {
     if (params.amountTiyin > MAX_EVIDENCED_HOLD_TIYIN) {
       return unsimulated('holds.create above 1 000 000 000 SUM');
     }
-    // DEV held what its test cards could cover and declined more (W c600–c610).
+    // DEV held small amounts and declined larger ones on the same card (W c600–c610).
     const shortfall = this.#take(card, params.amountTiyin, 'holds.create');
     if (shortfall !== undefined) return unsimulated(shortfall);
     const transactionId = this.#newId();
@@ -407,7 +490,15 @@ export class GatewaySimulation {
   }
 
   capture({ transactionId, amountTiyin }: CaptureHoldParams): SimulatedOutcome<HoldCaptured> {
-    if (!this.#transactions.has(transactionId)) return error('transaction_not_found'); // W c192
+    if (!this.#transactions.has(transactionId)) {
+      // W c192
+      return unknownTransaction(
+        transactionId,
+        'holds.capture',
+        error('transaction_not_found'),
+        false,
+      );
+    }
     const hold = this.#holds.get(transactionId);
     if (hold === undefined) return error('transaction_not_available_for_payment'); // W c193
     if (hold.settlement.kind !== 'held') return captureOfSettled(hold);
@@ -426,7 +517,7 @@ export class GatewaySimulation {
       this.#giveBack(hold.cardId, hold.heldAmountTiyin, 'unobserved');
       this.#writeHold({
         ...hold,
-        settlement: { kind: 'released', at: this.#wireNow(), by: 'expiry' },
+        settlement: { kind: 'released', at: this.#wireNow(), by: 'expiry', wasExpired: true },
       });
       return error('hold_time_expired');
     }
@@ -456,7 +547,7 @@ export class GatewaySimulation {
     this.#giveBack(hold.cardId, hold.heldAmountTiyin, isExpired ? 'unobserved' : 'now');
     this.#writeHold({
       ...hold,
-      settlement: { kind: 'released', at: this.#wireNow(), by: 'dismiss' },
+      settlement: { kind: 'released', at: this.#wireNow(), by: 'dismiss', wasExpired: isExpired },
     });
     return result({ transactionId });
   }
@@ -469,8 +560,11 @@ export class GatewaySimulation {
     if (hold === undefined && this.#transactions.has(transactionId)) {
       return unsimulated('holds.get of a transaction that is not a hold');
     }
-    if (hold === undefined) return error('transaction_not_found'); // W c210, c211
-    return result(holdOf(hold));
+    if (hold !== undefined) return result(holdOf(hold));
+    // W c210, c211
+    const missing = error<Hold>('transaction_not_found');
+    if (lookup.transactionId === undefined) return missing;
+    return unknownTransaction(lookup.transactionId, 'holds.get', missing, false);
   }
 
   /** The one writer of a hold: its record and its transaction row change together. */
@@ -480,15 +574,19 @@ export class GatewaySimulation {
   }
 
   /**
-   * Takes `amountTiyin` from what the card's balance has left, or names why the simulation cannot
-   * answer: how a decline relates to the reported balance is unobserved, and so is when returning
-   * funds arrive.
+   * Takes `amountTiyin` from what the card's spending allowance has left, or names why the
+   * simulation cannot answer: Paylov documents no link between a reported balance and an approval,
+   * so a card without an allowance approves nothing, and when returning funds arrive is unobserved.
    */
   #take(card: Card, amountTiyin: number, method: string): string | undefined {
+    const spendableTiyin = this.#spendableTiyin.get(card.cardId);
+    if (spendableTiyin === undefined) {
+      return `${method} on a card added without spendableTiyin; its reported balance does not decide approval`;
+    }
     const ledger = this.#ledgers.get(card.cardId) ?? UNTOUCHED;
-    const left = card.balanceTiyin - ledger.takenTiyin - ledger.returningTiyin;
+    const left = spendableTiyin - ledger.takenTiyin - ledger.returningTiyin;
     if (amountTiyin > left + ledger.returningTiyin) {
-      return `${method} of more than the card balance covers`;
+      return `${method} of more than the card's spendableTiyin covers`;
     }
     if (amountTiyin > left) {
       return `${method} that only refunded, uncaptured or expired-hold funds would cover`;

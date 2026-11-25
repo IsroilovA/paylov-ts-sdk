@@ -23,11 +23,12 @@ function decodeCheckTokenRequest({ query }: FakeRequest): CheckOnboardingTokenPa
   return { token: query.string('token') };
 }
 
-/** The password is a credential, so it is never read back. */
+/** The password is a credential: its presence is checked, its value never kept. */
 function decodeCompleteRequest({
   query,
   body,
 }: FakeRequest): Omit<CompleteOnboardingParams, 'password'> {
+  body.string('password');
   return { token: query.string('token'), username: body.string('username') };
 }
 

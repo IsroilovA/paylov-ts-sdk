@@ -96,25 +96,54 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `permission_denied` in such a body is no longer replayed after a new token.
 - **Behavior:** `account` (`payments.create`, `payments.startPanPayment`, `holds.create`) is copied
   value by value instead of serialized, so it is sent exactly as validated. `NaN`, `Infinity`, a
-  `BigInt`, a `Date` or other class instance, a function, a symbol and an `undefined` array entry
-  fail with `sdk_invalid_input` instead of being converted (`NaN` to `null`, a `Date` to text) or
-  dropped; `undefined` properties are still left out. An exception thrown by a getter or proxy
-  inside `account` propagates unchanged instead of becoming `sdk_invalid_input`. Arrays are copied
-  by index, as JSON does, never through a custom iterator, and a plain object from another realm
-  (such as a `node:vm` context) is accepted.
+  `Date` or other class instance, a function, a symbol and an `undefined` array entry fail with
+  `sdk_invalid_input` instead of being converted (`NaN` to `null`, a `Date` to text) or dropped;
+  `undefined` properties are still left out. An exception thrown by a getter or proxy inside
+  `account` propagates unchanged instead of becoming `sdk_invalid_input`. Arrays are copied by
+  index, as JSON does, never through a custom iterator, and a plain object from another realm (such
+  as a `node:vm` context) is accepted.
 - **Behavior:** a token-endpoint HTTP 429 with any code, `invalid_grant` included, starts the
-  cool-down: it no longer locks the client after a password grant, and no longer makes a refresh
-  fall back to the password grant.
+  cool-down, for its delta-seconds `Retry-After` delay from 1 to 3600 or else 60 s: it no longer
+  locks the client after a password grant, and no longer makes a refresh fall back to the password
+  grant.
+- **Behavior:** only `invalid_grant` at HTTP 401 is a credential verdict: at any other status it
+  neither locks the client nor makes a refresh fall back to the password grant. A rejected grant
+  keeps the newest access token for `close()` to revoke, also when the client closes during the
+  rejected refresh.
+- **Behavior:** a gateway error envelope needs a string `error.message` besides `result: null` and a
+  code; one without is `PaylovProtocolError` (`sdk_unexpected_status`, `sdk_malformed_response` at
+  2xx) with an unknown outcome for writes, and a 401 `permission_denied` without one is never
+  replayed.
+- **Behavior:** a token grant whose `token_type` is not `Bearer` fails with
+  `sdk_malformed_response`.
+- **Behavior:** `baseUrl` is checked for a path as given, so `https://host/merchant/..` and
+  `https://host/.` are rejected instead of normalized to the origin.
+- **Behavior:** a hold or transaction `status` that Paylov sends spelled as one of the SDK's words
+  without being its wire spelling, such as `held` or `paid`, fails with `sdk_malformed_response`
+  instead of reading as that status.
+- **Behavior:** `readHoldState` and `readRefundState` read a settlement time that is an invalid
+  `Date` as `unknown`.
+- **Behavior:** `readHoldState` and `readRefundState` reject an array as `hold` or `transaction`
+  with `sdk_invalid_input`. `readHoldState` reads a `captured` hold whose `amountTiyin` is not a
+  valid tiyin amount as `unknown`. `readRefundState` reports a refunded sale only when `isHold` is
+  literally `false`; any other `isHold` reads as `unknown`.
+- **Behavior:** `fiscalization.checkActivityType` with `high_income` confirms only when the answer's
+  `data.status` is `true`; `success: true` alone no longer does.
+- **Behavior:** `transactions.iterate` yields a transaction once also when one page lists it twice.
+- `/testing`: a `fiscalization.checkActivityType` reply with `isConfirmed: true` and no activity
+  names is sent as the high-income answer object, so it reads back confirmed for every activity
+  type.
 - `PaylovProtocolError` gains `retryAfterSeconds` (also in `toJSON()`). Every HTTP 429 reads its
-  delta-seconds `Retry-After` header whatever the body holds, so a 429 with an unreadable or
-  non-JSON body, or with another code than `rate_limit_exceeded`, reports the delay, and the token
-  cool-down lasts that long instead of 60 s. On a 429 the header takes precedence over a delay in
-  the body, such as a `card_is_blocked` block's rest.
+  `Retry-After` header, as delta-seconds from 1 to 3600, whatever the body holds, so a 429 with an
+  unreadable or non-JSON body, or with another code than `rate_limit_exceeded`, reports the delay,
+  and the token cool-down lasts that long instead of 60 s. On a 429 the header takes precedence over
+  a delay in the body, such as a `card_is_blocked` block's rest.
 - **Behavior:** a logger `onResponse` event is emitted after the endpoint's decoder has read the
   response: a response that breaks the endpoint's contract reports `sdk_malformed_response` or
   `sdk_unexpected_status` as `errorCode`, a 2xx included, also when it is JSON without the fields
-  the method decodes. A revocation in `close()` answered with anything but `{"status": "success"}`
-  reports `sdk_malformed_response`; `close()` still resolves.
+  the method decodes. A revocation in `close()` answered at 2xx with anything but
+  `{"status": "success"}` reports `sdk_malformed_response`; an enveloped gateway failure reports its
+  API code, and a non-2xx with an unusable body `sdk_unexpected_status`. `close()` still resolves.
 - **Behavior:** a failed token grant's error reaches each caller as its own copy, `fields` included:
   concurrent callers, and later calls rethrowing the password latch or the cool-down, no longer
   share one error object.
@@ -130,20 +159,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   case-insensitively is `unauthorized` instead of authenticating with the first key.
 - `/testing`: `PaylovFakeGateway.calls` and `PaylovFakeCall` are removed. Each method's `requests`,
   `fake.token.requests` and logger events record what was sent. `assertDone()` and the fake's own
-  failures name a request by its route template, never by its path values.
+  failures name an unscripted or unreadable request by its route template, never by its path values,
+  and an unserved answer or an unsimulated state by its method, such as `holds.get`.
+- `/testing`: a simulation or reply encoder that throws while answering a request is reported as
+  `fake_unsimulated` instead of `fake_unreadable_request`; `fake_unreadable_request` is only for a
+  request the fake cannot read back into its method's params.
 - `/testing`: `fake.transactions.get.fail('transaction_not_found')` and the simulation answer an
   unknown transaction as Paylov does, with an empty list at HTTP 200, so the error has `httpStatus`
   200 and the logger event no `errorCode`. That failure takes no `httpStatus`, `fields` or
   `retryAfterSeconds`; passing one throws `TypeError`.
 - `/testing`: `fail(code, { httpStatus: 429, retryAfterSeconds })`, `fake.token.fail` included,
   scripts a 429 with any code and that `Retry-After` delay instead of throwing `TypeError`.
+- `/testing`: a card's reported `balanceTiyin` no longer approves simulated pays and holds.
+  `addCard(card, { spendableTiyin })` takes the new `PaylovFakeCardOptions`, whose `spendableTiyin`
+  is what pays and holds may take from the card in total; without it every pay and hold on the card
+  answers `fake_unsimulated`. `addCard` throws `TypeError` for an invalid `spendableTiyin` and for
+  the id of a card the simulation deleted.
+- `/testing`: simulated refunds follow the new `PaylovFakeGatewayOptions.refundWindowMinutes` (needs
+  `simulate: true`): a refund that long or longer after the payment answers
+  `transaction_not_available_for_cancel` and the payment stays paid; without the option every refund
+  of a paid payment answers `fake_unsimulated`. The Tashkent-day rule is removed.
 - `/testing`: the simulation answers `fake_unsimulated` where Paylov's test environment showed no
-  answer: a pay or hold that the card's `balanceTiyin`, less what the simulation charged or still
-  holds on the card, does not cover; a hold above 1 000 000 000 SUM; a pay or hold that fits only
-  once a refund, the uncaptured rest of a partial capture, or a hold released after it expired
-  returns to the card; a refund after the Tashkent day of the payment; a `cards.get` or `cards.list`
-  of a card it charged or held; and a `transactions.list` with two rows paid in the same second. A
-  dismiss before expiry makes the held funds available to the card again.
+  answer, among them a payment above 10 000 000 000 SUM, a hold above 1 000 000 000 SUM, a pay or
+  hold that fits only once a refund, the uncaptured rest of a partial capture, or a hold released
+  after it expired returns to the card, a `cards.get` or `cards.list` of a card it charged or held,
+  a `transactions.list` with two rows paid in the same second, a transaction id in another UUID
+  spelling, and a capture of a hold dismissed after it expired, also when the clock has sub-second
+  precision. It answers a payment of zero with `field_not_valid` on `amount`, and a
+  `transactions.get`, `payments.pay` or `payments.refund` of an id that is not a UUID with HTTP 400
+  `validation_error` on `transactionId`, where `transactions.get` read it as
+  `transaction_not_found`. A dismiss before expiry makes the held funds available to the card again.
+- `/testing`: `createWebhookRequest` sends the documented `Content-Type: application/json` header
+  and `params.amount` in whole SUM, and throws `TypeError` for an event the receiver would not
+  decode, such as a `transactionId` that is not a UUID.
+- `/testing`: `fake.subMerchants.create.reply` answers HTTP 201, as Paylov documents.
+  `fake.gateway.listBanks.reply` throws `TypeError` for a `bankId` that is not a non-negative
+  integer in plain decimal digits, instead of sending a rewritten or undecodable id. The fake reads
+  an `onboarding.complete` request without a password, and a `subMerchants.create` request whose
+  `organization` and `create_new_organization: true` do not come together, as
+  `fake_unreadable_request`.
 
 ### Changed
 
@@ -153,8 +207,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `subMerchants.create` leaves the result unresolved until Paylov confirms the child and its id;
   settle an ambiguous `payments.refund` with `readRefundState`, which reads a captured hold still
   `paid` as `not_refunded` and any hold reading `refunded` as `unknown`.
-- `PaylovKnownErrorCode` gains `ofd_comitent_not_provided`, which `splits.create` answers for an
-  item without `tin` or `pinfl`.
+- `PaylovKnownErrorCode` gains `ofd_comitent_not_provided`, Paylov's answer to a split item without
+  `tin` or `pinfl`. The SDK rejects such an item before sending, in `splits.create` and
+  `splits.resendReceipt`, with `sdk_invalid_input` (`rule: 'exclusive'`).
 - Splits JSDoc and usage docs describe the observed contract: recipient ids are UUIDs; an unpaid
   transaction answers `receipt_not_available_for_split`; `resendReceipt` answers `split_not_found`
   without a split and `ofd_check_already_generated` once a receipt exists; `payments.refund` of a
@@ -171,7 +226,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `createWebhookRequest` sends `params.status: 'cancelled'`, which the receiver requires.
 - `/testing`: the simulated `PaylovFakeGateway` answers `transactions.get` of a hold released by
   `holds.release`, before or after it expired: `refunded` with `isHold: true` and the release time
-  as `cancelledAt`, as Paylov reports it.
+  as `cancelledAt`, as Paylov reports it. On the wire it reads `cancel` after a dismiss and
+  `refunded` after the release a failed expired capture causes, as recorded.
+- `/testing`: replies send the recorded wire shape: a PAN binding or PAN payment start carries
+  `code: null` (and `extId: null` for a payment), and a card without a name sends `cardName: ""` and
+  one without a bank name omits `bankName`. Script JSDoc and the testing guide describe each answer
+  as one scripted attempt whose call result the SDK's retries, replay and decoding decide.
 - A `validation_error` whose `data` nests deeper than 16 field segments keeps its code, status and
   outcome; the deeper paths are left out of `fields` instead of failing the call with a native
   `RangeError`.

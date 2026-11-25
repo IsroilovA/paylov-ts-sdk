@@ -72,7 +72,9 @@ export interface CardsResource {
    * `cardId`. Moves no money.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, start again; an unconfirmed card is never
-   * charged.
+   * charged. If the first start ran, a repeat answers `otp_code_already_sent` while its OTP is
+   * valid and carries no `cardId`: a caller who still lacks the id starts again after the OTP
+   * expires, which returns the same `cardId` with a new OTP.
    *
    * @throws {@link PaylovApiError} `card_not_found` (unknown or unsupported card number),
    * `card_not_match` (wrong expiry), `phone_not_match`, `card_exists` (already bound to this
@@ -96,9 +98,10 @@ export interface CardsResource {
    * returns the bound card, which can still read `isActive: false` with the reason in
    * `processingStatus`: check it before charging. A wrong code, a PINFL mismatch or invalid input
    * leaves the OTP usable, so the cardholder can retry. On Paylov's test environment an OTP lasts
-   * about 90 seconds, and the fourth wrong OTP blocks the card for about five minutes, for
-   * bindings and payments alike: `card_is_blocked`, with the rest of the block in
-   * `retryAfterSeconds`. Stop prompting before that. Moves no money.
+   * about 90 seconds, and the fourth wrong OTP blocks binding of that card for about five
+   * minutes, also for another user: `card_is_blocked`, with the rest of the block in
+   * `retryAfterSeconds`. A card-number payment counts its own wrong OTPs. Stop prompting before
+   * that. Moves no money.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `cards.get({ cardId })`. A repeated
    * confirm answering `card_is_already_activated` means the card is already confirmed.
@@ -116,8 +119,8 @@ export interface CardsResource {
   confirmPanBinding(params: ConfirmPanBindingParams, options?: PaylovCallOptions): Promise<Card>;
 
   /**
-   * Reads one card with its balance and status refreshed from the processing center. Moves no
-   * money.
+   * Reads one card with its balance and status. Paylov can answer from a cache: right after a
+   * delete it has still returned the deleted card for a short time. Moves no money.
    *
    * @throws {@link PaylovApiError} `card_not_found` (unknown or deleted),
    * `card_not_found_in_processing_center`, `card_is_blocked`,

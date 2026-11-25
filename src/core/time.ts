@@ -79,6 +79,11 @@ export function systemClock(): Date {
   return new Date();
 }
 
+/** A `Date` holding a real time, not `Invalid Date`. */
+export function isValidDate(value: unknown): value is Date {
+  return value instanceof Date && Number.isFinite(value.getTime());
+}
+
 /** Its results are checked on each read by `readClock`. */
 export function isClock(value: unknown): value is Clock {
   return typeof value === 'function';
@@ -87,9 +92,8 @@ export function isClock(value: unknown): value is Clock {
 /** The clock's current epoch milliseconds; a clock that returns no valid `Date` is a config bug. */
 export function readClock(clock: Clock, method: string): number {
   const now: unknown = clock();
-  const ms = now instanceof Date ? now.getTime() : Number.NaN;
-  if (!Number.isFinite(ms)) {
+  if (!isValidDate(now)) {
     throw configError(`${method}: the configured now() must return a valid Date`, 'now', 'type');
   }
-  return ms;
+  return now.getTime();
 }

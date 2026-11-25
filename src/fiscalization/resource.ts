@@ -5,6 +5,7 @@ import type { FiscalReceipt, FiscalReceiptRegistered } from '../shared/fiscalRec
 import { readReceiptItem } from '../shared/receiptItems.js';
 import {
   decodeActivityTypeCheck,
+  decodeHighIncomeCheck,
   decodeReceiptLookup,
   decodeFiscalReceiptRefunded,
   decodeFiscalReceiptRegistered,
@@ -66,8 +67,9 @@ export const WIRE_ACTIVITY_TYPES: Readonly<Record<FiscalActivityType, number>> =
 export interface FiscalizationResource {
   /**
    * Has Paylov register a fiscal receipt with the OFD for a paid card payment. Moves no money.
-   * Item prices are integer tiyin; the lines, each `(priceTiyin - discountTiyin) * count`, must
-   * total the transaction amount.
+   * Item prices are integer tiyin. Paylov rejects items whose total does not match the transaction
+   * amount; it does not state how lines total, and the SDK reads each line as
+   * `(priceTiyin - discountTiyin) * count`, the lines summing to the transaction amount.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before registering again;
    * `null` means nothing is registered yet. `ofd_check_already_generated` on a repeated call
@@ -76,7 +78,8 @@ export interface FiscalizationResource {
    * and register again.
    *
    * @throws {@link PaylovApiError} `ofd_check_already_generated`, `transaction_not_found`,
-   * `receipt_not_available_for_operation` (not paid), `invalid_amount` (item total),
+   * `receipt_not_available_for_operation` (the transaction is not eligible for a receipt),
+   * `invalid_amount` (item total),
    * `ofd_commitent_or_subcommission_not_active` (an item's TIN or PINFL has no active OFD
    * contract), `ofd_error`, `fiscal_receipt_not_generated`, `permission_denied`.
    *
@@ -143,10 +146,10 @@ export interface FiscalizationResource {
 
   /**
    * Asks the tax service whether a person has an activity type, before fiscalizing on their
-   * behalf. Moves no money. A negative answer may arrive as `PaylovApiError`
-   * `gateway_not_working` instead of `isConfirmed: false`; treat that as unconfirmed.
+   * behalf. Moves no money. Negative answers arrive as results, `isConfirmed: false`; a gateway
+   * error is a failure of the check, not an answer from the tax service.
    *
-   * @throws {@link PaylovApiError} `gateway_not_working`, `permission_denied`.
+   * @throws {@link PaylovApiError} `permission_denied`.
    *
    * @example
    * const check = await paylov.fiscalization.checkActivityType({
@@ -193,11 +196,12 @@ export function createFiscalizationResource(http: HttpClient): FiscalizationReso
     async checkActivityType(params, options) {
       const method = 'fiscalization.checkActivityType';
       const { input, signal } = readCall(params, options, method);
-      const body = {
-        pinfl: input.string('pinfl'),
-        activityType: WIRE_ACTIVITY_TYPES[input.literal('activityType', ACTIVITY_TYPES)],
-      };
-      return send(http, ENDPOINTS.checkActivityType, { body, signal }, decodeActivityTypeCheck);
+      const pinfl = input.string('pinfl');
+      const activityType = input.literal('activityType', ACTIVITY_TYPES);
+      const body = { pinfl, activityType: WIRE_ACTIVITY_TYPES[activityType] };
+      const decode =
+        activityType === 'high_income' ? decodeHighIncomeCheck : decodeActivityTypeCheck;
+      return send(http, ENDPOINTS.checkActivityType, { body, signal }, decode);
     },
   };
 }

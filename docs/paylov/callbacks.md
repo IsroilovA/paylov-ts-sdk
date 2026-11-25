@@ -160,6 +160,9 @@ The docs name no other trigger, such as an API `payment/cancel` or a hold dismis
 | `amount_in_tiyin` | int    | Tiyin.                                                |
 | `cancel_time`     | int    | Unix seconds.                                         |
 
+No `transaction.cancel` request has been captured; its shape and field types are those of the docs
+(D).
+
 Return any 2xx; the body is not checked. A non-2xx answer or no answer (connect timeout 5 s, read
 timeout 30 s) is retried up to 3 times at 60-second intervals, so the same notification may arrive
 more than once; deduplicate on `transaction_id`.

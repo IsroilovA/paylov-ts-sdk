@@ -74,7 +74,8 @@ export interface PaylovTransportConfig {
   /**
    * How many times a GET is retried after a connection failure other than an abort, or HTTP
    * 500/502/503/504: an integer from 0 to 5, default 2, with exponential backoff. POST and DELETE
-   * requests are never retried, whatever this is.
+   * requests never retry a failure, whatever this is. Separately, any request is sent once more
+   * after the gateway rejects its token with an enveloped HTTP 401 `permission_denied`.
    */
   readonly maxGetRetries?: number;
   /** Defaults to `globalThis.fetch`. Injected in tests and behind proxies. */

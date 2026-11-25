@@ -157,7 +157,8 @@ interface PaylovApiErrorInit {
 }
 
 /**
- * The gateway answered with an error code. Unknown codes keep this class; narrow with
+ * The gateway answered with an error code, or with a success body that means a miss, reported
+ * with the code the gateway uses for that miss. Unknown codes keep this class; narrow with
  * {@link isPaylovApiError}.
  *
  * @example
@@ -558,7 +559,8 @@ export function isPaylovError(error: unknown): error is PaylovError {
  * refunds or splits funds. Reconcile such a call through the method's documented status read
  * before repeating it. False for any failure of a read, input and closed-client errors, a failure
  * before the operation was sent (such as a failed token grant), other gateway errors (specific
- * declines such as `insufficient_funds` included), and anything the SDK did not throw.
+ * declines such as `insufficient_funds` included), and any value that is not an SDK error instance.
+ * It reads the flag of any SDK error instance, including one the caller constructed.
  *
  * @example
  * catch (error) {

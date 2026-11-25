@@ -67,8 +67,8 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  * Authenticates and decodes Paylov webhooks: the `transaction.cancel` notification. Moves no
  * money and keeps no state.
  *
- * `receive` never throws for anything a request carries. It checks `POST` and HTTP Basic
- * credentials against every configured pair in constant time, then returns a decoded event with
+ * `receive` never throws for ordinary request data. It checks `POST` and HTTP Basic credentials
+ * against every configured pair with constant-time comparisons, then returns a decoded event with
  * the `credentialIndex` of the pair that matched, or `{ kind: 'invalid', reason }`. List several
  * pairs to rotate credentials without downtime.
  * The caller owns everything after:
@@ -110,8 +110,8 @@ export class PaylovWebhookReceiver {
   }
 
   /**
-   * Authenticates and decodes one inbound webhook. Never throws for anything the request
-   * carries. Pass the body already read, as text, bytes or parsed JSON: an unread stream such as
+   * Authenticates and decodes one inbound webhook. Never throws for ordinary request data;
+   * an exception from a getter or proxy in `input` propagates unchanged. Pass the body already read, as text, bytes or parsed JSON: an unread stream such as
    * a Fetch `Request`'s `body` is answered `malformed_body`.
    *
    * @example
@@ -132,8 +132,8 @@ export class PaylovWebhookReceiver {
   }
 
   /**
-   * Compares the request against every pair, both digests each, before choosing: the time taken
-   * does not depend on which pair matched or which half differed.
+   * Compares the request against every pair, both digests each, before choosing: no comparison
+   * stops early at a match or at the half that differed.
    */
   #matchingCredential(headers: unknown): number | undefined {
     const credentials = decodeBasicCredentials(readAuthorization(headers));

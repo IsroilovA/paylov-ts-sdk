@@ -155,12 +155,13 @@ describe('unusable bodies', () => {
 });
 
 describe('incomplete error envelopes', () => {
-  const contradicting = { result: { id: 1 }, error: { code: 'permission_denied' } };
-  const withoutResult = { error: { code: 'permission_denied' } };
+  const denied = { code: 'permission_denied', message: 'Permission denied.' };
 
   it.each([
-    ['a non-null result', contradicting],
-    ['no result', withoutResult],
+    ['a non-null result', { result: { id: 1 }, error: denied }],
+    ['no result', { error: denied }],
+    ['no message', { result: null, error: { code: 'permission_denied' } }],
+    ['a non-string message', { result: null, error: { code: 'permission_denied', message: 1 } }],
   ])(
     'reports an error with %s as a protocol error whose write outcome is unknown',
     (_label, body) => {
@@ -185,7 +186,7 @@ describe('Retry-After on a 429', () => {
     ['no body', undefined, 'sdk_unexpected_status'],
     [
       'an enveloped invalid_grant',
-      { result: null, error: { code: 'invalid_grant' } },
+      { result: null, error: { code: 'invalid_grant', message: 'Invalid grant.' } },
       'invalid_grant',
     ],
   ])('is read with %s', (_label, body, code) => {
@@ -200,7 +201,12 @@ describe('Retry-After on a 429', () => {
     const error = capture(() => normalize('Unavailable', 503, 'flat', '180'));
     expect(recordOf(error)['retryAfterSeconds']).toBeUndefined();
     const declined = capture(() =>
-      normalize({ result: null, error: { code: 'invalid_grant' } }, 401, 'flat', '180'),
+      normalize(
+        { result: null, error: { code: 'invalid_grant', message: 'Invalid grant.' } },
+        401,
+        'flat',
+        '180',
+      ),
     );
     expect(recordOf(declined)['retryAfterSeconds']).toBeUndefined();
   });

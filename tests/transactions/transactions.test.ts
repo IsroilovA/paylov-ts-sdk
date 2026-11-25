@@ -227,6 +227,9 @@ describe('transactions.get', () => {
     ['cancel_time', '2026-11-12'],
     ['amount_in_tiyin', 1000.5],
     ['ofd', null],
+    // SDK words, which would read as the wire spellings `payed` and `waiting`.
+    ['status', 'paid'],
+    ['status', 'held'],
   ])('fails as malformed when %s is %j, without echoing the value', async (key, value) => {
     const { resource } = setup([withPaidRow((row) => ({ ...row, [key]: value }))]);
 
@@ -386,6 +389,15 @@ describe('transactions.iterate', () => {
       listPage(6, ROWS.slice(0, 3)),
       listPage(6, ROWS.slice(2, 5)),
       listPage(6, ROWS.slice(5)),
+    ]);
+
+    expect(await collectIds(resource.iterate())).toEqual(idsOf(ROWS));
+  });
+
+  it('yields a row that one page lists twice once', async () => {
+    const { resource } = setup([
+      listPage(6, [...ROWS.slice(0, 3), ...ROWS.slice(1, 2)]),
+      listPage(6, ROWS.slice(3)),
     ]);
 
     expect(await collectIds(resource.iterate())).toEqual(idsOf(ROWS));

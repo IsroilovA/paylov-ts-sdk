@@ -313,6 +313,19 @@ describe('fiscalization.checkActivityType', () => {
     expect(check).toEqual({ isConfirmed: false, activityNames: [] });
   });
 
+  it('confirms high income only by data.status, never by success alone', async () => {
+    const { resource } = setup(
+      fixtureResponse('fiscalization/checkActivityType.selfEmployed.docs.json'),
+    );
+
+    const check = await resource.checkActivityType({
+      pinfl: PERSON_PINFL,
+      activityType: 'high_income',
+    });
+
+    expect(check).toEqual({ isConfirmed: false, activityNames: [] });
+  });
+
   it('rejects data that is neither null, a number nor the income object', async () => {
     const { resource } = setup({ body: { result: { success: true, data: 'yes' } } });
 

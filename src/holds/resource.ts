@@ -43,19 +43,19 @@ export const ENDPOINTS = {
 
 /**
  * The `paylov.holds` namespace: reserve funds on a bound card with `create`, then either
- * `capture` them once or `release` them before the hold runs out. Paylov sends no hold webhook,
- * so reconcile open holds by polling `get`.
+ * `capture` them once or `release` them before the hold runs out. Paylov documents no hold
+ * webhook, so reconcile open holds by polling `get`.
  */
 export interface HoldsResource {
   /**
    * Reserves `amountTiyin` on a bound card for `durationMinutes`. Money is reserved, not
-   * captured. Store `clientCaptureDeadline`, a client-side lower bound on the hold's expiry: Paylov
-   * reports none, and an expired hold still reads `held`.
+   * captured. Store `clientCaptureDeadline`, a conservative client-side cut-off: Paylov reports no
+   * expiry, and an expired hold still reads `held`.
    *
-   * Every create that reaches Paylov uses up its `externalId`, a declined one too: the declined
+   * A create that leaves a record uses up its `externalId`, a declined one too: the declined
    * record reads `declined` in `holds.get`, and a new create with that id answers
-   * `external_id_already_exists`. Only a new attempt after a confirmed decline or a release takes a
-   * new `externalId`.
+   * `external_id_already_exists`. A create the gateway rejects for its Bearer token leaves no
+   * record. Only a new attempt after a confirmed decline or a release takes a new `externalId`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, the hold may exist, even after an abort. Read
    * `holds.get({ externalId })` after a backoff and pass the record to `readHoldState`, with the
@@ -111,14 +111,16 @@ export interface HoldsResource {
    * capture: after one, only `payments.refund` remains. Paylov states captured holds are
    * refundable, but its test environment refused them with `processing_error`, which the SDK
    * reports as an unknown outcome.
-   * Release every hold you will not capture, also after its duration runs out. Release is the only
-   * documented way to free a hold, so the SDK reads `hold_not_found` then as nothing left to
-   * release.
+   * Release every hold you will not capture, also after its duration runs out: expiry alone has
+   * not been seen to free a hold, and a release after expiry has succeeded. `hold_not_found` after
+   * expiry has been seen only after a capture attempt failed with `hold_time_expired`, which itself
+   * left the hold `released`.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `holds.get({ transactionId })`: status
-   * `released` means the release took effect.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `holds.get({ transactionId })` and pass it
+   * to `readHoldState`: `released` is the hold's current state at the gateway, not proof of which
+   * call released it or of when the funds reach the cardholder.
    *
-   * @throws {@link PaylovApiError} `hold_not_found` (already released, captured, or expired).
+   * @throws {@link PaylovApiError} `hold_not_found` (already released or captured).
    *
    * @example
    * await paylov.holds.release({ transactionId: booking.holdTransactionId });
@@ -157,7 +159,8 @@ export function createHoldsResource(http: HttpClient, clock: Clock): HoldsResour
         account: input.optionalJson('account'),
         serviceId: input.optionalString('serviceId'),
       };
-      // Read before the request leaves, so the deadline cannot fall after the gateway's expiry.
+      // Read before the request leaves: a conservative cut-off, assuming a consistent client clock;
+      // Paylov's timer origin is not established (docs/paylov/holds.md#flow).
       const startedAt = readClock(clock, method);
       const { transactionId } = await send(
         http,

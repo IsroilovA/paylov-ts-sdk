@@ -68,7 +68,7 @@ describe('fields', () => {
   it('keeps the gateway error of a payment whose validation data nests too deep to walk', async () => {
     const levels = 20_000;
     const data = `${'{"a":'.repeat(levels)}["x"]${'}'.repeat(levels)}`;
-    const rawBody = `{"result":null,"error":{"code":"validation_error","data":${data}}}`;
+    const rawBody = `{"result":null,"error":{"code":"validation_error","message":"Invalid.","data":${data}}}`;
     const { http } = client([{ status: 500, rawBody }]);
     const error = await expectApiError(http.request(PAYMENT_ENDPOINTS.pay, {}, rawPayload), {
       code: 'validation_error',

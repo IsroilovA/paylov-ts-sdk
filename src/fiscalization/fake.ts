@@ -33,12 +33,15 @@ function encodeFiscalReceiptRefunded(refunded: FiscalReceiptRefunded): unknown {
   };
 }
 
-/** Activity names make the high-income answer; none is the self-employed `data: null`. */
+/**
+ * The high-income object for anything but a bare negative, since only its `data.status` confirms
+ * every activity type alike; a bare negative is the recorded `success: false, data: null`.
+ */
 function encodeActivityTypeCheck(check: ActivityTypeCheck): unknown {
   const { isConfirmed, activityNames } = check;
-  return activityNames.length > 0
+  return isConfirmed || activityNames.length > 0
     ? { success: true, data: { status: isConfirmed, activityNames } }
-    : { success: isConfirmed, data: null };
+    : { success: false, data: null };
 }
 
 function decodeRegisterReceiptRequest({ body }: FakeRequest): RegisterFiscalReceiptParams {

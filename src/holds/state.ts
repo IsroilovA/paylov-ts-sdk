@@ -2,6 +2,7 @@
 
 import { isTiyin } from '../core/money.js';
 import { readParams } from '../core/params.js';
+import { isValidDate } from '../core/time.js';
 import type { HoldState, ReadHoldStateParams } from './types.js';
 
 const UNKNOWN: HoldState = { kind: 'unknown' };
@@ -13,10 +14,11 @@ type Fields = Readonly<Record<string, unknown>>;
  * Turns a `holds.get` result into a decision, without I/O. Every status the SDK cannot settle
  * maps to `unknown`, never to a guess; in particular, the deadline passing never reads as
  * released. A `declined` hold reads as declined only with its `transactions.get` read showing
- * `failed`, the decline Paylov documents.
+ * `failed`, the decline Paylov documents. A `capturedAt` or `releasedAt` on the hold that is
+ * neither `null` nor a valid `Date` reads as `unknown`.
  *
  * @throws {@link PaylovInputError} `sdk_invalid_input` for a missing hold, a hold or transaction
- * that is not an object, or an invalid `Date`.
+ * that is not an object, or a `clientCaptureDeadline` or `now` that is not a valid `Date`.
  *
  * @example
  * const hold = await paylov.holds.get({ transactionId: booking.holdTransactionId });
@@ -55,10 +57,10 @@ function stateOf(
     return !isSettled && isFailedHoldOf(transactionId, transaction) ? DECLINED : UNKNOWN;
   }
   const isAmount = isTiyin(amountTiyin);
-  if (status === 'captured' && capturedAt instanceof Date && releasedAt === null && isAmount) {
+  if (status === 'captured' && isValidDate(capturedAt) && releasedAt === null && isAmount) {
     return { kind: 'captured', amountTiyin, capturedAt };
   }
-  if (status === 'released' && releasedAt instanceof Date && capturedAt === null) {
+  if (status === 'released' && isValidDate(releasedAt) && capturedAt === null) {
     return { kind: 'released', releasedAt };
   }
   if (isSettled || status !== 'held') return UNKNOWN;

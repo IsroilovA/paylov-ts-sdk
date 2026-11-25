@@ -35,19 +35,21 @@ export const ENDPOINTS = {
 export interface SplitsResource {
   /**
    * Splits a paid transaction: each recipient receives a sub-transaction with its amount. Moves
-   * money to the recipients. Amounts are integer tiyin and must add up to the transaction amount.
-   * A recipient's `items` are registered with the OFD in the background; read the result with
-   * `splits.get`.
+   * money to the recipients. Recipient amounts are integer tiyin and must add up to the
+   * transaction amount. A recipient's `items` are registered with the OFD in the background; read
+   * the result with `splits.get`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get` before splitting again: its
    * shares mean the split exists. `split_not_found` right after the failure proves nothing: read
    * again after a backoff before splitting again with the same recipients. `split_already_done` on
    * a repeated call means the split exists.
    *
+   * @throws {@link PaylovInputError} `sdk_invalid_input` for an item without exactly one of `tin`
+   * or `pinfl`, before anything is sent.
    * @throws {@link PaylovApiError} `split_already_done`, `invalid_amount` (amounts do not add up),
    * `recipient_not_found`, `receipt_not_available_for_split` (the transaction is not paid),
-   * `transaction_not_found`, `ofd_comitent_not_provided` (an item has no `tin` or `pinfl`),
-   * `permission_denied`.
+   * `transaction_not_found`, `ofd_commitent_or_subcommission_not_active` (an item's `tin` or
+   * `pinfl` has no active OFD contract), `permission_denied`.
    *
    * @example
    * await paylov.splits.create({
@@ -67,20 +69,27 @@ export interface SplitsResource {
    * submission is still pending registers twice, so resend only once `splits.get` has shown no
    * receipt for a while.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get`; a receipt there means the
-   * resend took effect, and `ofd_check_already_generated` on a repeated call means a receipt
-   * exists.
+   * Send every recipient of the split with its amount and its items: the SDK requires items on
+   * every recipient, because Paylov's acceptance of a recipient without items alongside others is
+   * not established.
    *
-   * @throws {@link PaylovInputError} `sdk_invalid_input` for a recipient without `items`, before
-   * anything is sent.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get`. A receipt there shows that
+   * a receipt exists, not which submission registered it: the original one or a later refund can
+   * produce it too, and its `isRefund` tells a refund receipt from a sale receipt.
+   * `ofd_check_already_generated` on a repeated call means a receipt exists.
+   *
+   * @throws {@link PaylovInputError} `sdk_invalid_input` for a recipient without `items` or an item
+   * without exactly one of `tin` or `pinfl`, before anything is sent.
    * @throws {@link PaylovApiError} `ofd_check_already_generated` (the split has a receipt),
-   * `split_not_found` (the transaction has no split), `ofd_comitent_not_provided`,
-   * `permission_denied`.
+   * `split_not_found` (the transaction has no split), `permission_denied`.
    *
    * @example
    * const { status } = await paylov.splits.resendReceipt({
    *   transactionId,
-   *   recipients: [{ recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedItems }],
+   *   recipients: [
+   *     { recipientId: platformRecipientId, amountTiyin: 150_000, items: platformItems },
+   *     { recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedSellerItems },
+   *   ],
    * });
    */
   resendReceipt(

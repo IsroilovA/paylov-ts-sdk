@@ -6,10 +6,18 @@ function encodeStatus(): unknown {
   return { status: 'ok' };
 }
 
-/** A `bankId` that is not a decimal integer cannot come from the gateway and fails decoding. */
+/** The wire integer id the SDK reads back as exactly `bankId`, its decimal digits. */
+function encodeBankId(bankId: string): number {
+  const id = Number(bankId);
+  if (!Number.isSafeInteger(id) || id < 0 || String(id) !== bankId) {
+    throw new TypeError('bankId must be a non-negative integer in plain decimal digits');
+  }
+  return id;
+}
+
 function encodeBanks(banks: readonly Bank[]): unknown {
   return banks.map((bank) => ({
-    id: Number(bank.bankId),
+    id: encodeBankId(bank.bankId),
     name: bank.name,
     official_name: bank.officialName,
   }));

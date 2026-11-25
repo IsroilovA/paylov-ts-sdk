@@ -37,6 +37,10 @@ const EXPIRED = wireResponse('envelope/bearer.expired.wire.json');
 const BARE_401: FakeResponseSpec = { status: 401, rawBody: 'Unauthorized' };
 const STALLED: FakeResponseSpec = { delayMs: 5_000, ...SUCCESS };
 
+function errorEnvelope(code: string): { result: null; error: { code: string; message: string } } {
+  return { result: null, error: { code, message: 'Gateway message.' } };
+}
+
 function aborted(): Error {
   return new Error('aborted');
 }
@@ -504,22 +508,22 @@ describe('401 replay', () => {
     ['bare 401', BARE_401, 'sdk_unexpected_status'],
     [
       '401 with another code',
-      { status: 401, body: { result: null, error: { code: 'invalid_token' } } },
+      { status: 401, body: errorEnvelope('invalid_token') },
       'invalid_token',
     ],
     [
       '400 permission_denied',
-      { status: 400, body: { result: null, error: { code: 'permission_denied' } } },
+      { status: 400, body: errorEnvelope('permission_denied') },
       'permission_denied',
     ],
     [
       '403 permission_denied',
-      { status: 403, body: { result: null, error: { code: 'permission_denied' } } },
+      { status: 403, body: errorEnvelope('permission_denied') },
       'permission_denied',
     ],
     [
       '403 ip_not_allowed',
-      { status: 403, body: { result: null, error: { code: 'ip_not_allowed' } } },
+      { status: 403, body: errorEnvelope('ip_not_allowed') },
       'ip_not_allowed',
     ],
   ] as const)('does not replay a %s', async (_label, response, code) => {
@@ -531,8 +535,12 @@ describe('401 replay', () => {
   });
 
   it.each([
-    ['a non-null result', { result: { transactionId: 'x' }, error: { code: 'permission_denied' } }],
-    ['no result', { error: { code: 'permission_denied' } }],
+    [
+      'a non-null result',
+      { ...errorEnvelope('permission_denied'), result: { transactionId: 'x' } },
+    ],
+    ['no result', { error: errorEnvelope('permission_denied').error }],
+    ['no message', { result: null, error: { code: 'permission_denied' } }],
   ])('never replays a payment after a 401 permission_denied with %s', async (_label, body) => {
     const { auth, authorize, invalidate } = rotatingAuth();
     const { http, fetchImpl } = client([{ status: 401, body }, SUCCESS], { auth });

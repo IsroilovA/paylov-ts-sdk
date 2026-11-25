@@ -61,7 +61,8 @@ try {
 
 The guides ship in the package under `docs/usage/`. Method contracts are in the JSDoc.
 
-- [Usage index](docs/usage/INDEX.md): every export and method, and the guide that explains it.
+- [Usage index](docs/usage/INDEX.md): the classes, methods and helpers, and the guide that explains
+  each; types are in the declarations.
 - [Setup](docs/usage/setup.md): requirements, hosts, client lifecycle and a sandbox check.
 - [Errors](docs/usage/errors.md): branching on failures and recovery after an ambiguous one.
 - [Webhooks](docs/usage/webhooks.md): receiving and acknowledging Paylov callbacks.

@@ -31,6 +31,19 @@ function decodeOrganization(organization: Params): SubMerchantOrganization {
   };
 }
 
+/**
+ * A new organization only where `create_new_organization` selects one; the flag defaults to
+ * `false`, which uses the parent's organization, so an `organization` without it does not read back.
+ */
+function decodeNewOrganization(body: Params): { readonly organization?: SubMerchantOrganization } {
+  const isNew = body.optionalBoolean('create_new_organization') === true;
+  const organization = body.optionalObject('organization', decodeOrganization);
+  if (isNew !== (organization !== undefined)) {
+    throw new TypeError('organization and create_new_organization: true go together');
+  }
+  return optionalEntry('organization', organization);
+}
+
 function decodeCreateRequest({ body }: FakeRequest): CreateSubMerchantParams {
   const tin = body.optionalString('tin');
   const taxIds =
@@ -39,7 +52,7 @@ function decodeCreateRequest({ body }: FakeRequest): CreateSubMerchantParams {
       : {
           tin,
           ...optionalEntry('pinfl', body.optionalString('pinfl')),
-          ...optionalEntry('organization', body.optionalObject('organization', decodeOrganization)),
+          ...decodeNewOrganization(body),
         };
   return {
     name: body.string('name'),
@@ -57,5 +70,6 @@ export const SUB_MERCHANT_FAKES: FakeSpecTable<SubMerchantsResource> = {
     endpoint: ENDPOINTS.create,
     encode: encodeSubMerchantCreated,
     decodeRequest: decodeCreateRequest,
+    successStatus: 201,
   },
 };

@@ -75,6 +75,10 @@ describe('readRefundState', () => {
       { ...PAID_SALE, status: 'refunded', isHold: true, cancelledAt: CANCELLED_AT },
     ],
     ['a refund without its time', { ...PAID_SALE, status: 'refunded' }],
+    [
+      'a refund whose time is an invalid Date',
+      { ...PAID_SALE, status: 'refunded', cancelledAt: new Date(Number.NaN) },
+    ],
     ['a paid sale with a cancel time', { ...PAID_SALE, cancelledAt: CANCELLED_AT }],
     ['an unpaid sale', { ...PAID_SALE, status: 'created' }],
     ['a declined sale', { ...PAID_SALE, status: 'failed', declineCode: 'processing_error' }],

@@ -27,6 +27,22 @@ function encodeFiscalReceiptSummary(receipt: FiscalReceiptSummary): unknown {
   };
 }
 
+/** Wire spellings the simulation chose for transactions it built; a scripted reply has none. */
+const WIRE_STATUSES = new WeakMap<Transaction, string>();
+
+/**
+ * Marks `transaction` to encode its status as `wireStatus`, one of the spellings the SDK reads as
+ * that status, where Paylov's spelling records how the state was reached (a hold dismissed reads
+ * `cancel`, one released after an expired capture `refunded`). Returns `transaction`.
+ */
+export function withWireStatus(transaction: Transaction, wireStatus: string): Transaction {
+  if (TRANSACTION_STATUS_BY_WIRE.get(wireStatus) !== transaction.status) {
+    throw new TypeError(`wire status ${wireStatus} does not read as ${transaction.status}`);
+  }
+  WIRE_STATUSES.set(transaction, wireStatus);
+  return transaction;
+}
+
 function encodeTransaction(transaction: Transaction): unknown {
   return {
     id: transaction.transactionId,
@@ -35,7 +51,9 @@ function encodeTransaction(transaction: Transaction): unknown {
     card_id: transaction.cardId,
     cardNumber: transaction.maskedCardNumber,
     amount_in_tiyin: transaction.amountTiyin,
-    status: encodeStatus(TRANSACTION_STATUS_BY_WIRE, transaction.status),
+    status:
+      WIRE_STATUSES.get(transaction) ??
+      encodeStatus(TRANSACTION_STATUS_BY_WIRE, transaction.status),
     account: {},
     error_message: transaction.declineCode,
     date: tashkentDateTimeOf(transaction.paidOrCreatedAt, 'paidOrCreatedAt'),

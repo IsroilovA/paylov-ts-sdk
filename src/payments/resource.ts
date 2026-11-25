@@ -77,8 +77,8 @@ export interface PaymentsResource {
    *
    * @throws {@link PaylovApiError} `transaction_already_payed`,
    * `transaction_not_available_for_payment` (refunded, failed or not payable),
-   * `card_is_not_for_this_check` (the card belongs to another user), `card_not_found`, and
-   * declines such as `insufficient_funds`; `processing_error` (an unknown outcome: read the
+   * `card_is_not_for_this_check` (the card belongs to another user), `card_not_found`,
+   * `transaction_not_found` (unknown `transactionId`), and declines such as `insufficient_funds`; `processing_error` (an unknown outcome: read the
    * transaction before paying again).
    *
    * @example

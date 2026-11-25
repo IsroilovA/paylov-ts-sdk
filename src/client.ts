@@ -156,7 +156,8 @@ export class PaylovClient {
    * fails or `signal` abandons the wait: the revoke attempt's `logger` events report its outcome,
    * metadata only.
    *
-   * @throws {@link PaylovInputError} `sdk_invalid_input` for options without an `AbortSignal`.
+   * @throws {@link PaylovInputError} `sdk_invalid_input`, as a rejection, when `options` is not an
+   * object or its `signal` is set to anything but an `AbortSignal`.
    *
    * @example
    * process.once('SIGTERM', () => {

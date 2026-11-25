@@ -12,12 +12,8 @@ try {
   await paylov.splits.create({
     transactionId,
     recipients: [
-      { recipientId: platformRecipientId, amountTiyin: 150_000 },
-      {
-        recipientId: sellerRecipientId,
-        amountTiyin: 850_000,
-        items: sellerItems,
-      },
+      { recipientId: platformRecipientId, amountTiyin: 150_000, items: platformItems },
+      { recipientId: sellerRecipientId, amountTiyin: 850_000, items: sellerItems },
     ],
   });
 } catch (error) {
@@ -26,8 +22,9 @@ try {
 const split = await paylov.splits.get({ transactionId });
 ```
 
-- Splitting moves money to the recipients; amounts must add up to the transaction amount, and the
-  transaction must be paid (`receipt_not_available_for_split` otherwise).
+- Splitting moves money to the recipients; the recipient amounts must add up to the transaction
+  amount (`invalid_amount` otherwise), and the transaction must be paid
+  (`receipt_not_available_for_split` otherwise). Item prices need not match a recipient's amount.
 - Read the split back with the paid transaction's id. `splits.get` throws `split_not_found` for a
   transaction without a split and `transaction_not_found` for an unknown one. Right after an
   ambiguous `splits.create`, `split_not_found` proves nothing: read again after a backoff before
@@ -39,15 +36,20 @@ const split = await paylov.splits.get({ transactionId });
 ## Fiscal receipts
 
 - A recipient's `items` ([fiscalization.md](fiscalization.md)) are registered with the OFD in the
-  background. Each item needs `tin` or `pinfl` (`ofd_comitent_not_provided` otherwise).
+  background. Each item needs exactly one of `tin` or `pinfl`; the SDK rejects an item with neither
+  or both as `sdk_invalid_input` before sending, in `splits.create` and `splits.resendReceipt`. An
+  item whose `tin` or `pinfl` has no active OFD contract fails `splits.create` with
+  `ofd_commitent_or_subcommission_not_active`.
 - Poll `splits.get`: `receipt` turns from `null` to the sale receipt seconds after the split, and to
   the refund receipt seconds after a refund.
 - A rejected item leaves `receipt` `null` and reports nothing. Resubmit corrected items with
   `splits.resendReceipt`: it splits nothing, moves no money, and returns the resubmission `status`.
-  Every recipient needs its `items`; a recipient without them is rejected locally as
-  `sdk_invalid_input`. `ofd_check_already_generated` means a receipt already exists. Paylov does not
-  say whether a resend while the first submission is still pending registers twice, so wait before
-  resending.
+  Send every recipient of the split with its original amount and its items; the SDK rejects a
+  recipient without items locally as `sdk_invalid_input`. `ofd_check_already_generated` means a
+  receipt already exists. A receipt in `splits.get` afterwards shows that a receipt exists, not that
+  the resend registered it: the original submission or a refund can produce it too, and `isRefund`
+  tells a refund receipt from a sale receipt. Paylov does not say whether a resend while the first
+  submission is still pending registers twice, so wait before resending.
 
 ```ts
 const split = await paylov.splits.get({ transactionId });
@@ -55,11 +57,8 @@ if (split.receipt === null && Date.now() - splitAt.getTime() > 60_000) {
   const { status } = await paylov.splits.resendReceipt({
     transactionId,
     recipients: [
-      {
-        recipientId: sellerRecipientId,
-        amountTiyin: 850_000,
-        items: correctedItems,
-      },
+      { recipientId: platformRecipientId, amountTiyin: 150_000, items: platformItems },
+      { recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedSellerItems },
     ],
   });
   log.warn('split receipt resent', { status });

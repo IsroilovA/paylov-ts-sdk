@@ -53,9 +53,10 @@ export interface HoldCreated extends TransactionReference {
   readonly durationMinutes: number;
   /**
    * Computed by the SDK, not reported by Paylov: the client clock just before the request was
-   * sent, plus `durationMinutes`. Paylov starts the hold no earlier, so this is a lower bound on
-   * its real expiry: capture before this. Passing it proves nothing: the hold is released
-   * only after `holds.release` succeeds or `holds.get` reads `released`.
+   * sent, plus `durationMinutes`. A conservative client-side cut-off that assumes the client clock
+   * is consistent: Paylov's timer origin and exact cut-off are not established. Capture before
+   * this. Passing it proves nothing about the hold: only `holds.get` read by `readHoldState` shows
+   * its current state.
    */
   readonly clientCaptureDeadline: Date;
 }
@@ -104,9 +105,10 @@ export interface Hold {
   /** When the hold was captured (sent in UTC); `null` until then. */
   readonly capturedAt: Date | null;
   /**
-   * When Paylov reports the hold released (sent in UTC): after `holds.release`, or after a capture
-   * of an expired hold failed with `hold_time_expired`. `null` otherwise; expiry alone has not
-   * been seen to set it.
+   * When Paylov reports the hold released (sent in UTC): after `holds.release`, before or after
+   * expiry, or after a capture of an expired hold failed with `hold_time_expired`. `null`
+   * otherwise; expiry alone has not been seen to set it. It records the gateway's state, not which
+   * call caused it or when the funds reach the cardholder.
    */
   readonly releasedAt: Date | null;
   /** The service the hold belongs to: the one sent on create, or the merchant id. */

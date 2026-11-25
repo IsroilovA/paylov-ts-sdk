@@ -33,7 +33,8 @@ export interface GatewayResource {
    * Lists the banks Paylov knows (`GET /merchant/bankList/`). Each `bankId` is a string that
    * matches a card's `bankId`. Moves no money.
    *
-   * @throws {@link PaylovApiError} `invalid_grant` when the credentials are rejected.
+   * @throws {@link PaylovApiError} `invalid_grant` when the credentials are rejected,
+   * `permission_denied` when the gateway rejects the token even after the SDK's single replay.
    *
    * @example
    * const banks = await paylov.gateway.listBanks();

@@ -22,8 +22,8 @@ export interface SplitRecipient {
   readonly amountTiyin: number;
   /**
    * Receipt lines for this recipient's share. Paylov registers them with the OFD in the background,
-   * seconds after the split; `splits.get` reports the result as `receipt`. Paylov answers
-   * `ofd_comitent_not_provided` for an item without `tin` or `pinfl`.
+   * seconds after the split; `splits.get` reports the result as `receipt`. Each item needs exactly
+   * one of `tin` or `pinfl`; the SDK rejects any other item as `sdk_invalid_input`.
    */
   readonly items?: readonly FiscalReceiptItem[];
 }

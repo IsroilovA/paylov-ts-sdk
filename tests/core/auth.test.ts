@@ -78,6 +78,10 @@ const RATE_LIMITED_GRANT: FakeResponseSpec = {
   body: { result: null, error: { code: 'invalid_grant', message: 'invalid_grant' } },
 };
 const REVOKED = wireResponse('auth/revoke.success.wire.json');
+const UNAVAILABLE_GRANT: FakeResponseSpec = {
+  status: 503,
+  body: { result: null, error: { code: 'invalid_grant', message: 'invalid_grant' } },
+};
 
 interface Harness {
   readonly manager: TokenManager;
@@ -295,6 +299,7 @@ describe('refresh to password fallback', () => {
     ['a connection failure', NETWORK_FAILURE, PaylovConnectionError],
     ['a bare 401', { status: 401, rawBody: 'Unauthorized' }, PaylovProtocolError],
     ['a malformed success', { body: { token_type: 'Bearer' } }, PaylovProtocolError],
+    ['invalid_grant at HTTP 503', UNAVAILABLE_GRANT, PaylovApiError],
   ] as const)('never sends the password after %s', async (_label, failure, kind) => {
     const { manager, fetchImpl, clock } = setup([LOGIN, failure, LOGIN]);
     await header(manager);
@@ -391,6 +396,7 @@ describe('password latch', () => {
     ['a bare 403', { status: 403, rawBody: '<html>Forbidden</html>' }, 'sdk_unexpected_status'],
     ['invalid_request', wireResponse('auth/token.basicMissing.wire.json'), 'invalid_request'],
     ['a server error', wireResponse('envelope/serverError.wire.json'), 'server_error'],
+    ['invalid_grant at HTTP 503', UNAVAILABLE_GRANT, 'invalid_grant'],
   ] as const)('does not latch on %s', async (_label, failure, code) => {
     const { manager, fetchImpl } = setup([failure, LOGIN]);
     await expect(header(manager)).rejects.toMatchObject({ code });
@@ -769,6 +775,31 @@ describe('close', () => {
     expect(recordOf(fetchImpl.calls[1]?.body)).toEqual({ token: PASSWORD_TOKEN.access_token });
   });
 
+  it('revokes the prior access token when a refresh in flight at close is rejected', async () => {
+    const gate = createGate();
+    const { manager, fetchImpl, clock } = setup([LOGIN, { ...REFRESH_REJECTED, gate }, REVOKED]);
+    await header(manager);
+    clock.value += ACCESS_LIFETIME_MS - 59_000;
+    const waiter = captureAsync(manager.authorize());
+    await gate.started;
+    const closing = manager.close();
+    gate.release();
+    await closing;
+    await expect(waiter).resolves.toMatchObject({ code: 'sdk_client_closed' });
+    expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, TOKEN_PATH, REVOKE_PATH]);
+    expect(recordOf(fetchImpl.calls[2]?.body)).toEqual({ token: PASSWORD_TOKEN.access_token });
+  });
+
+  it('revokes the prior access token after both grants are rejected', async () => {
+    const { manager, fetchImpl, clock } = setup([LOGIN, REFRESH_REJECTED, BAD_PASSWORD, REVOKED]);
+    await header(manager);
+    clock.value += ACCESS_LIFETIME_MS - 59_000;
+    await expectApiError(header(manager), { code: 'invalid_grant', httpStatus: 401 });
+    await manager.close();
+    expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, TOKEN_PATH, TOKEN_PATH, REVOKE_PATH]);
+    expect(recordOf(fetchImpl.calls[3]?.body)).toEqual({ token: PASSWORD_TOKEN.access_token });
+  });
+
   it('still closes when the in-flight grant fails', async () => {
     const gate = createGate();
     const { manager, fetchImpl } = setup([{ ...NETWORK_FAILURE, gate }]);
@@ -835,6 +866,11 @@ describe('malformed token responses', () => {
       'body.refresh_token',
     ],
     ['missing token_type', { ...PASSWORD_TOKEN, token_type: undefined }, 'body.token_type'],
+    [
+      'a token_type other than Bearer',
+      { ...PASSWORD_TOKEN, token_type: 'Other' },
+      'body.token_type',
+    ],
     ['expires_in as a string', { ...PASSWORD_TOKEN, expires_in: '3600' }, 'body.expires_in'],
     ['expires_in of zero', { ...PASSWORD_TOKEN, expires_in: 0 }, 'body.expires_in'],
     ['fractional expires_in', { ...PASSWORD_TOKEN, expires_in: 1.5 }, 'body.expires_in'],

@@ -58,10 +58,17 @@ function unusableBody(context: ResponseContext, retryAfter: string | null): Payl
     : unexpectedStatus(context, rateLimitDelay(context, retryAfter));
 }
 
+/** The documented error object: a wire code and a string message, whose text is discarded. */
+function isErrorObject(
+  error: unknown,
+): error is Readonly<Record<string, unknown>> & { readonly code: string } {
+  return isRecord(error) && isWireErrorCode(error['code']) && typeof error['message'] === 'string';
+}
+
 /**
  * The error a body with a non-null `error` reports. Only the documented envelope, with an explicit
- * `result: null`, is a gateway answer: a contradicting or missing `result` proves nothing about
- * whether the request executed, so it is a protocol error.
+ * `result: null` and a complete error object, is a gateway answer: anything less proves nothing
+ * about whether the request executed, so it is a protocol error.
  */
 function envelopeError(
   body: Readonly<Record<string, unknown>>,
@@ -69,10 +76,8 @@ function envelopeError(
   retryAfter: string | null,
 ): PaylovApiError | PaylovProtocolError {
   const error = body['error'];
-  const code = isRecord(error) ? error['code'] : undefined;
-  if (body['result'] !== null || !isRecord(error) || !isWireErrorCode(code)) {
-    return unusableBody(context, retryAfter);
-  }
+  if (body['result'] !== null || !isErrorObject(error)) return unusableBody(context, retryAfter);
+  const { code } = error;
   return gatewayError(
     context,
     code,

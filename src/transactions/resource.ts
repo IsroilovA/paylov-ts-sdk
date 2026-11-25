@@ -84,7 +84,8 @@ export interface TransactionsResource {
    *
    * @throws {@link PaylovApiError} `field_not_valid` (a date the gateway rejects).
    * @throws {@link PaylovProtocolError} `sdk_malformed_response` when two pages in a row bring no
-   * new transaction, so the gateway ignored `page`.
+   * new transaction: a guard against a gateway that ignores `page`, which also trips when payments
+   * made meanwhile push already-seen transactions onto two successive pages.
    *
    * @example
    * for await (const transaction of paylov.transactions.iterate({
@@ -121,6 +122,17 @@ export interface TransactionsResource {
  *
  * @yields Each transaction of the range, newest payment first.
  */
+/** The rows of `transactions` not yet in `seen`, each once, recorded in `seen` as they are taken. */
+function takeUnseen(transactions: readonly Transaction[], seen: Set<string>): Transaction[] {
+  const unseen: Transaction[] = [];
+  for (const transaction of transactions) {
+    if (seen.has(transaction.transactionId)) continue;
+    seen.add(transaction.transactionId);
+    unseen.push(transaction);
+  }
+  return unseen;
+}
+
 async function* iteratePages(
   fetchPage: (page: number) => Promise<TransactionPage>,
 ): AsyncGenerator<Transaction, void, undefined> {
@@ -129,13 +141,10 @@ async function* iteratePages(
   for (let page = 1; ; page += 1) {
     const { total, transactions } = await fetchPage(page);
     if (transactions.length === 0) return;
-    const fresh = transactions.filter(({ transactionId }) => !seen.has(transactionId));
+    const fresh = takeUnseen(transactions, seen);
     stalledPages = fresh.length === 0 ? stalledPages + 1 : 0;
     if (stalledPages > 1) throw stalledPage();
-    for (const transaction of fresh) {
-      seen.add(transaction.transactionId);
-      yield transaction;
-    }
+    yield* fresh;
     if (seen.size >= total) return;
   }
 }

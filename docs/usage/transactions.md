@@ -44,10 +44,10 @@ if (state.kind === 'refunded') await orders.markRefunded(orderId, state.refunded
 else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
 ```
 
-- `refunded` needs a sale (`isHold` false) reading `refunded` with `cancelledAt`; `not_refunded`
-  needs `paid` with no `cancelledAt`, a captured hold included. Everything else is `unknown`: other
-  statuses, and every hold reading `refunded`, which reads the same after a release as after a
-  refund. Confirm the refund of a captured hold in the Paylov business panel.
+- `refunded` needs a sale (`isHold` false) reading `refunded` with a valid `cancelledAt`;
+  `not_refunded` needs `paid` with no `cancelledAt`, a captured hold included. Everything else is
+  `unknown`: other statuses, and every hold reading `refunded`, which reads the same after a release
+  as after a refund. Confirm the refund of a captured hold in the Paylov business panel.
 - `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
   before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
 

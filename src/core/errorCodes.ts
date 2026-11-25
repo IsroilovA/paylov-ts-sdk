@@ -3,7 +3,8 @@
  * behavior is keyed by group.
  */
 export type PaylovKnownErrorCode =
-  // Credentials and access: fix configuration or credentials; never retry automatically.
+  // Credentials and access: fix configuration or credentials. Only an enveloped 401
+  // `permission_denied` is replayed, once, with a new token.
   | 'invalid_grant'
   | 'invalid_client'
   | 'invalid_request'
