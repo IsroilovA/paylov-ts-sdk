@@ -90,7 +90,7 @@ export interface Transaction {
 export interface TransactionPage {
   /** Matching transactions across all pages, not the length of this page. */
   readonly total: number;
-  /** Paid transactions only, newest payment first. */
+  /** Paid transactions only, in the gateway's order: roughly newest payment first, not strictly. */
   readonly transactions: readonly Transaction[];
 }
 

@@ -97,10 +97,13 @@ async function announceGate(): Promise<LiveGate> {
   const gate = await resolveGate();
   if (gate.enabled) {
     const { writes, refund, slow } = gate.config;
-    const lanes = Object.entries({ reads: true, writes, refund, slow })
-      .filter(([, enabled]) => enabled)
-      .map(([lane]) => lane);
-    note(`enabled: ${lanes.join(', ')}`);
+    const lanes = Object.entries({ reads: true, writes, refund, slow });
+    const named = (on: boolean): string =>
+      lanes
+        .filter(([, enabled]) => enabled === on)
+        .map(([lane]) => lane)
+        .join(', ') || 'none';
+    note(`enabled: ${named(true)}; gated off, their tests are not listed: ${named(false)}`);
   } else {
     note(`skipped: ${gate.reason}`);
   }

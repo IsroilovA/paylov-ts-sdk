@@ -129,7 +129,9 @@ of `11:28:28` (W c1608, c1629, c1631, c1665, c1697).
   disappears from the list (W c136, c346).
 - Merchant-wide; there is no user or status filter. Every other query key is silently ignored, e.g.
   `status`, `userId`, `limit`, `page_size` (W c137–c141, c145–c147, c155, c156).
-- Newest `date` first, i.e. by payment time (W c346).
+- Roughly newest `date` first, i.e. by payment time (W c346), but not strictly: in a 98-row read
+  across five pages at least one row had a later `date` than the row before it (live run
+  2026-11-25).
 - `totalTransaction` counts matching rows across all pages (W c153).
 - The page size is 20 on DEV: with `totalTransaction` 62, pages 1 to 4 held 20, 20, 20 and 2 rows (W
   c699–c702). Filtered results page the same way (W c709, c710). The docs state no page size.

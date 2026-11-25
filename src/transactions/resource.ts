@@ -54,8 +54,9 @@ export interface TransactionsResource {
   get(params: GetTransactionParams, options?: PaylovCallOptions): Promise<Transaction>;
 
   /**
-   * Lists the merchant's **paid** transactions, newest payment first, one page at a time. Moves no
-   * money.
+   * Lists the merchant's **paid** transactions in the gateway's order, one page at a time. Moves no
+   * money. The order is roughly newest payment first but not strictly: sort the rows where order
+   * matters.
    *
    * Created, held, failed and refunded transactions are not listed, so a refunded
    * payment drops out: this is a settled-sales feed, not an audit log, and never a way to
@@ -73,8 +74,8 @@ export interface TransactionsResource {
 
   /**
    * Every transaction `transactions.list` reports for the range, fetched page by page as the
-   * loop consumes it. Moves no money. The same feed: **paid** transactions only, newest payment
-   * first, with `fromDate` and `toDate` as Tashkent (UTC+5) calendar days. Paging stops once the
+   * loop consumes it. Moves no money. The same feed: **paid** transactions only, in the
+   * gateway's order, with `fromDate` and `toDate` as Tashkent (UTC+5) calendar days. Paging stops once the
    * transactions seen reach the reported `total`, or at an empty page. A transaction pushed to a
    * later page by a payment made while the loop runs is yielded once; a refund made meanwhile can
    * move an unseen one to an earlier page and out of reach, so this is not a snapshot.
@@ -120,7 +121,7 @@ export interface TransactionsResource {
  * seen row is skipped. A full page of new payments makes one page all seen, so only a second such
  * page in a row means the gateway ignored `page`.
  *
- * @yields Each transaction of the range, newest payment first.
+ * @yields Each transaction of the range, in the gateway's page order.
  */
 /** The rows of `transactions` not yet in `seen`, each once, recorded in `seen` as they are taken. */
 function takeUnseen(transactions: readonly Transaction[], seen: Set<string>): Transaction[] {

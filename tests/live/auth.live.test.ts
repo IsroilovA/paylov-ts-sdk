@@ -101,8 +101,13 @@ describe.skipIf(!gate.enabled)('token lifecycle', () => {
     observe('auth.close', {
       revokes: revokes.length,
       revokeStatus: revokes[0]?.httpStatus ?? null,
+      revokeErrorCode: revokes[0]?.errorCode ?? null,
     });
     expect(revokes.map((event) => event.httpStatus)).toEqual([200]);
+    expect(
+      revokes.map((event) => event.errorCode),
+      'the revoke is acknowledged',
+    ).toEqual([undefined]);
 
     const afterClose: unknown = await client.gateway.listBanks().catch((error: unknown) => error);
     expect(afterClose).toBeInstanceOf(PaylovClientClosedError);

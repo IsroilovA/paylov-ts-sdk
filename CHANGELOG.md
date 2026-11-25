@@ -201,6 +201,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `transactions.list` and `transactions.iterate` are documented as returning rows in the gateway's
+  order: roughly newest payment first, but not strictly. Sort the rows where order matters.
 - Recovery guidance in JSDoc and usage docs: replay an ambiguous `holds.create` with the same stored
   `externalId`, a new one only after a confirmed decline; a `split_not_found` right after an
   ambiguous `splits.create` needs another read; `sub_merchant_already_created` after an ambiguous

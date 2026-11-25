@@ -84,7 +84,7 @@ Messages that carry detail:
 | `rate_limit_exceeded` | `Too many requests. Retry after <N>s.`                                                                        | W (c012, c904)                  |
 
 `validation_error` messages and `data` details are generic validator text ("This field is
-required.", "String should have at least 14 characters") and never echo a request value (W, all 114
+required.", "String should have at least 14 characters") and never echo a request value (W, all 168
 captured `validation_error` responses).
 
 ### `data` shapes

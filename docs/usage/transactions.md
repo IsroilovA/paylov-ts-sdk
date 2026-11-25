@@ -68,6 +68,8 @@ for await (const transaction of paylov.transactions.iterate({
 - Only currently paid transactions appear, merchant-wide: a refunded payment disappears. Never use
   the list to reconcile one payment or to find refunds.
 - Dates are Tashkent calendar days, UTC+05:00; `toDate` is included.
+- Rows come in the gateway's order: roughly newest payment first, but not strictly. Sort them where
+  order matters.
 - `iterate` requests pages from 1 and stops at `total` rows or an empty page; the page size is
   undocumented. Two pages in a row with no new row throw `PaylovProtocolError` instead of looping.
   Pass `{ signal }` to stop it; breaking out of the loop stops it too. Use `list` for one page.
