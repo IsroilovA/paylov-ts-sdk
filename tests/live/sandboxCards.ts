@@ -6,9 +6,9 @@
  * message.
  */
 
-import { isPaylovApiError, type Card, type PaylovClient } from '../../src/index.js';
+import type { Card, PaylovClient } from '../../src/index.js';
 import { parseTestCards, type SandboxTestCard } from '../../scripts/sandboxConfig.mjs';
-import { env, liveUserId, note } from '../helpers/live.js';
+import { env, liveUserId, note, type LiveCleanup } from '../helpers/live.js';
 
 type Loaded<T> =
   | { readonly ok: true; readonly value: T }
@@ -86,35 +86,29 @@ export function uzcardTestCard(): Promise<Loaded<SandboxTestCard>> {
 export interface BoundCard {
   readonly card: Card;
   readonly userId: string;
-  /** Deletes the card; a card that is already gone counts as deleted. */
-  readonly release: () => Promise<void>;
 }
 
-/** Binds the test card for `lane`'s own user (start, then confirm with its fixed OTP). */
+/**
+ * Binds the test card for `lane`'s own user (start, then confirm with its fixed OTP). The card's
+ * deletion joins `cleanup` as soon as Paylov returns its id, so an unconfirmed card is deleted
+ * too.
+ */
 export async function bindTestCard(
   client: PaylovClient,
   testCard: SandboxTestCard,
   lane: string,
+  cleanup: LiveCleanup,
 ): Promise<BoundCard> {
   const userId = liveUserId(lane);
-  const started = await client.cards.startPanBinding({
+  const { cardId } = await client.cards.startPanBinding({
     userId,
     cardNumber: testCard.pan,
     cardExpiry: testCard.expiry,
   });
-  const card = await client.cards.confirmPanBinding({ cardId: started.cardId, otp: testCard.otp });
+  cleanup.add(`${lane}.cleanup.card`, () => client.cards.delete({ cardId }), 'card_not_found');
+  const card = await client.cards.confirmPanBinding({ cardId, otp: testCard.otp });
   note(`${lane}: bound the Uzcard test card`);
-  return {
-    card,
-    userId,
-    release: async () => {
-      try {
-        await client.cards.delete({ cardId: card.cardId });
-      } catch (error) {
-        if (!isPaylovApiError(error, 'card_not_found')) throw error;
-      }
-    },
-  };
+  return { card, userId };
 }
 
 async function loadPinfl(): Promise<Loaded<string>> {

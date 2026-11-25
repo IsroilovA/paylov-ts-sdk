@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { envelopeErrorCode, normalizeResponse } from '../../src/core/envelope.js';
+import { normalizeResponse } from '../../src/core/envelope.js';
 import { PaylovApiError, PaylovProtocolError } from '../../src/core/errors.js';
-import type { ResponseShape } from '../../src/core/types.js';
+import type { EndpointEffect, ResponseShape } from '../../src/core/types.js';
 import {
   capture,
   expectApiError,
@@ -24,8 +24,16 @@ function normalize(
   httpStatus = 200,
   shape: ResponseShape = 'envelope',
   retryAfter: string | null = null,
+  effect: EndpointEffect = 'read',
 ): unknown {
-  return normalizeResponse(body, { endpoint: ENDPOINT, httpStatus }, { shape }, retryAfter);
+  const normalized = normalizeResponse(
+    body,
+    { endpoint: ENDPOINT, httpStatus, effect },
+    shape,
+    retryAfter,
+  );
+  if (normalized.kind === 'failure') throw normalized.error;
+  return normalized.payload;
 }
 
 describe('success shapes', () => {
@@ -146,14 +154,54 @@ describe('unusable bodies', () => {
   });
 });
 
-describe('envelopeErrorCode', () => {
-  it('returns a validated code or undefined', () => {
-    expect(envelopeErrorCode(loadWire('envelope/bearer.expired.wire.json').body)).toBe(
-      'permission_denied',
+describe('incomplete error envelopes', () => {
+  const contradicting = { result: { id: 1 }, error: { code: 'permission_denied' } };
+  const withoutResult = { error: { code: 'permission_denied' } };
+
+  it.each([
+    ['a non-null result', contradicting],
+    ['no result', withoutResult],
+  ])(
+    'reports an error with %s as a protocol error whose write outcome is unknown',
+    (_label, body) => {
+      const error = capture(() => normalize(body, 401, 'envelope', null, 'money'));
+      expect(error).toBeInstanceOf(PaylovProtocolError);
+      expect(error).toMatchObject({
+        code: 'sdk_unexpected_status',
+        httpStatus: 401,
+        isOutcomeUnknown: true,
+      });
+      expect(capture(() => normalize(body, 200))).toMatchObject({
+        code: 'sdk_malformed_response',
+        isOutcomeUnknown: false,
+      });
+    },
+  );
+});
+
+describe('Retry-After on a 429', () => {
+  it.each([
+    ['a plain-text body', 'Too Many Requests', 'sdk_unexpected_status'],
+    ['no body', undefined, 'sdk_unexpected_status'],
+    [
+      'an enveloped invalid_grant',
+      { result: null, error: { code: 'invalid_grant' } },
+      'invalid_grant',
+    ],
+  ])('is read with %s', (_label, body, code) => {
+    expect(capture(() => normalize(body, 429, 'flat', '180'))).toMatchObject({
+      code,
+      httpStatus: 429,
+      retryAfterSeconds: 180,
+    });
+  });
+
+  it('is not read for another status', () => {
+    const error = capture(() => normalize('Unavailable', 503, 'flat', '180'));
+    expect(recordOf(error)['retryAfterSeconds']).toBeUndefined();
+    const declined = capture(() =>
+      normalize({ result: null, error: { code: 'invalid_grant' } }, 401, 'flat', '180'),
     );
-    expect(envelopeErrorCode({ error: { code: 'Permission Denied' } })).toBeUndefined();
-    expect(envelopeErrorCode({ error: { code: `a${'b'.repeat(128)}` } })).toBeUndefined();
-    expect(envelopeErrorCode({ error: null })).toBeUndefined();
-    expect(envelopeErrorCode('x')).toBeUndefined();
+    expect(recordOf(declined)['retryAfterSeconds']).toBeUndefined();
   });
 });

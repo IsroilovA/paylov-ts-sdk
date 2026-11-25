@@ -7,10 +7,12 @@ import {
   type GetHoldParams,
   type Hold,
   type HoldCaptured,
+  type HoldCreated,
   type HoldStatus,
   type PaylovClient,
   type TransactionReference,
 } from '../../src/index.js';
+import type { IsEqual } from './exact.js';
 
 declare const client: PaylovClient;
 
@@ -23,10 +25,17 @@ const create = {
   account: { bookingId: 'B-1', nights: 2 },
 } satisfies CreateHoldParams;
 
-const created: Promise<TransactionReference> = client.holds.create(create, {
+const created: Promise<HoldCreated> = client.holds.create(create, {
   signal: AbortSignal.timeout(5_000),
 });
 void created;
+async function storeHold(): Promise<void> {
+  const hold = await client.holds.create(create);
+  const deadline: Date = hold.clientCaptureDeadline;
+  const durationMinutes: number = hold.durationMinutes;
+  void [hold.transactionId, deadline, durationMinutes];
+}
+void storeHold;
 
 declare const withoutExternalId: Omit<CreateHoldParams, 'externalId'>;
 // @ts-expect-error externalId is the reconciliation key and is required
@@ -85,11 +94,11 @@ async function reconcile(): Promise<void> {
   const amountTiyin: number = hold.amountTiyin;
   const serviceId: string = hold.serviceId;
   void [status, unknownStatus, capturedAt, releasedAt, amountTiyin, serviceId];
-  // @ts-expect-error a miss throws, so get never returns null
-  const missing: null = await client.holds.get({ transactionId: hold.transactionId });
-  void missing;
 }
 void reconcile;
+// A miss throws, so get resolves exactly a hold, never null.
+const getResolvesHold: IsEqual<Awaited<ReturnType<PaylovClient['holds']['get']>>, Hold> = true;
+void getResolvesHold;
 
 declare const read: Hold;
 declare const deadline: Date;

@@ -5,8 +5,8 @@ import { decodeBanks, decodeStatus } from './decoders.js';
 import type { Bank } from './types.js';
 
 export const ENDPOINTS = {
-  getStatus: { method: 'GET', route: '/merchant/status/', shape: 'flat' },
-  listBanks: { method: 'GET', route: '/merchant/bankList/', shape: 'array' },
+  getStatus: { method: 'GET', route: '/merchant/status/', shape: 'flat', effect: 'read' },
+  listBanks: { method: 'GET', route: '/merchant/bankList/', shape: 'array', effect: 'read' },
 } as const;
 
 /** The `paylov.gateway` namespace. */
@@ -14,7 +14,7 @@ export interface GatewayResource {
   /**
    * Checks that the gateway answers (`GET /merchant/status/`). It sends no token and Paylov
    * validates none, so it proves neither the credentials nor the account: use it as a liveness
-   * probe only. Resolves for `{"status":"ok"}`; any other answer throws.
+   * probe only. Moves no money. Resolves for `{"status":"ok"}`; any other answer throws.
    *
    * @throws {@link PaylovConnectionError} when the gateway is unreachable or times out.
    * @throws {@link PaylovProtocolError} `sdk_malformed_response` for any other success body.
@@ -31,7 +31,7 @@ export interface GatewayResource {
 
   /**
    * Lists the banks Paylov knows (`GET /merchant/bankList/`). Each `bankId` is a string that
-   * matches a card's `bankId`.
+   * matches a card's `bankId`. Moves no money.
    *
    * @throws {@link PaylovApiError} `invalid_grant` when the credentials are rejected.
    *

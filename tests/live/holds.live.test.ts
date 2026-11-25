@@ -13,11 +13,11 @@ import type { Hold } from '../../src/index.js';
 import {
   expectRecent,
   externalId,
+  LiveCleanup,
   liveClient,
   liveGate,
   observe,
   refused,
-  settle,
 } from '../helpers/live.js';
 import { bindTestCard, uzcardTestCard, type BoundCard } from './sandboxCards.js';
 
@@ -43,11 +43,16 @@ describe.skipIf(!gate.enabled)('holds reads', () => {
   const client = liveClient(gate.config);
 
   it('get of an unknown transactionId or externalId throws transaction_not_found', async () => {
-    const miss = { code: 'transaction_not_found' };
-    await expect(client.holds.get({ transactionId: randomUUID() })).rejects.toMatchObject(miss);
-    await expect(client.holds.get({ externalId: externalId('unknown') })).rejects.toMatchObject(
-      miss,
+    const byId = await refused(
+      'holds.get.unknown-transaction',
+      client.holds.get({ transactionId: randomUUID() }),
     );
+    expect(byId.code).toBe('transaction_not_found');
+    const byExternal = await refused(
+      'holds.get.unknown-external',
+      client.holds.get({ externalId: externalId('unknown') }),
+    );
+    expect(byExternal.code).toBe('transaction_not_found');
   });
 });
 
@@ -56,8 +61,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
   const { config } = gate;
   const client = liveClient(config);
   const card = testCard.value;
-  /** Holds this lane created and has not seen captured or released. */
-  const open = new Set<string>();
+  const cleanup = new LiveCleanup();
   let bound: BoundCard | undefined;
   let capturedHold: { readonly transactionId: string; readonly externalId: string } | undefined;
 
@@ -79,7 +83,12 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
       durationMinutes,
       externalId: reference,
     });
-    open.add(transactionId);
+    // Release answers hold_not_found once a hold is captured, released or expired.
+    cleanup.add(
+      'holds.cleanup.release',
+      () => client.holds.release({ transactionId }),
+      'hold_not_found',
+    );
     return { transactionId, externalId: reference };
   }
 
@@ -90,15 +99,10 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
   }
 
   beforeAll(async () => {
-    bound = await bindTestCard(client, card, 'holds');
+    bound = await bindTestCard(client, card, 'holds', cleanup);
   });
 
-  afterAll(async () => {
-    for (const transactionId of open) {
-      await settle('holds.cleanup.release', client.holds.release({ transactionId }));
-    }
-    await bound?.release();
-  });
+  afterAll(() => cleanup.run());
 
   it('create, read back by externalId, capture in part, read back captured', async () => {
     const created = await createHold('capture');
@@ -122,7 +126,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
       transactionId: created.transactionId,
       amountTiyin: CAPTURE_TIYIN,
     });
-    open.delete(created.transactionId);
     capturedHold = created;
     expect(captured.transactionId === created.transactionId, 'capture transactionId').toBe(true);
     expect(captured.cardId === boundCard().card.cardId, 'capture cardId').toBe(true);
@@ -145,7 +148,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
   it('release cancels an open hold; a repeat is hold_not_found', async () => {
     const created = await createHold('release');
     const released = await client.holds.release({ transactionId: created.transactionId });
-    open.delete(created.transactionId);
     expect(released.transactionId === created.transactionId, 'release transactionId').toBe(true);
 
     const cancelled = await readHold(created.transactionId);
@@ -199,7 +201,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
         client.holds.release({ transactionId: created.transactionId }),
       );
       expect(release.code).toBe('hold_not_found');
-      open.delete(created.transactionId);
     },
     EXPIRY_WAIT_MS + 60_000,
   );

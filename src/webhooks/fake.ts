@@ -7,6 +7,7 @@ import type { WebhookEvent } from './types.js';
 export function encodeWebhookEvent(event: WebhookEvent): unknown {
   const params = {
     transaction_id: event.transactionId,
+    status: 'cancelled',
     account: event.account,
     amount_in_tiyin: event.amountTiyin,
     cancel_time: unixSecondsOf(event.cancelledAt, 'cancelledAt'),

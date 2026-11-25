@@ -1,20 +1,17 @@
 /** Compile-time contracts for `client.cards`. */
 
-import {
+import type {
+  Card,
+  CardProcessing,
+  DeleteCardParams,
+  GetCardParams,
+  PanBindingStarted,
   PaylovClient,
-  type CardProcessing,
-  type DeleteCardParams,
-  type GetCardParams,
-  type StartPanBindingParams,
+  StartPanBindingParams,
 } from '../../src/index.js';
+import type { IsEqual } from './exact.js';
 
-const client = new PaylovClient({
-  baseUrl: 'https://gateway.example',
-  consumerKey: 'EXAMPLE-CONSUMER-KEY-NOT-A-REAL-CREDENTIAL',
-  consumerSecret: 'EXAMPLE-CONSUMER-SECRET-NOT-A-REAL-CREDENTIAL',
-  username: 'EXAMPLE-USERNAME-NOT-A-REAL-CREDENTIAL',
-  password: 'EXAMPLE-PASSWORD-NOT-A-REAL-CREDENTIAL',
-});
+declare const client: PaylovClient;
 const cardId = '5eed0000-0000-4000-8000-000000000001';
 
 export async function phoneCheckAnswersBoolean(): Promise<boolean> {
@@ -35,6 +32,16 @@ export const missingExpiry: StartPanBindingParams = withoutExpiry;
 // @ts-expect-error the SDK sends no OTP SMS settings
 export const withSms: StartPanBindingParams = { ...startParams, sms: { templateId: 1 } };
 
+export async function bindCard(otp: string): Promise<readonly Card[]> {
+  const started: PanBindingStarted = await client.cards.startPanBinding(startParams);
+  const confirmed: Promise<Card> = client.cards.confirmPanBinding({ cardId: started.cardId, otp });
+  void confirmed;
+  const cards = await client.cards.list({ userId: startParams.userId });
+  // @ts-expect-error the list is read-only
+  void cards.push;
+  return cards;
+}
+
 export async function removalResolvesVoid(): Promise<void> {
   const removal: Promise<void> = client.cards.delete(
     { cardId },
@@ -52,6 +59,12 @@ export async function cardStateIsFlat(params: GetCardParams): Promise<boolean> {
   void status;
   return card.isActive && card.isSmsEnabled && card.processingStatus === 'active';
 }
+
+// A miss throws, so get resolves exactly a card, never null.
+export const getResolvesCard: IsEqual<
+  Awaited<ReturnType<PaylovClient['cards']['get']>>,
+  Card
+> = true;
 
 export const deleteParams = { cardId } satisfies DeleteCardParams;
 

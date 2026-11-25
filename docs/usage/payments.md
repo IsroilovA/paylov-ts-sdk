@@ -20,6 +20,10 @@ await orders.saveTransaction('A-1024', transactionId);
 await paylov.payments.pay({ transactionId, cardId, userId: 'user-42' });
 ```
 
+- `account` is your JSON, sent as given: plain objects, arrays, strings, finite numbers, booleans
+  and `null`. A property set to `undefined` is left out. Anything else (`NaN`, a `BigInt`, a `Date`,
+  a function, an `undefined` array entry, a cycle, or nesting deeper than 64 levels) fails with
+  `sdk_invalid_input` before any request.
 - Store the `transactionId` with your order before calling `pay`: it is the key for reconciliation
   and for any repeat.
 - After a decline, read the transaction: `failed` can never be paid again; `created` can be paid
@@ -31,6 +35,8 @@ Your server handles the full card number, which puts it in PCI scope: take it fr
 never log or store it.
 
 ```ts
+import { sumToTiyin } from '@isroilov_an/paylov';
+
 const started = await paylov.payments.startPanPayment({
   cardNumber: cardNumberFromSecureInput,
   cardExpiry: cardExpiryFromSecureInput, // YYMM
@@ -60,4 +66,7 @@ await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, 
 - Keep refunds an admin action: Paylov documents no fee terms.
 
 After an ambiguous failure of `pay`, `confirmPanPayment` or `refund`, follow
-[errors.md](errors.md#recovery-after-an-ambiguous-failure).
+[errors.md](errors.md#recovery-after-an-ambiguous-failure). Settle a refund with `readRefundState`
+([transactions.md](transactions.md#refund-state)), never with the status alone: a released hold also
+reads `refunded`. For a captured hold, `readRefundState` gives `not_refunded` while it still reads
+`paid` and `unknown` once it reads `refunded`; confirm that refund in the Paylov business panel.

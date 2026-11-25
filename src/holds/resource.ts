@@ -1,11 +1,8 @@
 import { readCall, send } from '../core/call.js';
 import { MINUTE_MS, readClock, type Clock } from '../core/time.js';
+import type { Params } from '../core/params.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
-import {
-  decodeTransactionReference,
-  readTransactionLookup,
-  type TransactionReference,
-} from '../shared/transactions.js';
+import { decodeTransactionReference, type TransactionReference } from '../shared/transactions.js';
 import { decodeHold, decodeHoldCaptured } from './decoders.js';
 import type {
   CaptureHoldParams,
@@ -22,24 +19,25 @@ export const ENDPOINTS = {
     method: 'POST',
     route: '/merchant/payment/hold/create/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'money',
   },
   capture: {
     method: 'POST',
     route: '/merchant/payment/hold/charge/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'money',
   },
   release: {
     method: 'POST',
     route: '/merchant/payment/hold/dismiss/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'money',
   },
   get: {
     method: 'GET',
     route: '/merchant/payment/hold/status/',
     shape: 'envelope',
+    effect: 'read',
   },
 } as const;
 
@@ -56,14 +54,16 @@ export interface HoldsResource {
    *
    * Every create that reaches Paylov uses up its `externalId`, a declined one too: the declined
    * record reads `declined` in `holds.get`, and a new create with that id answers
-   * `external_id_already_exists`. Retry a decline with a new `externalId`.
+   * `external_id_already_exists`. Only a new attempt after a confirmed decline or a release takes a
+   * new `externalId`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, the hold may exist, even after an abort. Read
-   * `holds.get({ externalId })` and pass the record to `readHoldState`, with the
-   * `transactions.get` read of a `declined` record: only a `held` record is the hold, and the
-   * `declined` state means create again with a new `externalId`. `null` is not proof that the
-   * create did not run: read again after a delay, then call `create` again with the same
-   * `externalId`. A repeat answers `external_id_already_exists` when a record exists: read it again.
+   * `holds.get({ externalId })` after a backoff and pass the record to `readHoldState`, with the
+   * `transactions.get` read of a `declined` record: only a `held` record is the hold, and only the
+   * `declined` state allows a new attempt with a new `externalId`. `transaction_not_found` right
+   * after the failure proves nothing: read again after a backoff, then call `create` again with the
+   * same stored `externalId`, never a new one. A repeat answers `external_id_already_exists` when a
+   * record exists: read it again.
    *
    * @throws {@link PaylovApiError} `insufficient_funds` or another card decline,
    * `external_id_already_exists` (a hold, released or declined, has this id), `card_not_found`
@@ -75,7 +75,7 @@ export interface HoldsResource {
    *   cardId: booking.cardId,
    *   amountTiyin: 150_000, // 1 500.00 SUM
    *   durationMinutes: 24 * 60,
-   *   externalId: booking.holdExternalId, // stored before the call, new for every attempt
+   *   externalId: booking.holdExternalId, // stored before the call, reused on an ambiguous replay
    * });
    * await bookings.saveHold(booking.id, hold.transactionId, hold.clientCaptureDeadline);
    */
@@ -126,14 +126,14 @@ export interface HoldsResource {
   release(params: ReleaseHoldParams, options?: PaylovCallOptions): Promise<TransactionReference>;
 
   /**
-   * Looks a hold up by exactly one of `transactionId` or `externalId`. A declined create also
-   * leaves a record, `declined`; its `transactions.get` read `failed` confirms the decline. An
-   * expired hold can still read `held`: compare `now` with the `clientCaptureDeadline` from
-   * `holds.create`, or pass both to `readHoldState`.
+   * Looks a hold up by exactly one of `transactionId` or `externalId`. Moves no money. A declined
+   * create also leaves a record, `declined`; its `transactions.get` read `failed` confirms the
+   * decline. An expired hold can still read `held`: compare `now` with the `clientCaptureDeadline`
+   * from `holds.create`, or pass both to `readHoldState`.
    *
-   * @throws {@link PaylovApiError} `transaction_not_found` when the gateway knows no such hold. Right
-   * after an ambiguous `create` it is not proof that the create did not run: read again after a
-   * delay.
+   * @throws {@link PaylovApiError} `transaction_not_found` when the gateway knows no such hold.
+   * Right after an ambiguous `create` it is not proof that the create did not run: read again
+   * after a delay.
    *
    * @example
    * const hold = await paylov.holds.get({ externalId: booking.holdExternalId });
@@ -189,9 +189,16 @@ export function createHoldsResource(http: HttpClient, clock: Clock): HoldsResour
     async get(params, options) {
       const method = 'holds.get';
       const { input, signal } = readCall(params, options, method);
-      // Which key wins when both are sent is unobserved, so the SDK never sends both.
-      const query = readTransactionLookup(input);
+      // Paylov's answer to both keys is unobserved (docs/paylov/holds.md#status): send only one.
+      const query = readHoldLookup(input);
       return send(http, ENDPOINTS.get, { query, signal }, decodeHold);
     },
   };
+}
+
+/** Reads exactly one of `transactionId` or `externalId`; the result carries only the key given. */
+export function readHoldLookup(input: Params): GetHoldParams {
+  return input.exclusive(['transactionId', 'externalId']) === 'transactionId'
+    ? { transactionId: input.string('transactionId') }
+    : { externalId: input.string('externalId') };
 }

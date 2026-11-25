@@ -2,15 +2,12 @@ import {
   optionalEntry,
   tashkentDateTimeOf,
   decodeWholeSum,
-  type FakeCodec,
   type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
+  type FakeSpecTable,
 } from '../core/fake.js';
 import type { Params } from '../core/params.js';
 import type { PaylovJsonObject } from '../core/types.js';
 import { encodeTransactionReference } from '../shared/fake.js';
-import type { TransactionReference } from '../shared/transactions.js';
 import { ENDPOINTS, type PaymentsResource } from './resource.js';
 import type {
   ConfirmPanPaymentParams,
@@ -31,7 +28,10 @@ function encodePaymentRefunded(refund: PaymentRefunded): unknown {
 }
 
 function encodePanPaymentStarted(started: PanPaymentStarted): unknown {
-  return { ...encodeTransactionReference(started), otpSentPhone: started.otpSentPhone };
+  return {
+    ...encodeTransactionReference(started),
+    otpSentPhone: started.otpSentPhone,
+  };
 }
 
 /** An absent `account` is sent as `{}`, so an empty one reads as absent. */
@@ -76,49 +76,30 @@ function decodeConfirmPanPaymentRequest({ body }: FakeRequest): ConfirmPanPaymen
   };
 }
 
-export const PAYMENT_CODECS: {
-  readonly create: FakeCodec<TransactionReference, CreatePaymentParams>;
-  readonly pay: FakeCodec<TransactionReference, PayPaymentParams>;
-  readonly refund: FakeCodec<PaymentRefunded, RefundPaymentParams>;
-} = {
-  create: { encode: encodeTransactionReference, decodeRequest: decodeCreateRequest },
-  pay: { encode: encodeTransactionReference, decodeRequest: decodePayRequest },
-  refund: { encode: encodePaymentRefunded, decodeRequest: decodeRefundRequest },
+export const PAYMENT_FAKES: FakeSpecTable<PaymentsResource> = {
+  create: {
+    endpoint: ENDPOINTS.create,
+    encode: encodeTransactionReference,
+    decodeRequest: decodeCreateRequest,
+  },
+  pay: {
+    endpoint: ENDPOINTS.pay,
+    encode: encodeTransactionReference,
+    decodeRequest: decodePayRequest,
+  },
+  refund: {
+    endpoint: ENDPOINTS.refund,
+    encode: encodePaymentRefunded,
+    decodeRequest: decodeRefundRequest,
+  },
+  startPanPayment: {
+    endpoint: ENDPOINTS.startPanPayment,
+    encode: encodePanPaymentStarted,
+    decodeRequest: decodeStartPanPaymentRequest,
+  },
+  confirmPanPayment: {
+    endpoint: ENDPOINTS.confirmPanPayment,
+    encode: encodeTransactionReference,
+    decodeRequest: decodeConfirmPanPaymentRequest,
+  },
 };
-
-export function createPaymentsFake(
-  script: Scripter<'payments', PaymentsResource>,
-): PaylovFakeSurface<PaymentsResource> {
-  return {
-    create: script(
-      'payments.create',
-      ENDPOINTS.create,
-      PAYMENT_CODECS.create.encode,
-      PAYMENT_CODECS.create.decodeRequest,
-    ),
-    pay: script(
-      'payments.pay',
-      ENDPOINTS.pay,
-      PAYMENT_CODECS.pay.encode,
-      PAYMENT_CODECS.pay.decodeRequest,
-    ),
-    refund: script(
-      'payments.refund',
-      ENDPOINTS.refund,
-      PAYMENT_CODECS.refund.encode,
-      PAYMENT_CODECS.refund.decodeRequest,
-    ),
-    startPanPayment: script(
-      'payments.startPanPayment',
-      ENDPOINTS.startPanPayment,
-      encodePanPaymentStarted,
-      decodeStartPanPaymentRequest,
-    ),
-    confirmPanPayment: script(
-      'payments.confirmPanPayment',
-      ENDPOINTS.confirmPanPayment,
-      encodeTransactionReference,
-      decodeConfirmPanPaymentRequest,
-    ),
-  };
-}

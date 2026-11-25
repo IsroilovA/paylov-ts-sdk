@@ -31,8 +31,18 @@ describe('readCall', () => {
   });
 });
 
-const STATUS = { method: 'GET', route: '/merchant/status/', shape: 'envelope' } as const;
-const CARD = { method: 'GET', route: '/merchant/userCard/{cardId}/', shape: 'envelope' } as const;
+const STATUS = {
+  method: 'GET',
+  route: '/merchant/status/',
+  shape: 'envelope',
+  effect: 'read',
+} as const;
+const CARD = {
+  method: 'GET',
+  route: '/merchant/userCard/{cardId}/',
+  shape: 'envelope',
+  effect: 'read',
+} as const;
 // Compile-time only: every route placeholder needs a path value.
 expectTypeOf<EndpointRequest<typeof CARD>['path']>().toEqualTypeOf<
   Readonly<Record<'cardId', string>>
@@ -60,7 +70,12 @@ describe('send', () => {
 
   it('decodes the other shapes under body', async () => {
     const { http } = setupResource((transport) => transport, [{ body: { status: 1 } }]);
-    const revoke = { method: 'POST', route: '/merchant/oauth2/revoke/', shape: 'flat' } as const;
+    const revoke = {
+      method: 'POST',
+      route: '/merchant/oauth2/revoke/',
+      shape: 'flat',
+      effect: 'write',
+    } as const;
     const error = await captureAsync(send(http, revoke, {}, fieldOf('status', asNonEmptyString)));
     expect(error).toMatchObject({ code: 'sdk_malformed_response', path: 'body.status' });
   });

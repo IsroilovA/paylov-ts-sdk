@@ -6,7 +6,7 @@ import { readReceiptItem } from '../shared/receiptItems.js';
 import {
   decodeActivityTypeCheck,
   decodeReceiptLookup,
-  decodeReceiptRefunded,
+  decodeFiscalReceiptRefunded,
   decodeFiscalReceiptRegistered,
 } from './decoders.js';
 import type {
@@ -24,17 +24,25 @@ export const ENDPOINTS = {
     method: 'POST',
     route: '/merchant/fiscalization/register/',
     shape: 'envelope',
+    effect: 'write',
   },
   getReceipt: {
     method: 'GET',
     route: '/merchant/fiscalization/status/',
     shape: 'envelope',
+    effect: 'read',
   },
-  refundReceipt: { method: 'POST', route: '/merchant/fiscalization/refund/', shape: 'envelope' },
+  refundReceipt: {
+    method: 'POST',
+    route: '/merchant/fiscalization/refund/',
+    shape: 'envelope',
+    effect: 'write',
+  },
   checkActivityType: {
     method: 'POST',
     route: '/merchant/fiscalization/activity-types/',
     shape: 'envelope',
+    effect: 'read',
   },
 } as const;
 
@@ -57,9 +65,9 @@ export const WIRE_ACTIVITY_TYPES: Readonly<Record<FiscalActivityType, number>> =
  */
 export interface FiscalizationResource {
   /**
-   * Has Paylov register a fiscal receipt with the OFD for a paid card payment. Moves no money. Item
-   * prices are integer tiyin; the lines, each `(priceTiyin - discountTiyin) * count`, must total
-   * the transaction amount.
+   * Has Paylov register a fiscal receipt with the OFD for a paid card payment. Moves no money.
+   * Item prices are integer tiyin; the lines, each `(priceTiyin - discountTiyin) * count`, must
+   * total the transaction amount.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before registering again;
    * `null` means nothing is registered yet. `ofd_check_already_generated` on a repeated call
@@ -68,9 +76,9 @@ export interface FiscalizationResource {
    * and register again.
    *
    * @throws {@link PaylovApiError} `ofd_check_already_generated`, `transaction_not_found`,
-   *   `receipt_not_available_for_operation` (not paid), `invalid_amount` (item total),
-   *   `ofd_commitent_or_subcommission_not_active` (an item's TIN or PINFL has no active OFD
-   *   contract), `ofd_error`, `fiscal_receipt_not_generated`, `permission_denied`.
+   * `receipt_not_available_for_operation` (not paid), `invalid_amount` (item total),
+   * `ofd_commitent_or_subcommission_not_active` (an item's TIN or PINFL has no active OFD
+   * contract), `ofd_error`, `fiscal_receipt_not_generated`, `permission_denied`.
    *
    * @example
    * const receipt = await paylov.fiscalization.registerReceipt({
@@ -121,8 +129,8 @@ export interface FiscalizationResource {
    * refunding again. `ofd_check_already_generated` means a refund receipt exists.
    *
    * @throws {@link PaylovApiError} `ofd_check_already_generated` (a refund receipt exists),
-   *   `receipt_not_available_for_operation` (a card payment that is not refunded), `ofd_check_not_found`
-   *   (unknown `receiptId`), `permission_denied` (fiscalization not enabled).
+   * `receipt_not_available_for_operation` (a card payment that is not refunded),
+   * `ofd_check_not_found` (unknown `receiptId`), `permission_denied` (fiscalization not enabled).
    *
    * @example
    * const { refund } = await paylov.fiscalization.refundReceipt({ receiptId: sale.receiptId });
@@ -179,7 +187,7 @@ export function createFiscalizationResource(http: HttpClient): FiscalizationReso
       const method = 'fiscalization.refundReceipt';
       const { input, signal } = readCall(params, options, method);
       const body = { receiptId: input.integer('receiptId') };
-      return send(http, ENDPOINTS.refundReceipt, { body, signal }, decodeReceiptRefunded);
+      return send(http, ENDPOINTS.refundReceipt, { body, signal }, decodeFiscalReceiptRefunded);
     },
 
     async checkActivityType(params, options) {

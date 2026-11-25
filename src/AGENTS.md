@@ -6,8 +6,8 @@ Production source.
   public API.
 - Reject missing or mistyped runtime caller values with SDK errors before logging, authentication,
   or I/O. Check closed request literals; keep response unions open with `| (string & {})`.
-- Check caller input only for presence, type, the money invariant, and path or link safety. Never
-  copy Paylov's value rules (minimums, maximums, lengths, formats, id shapes)
+- Check caller input only for presence, type, the money invariant, and path safety. Never copy
+  Paylov's value rules (minimums, maximums, lengths, formats, id shapes)
   ([rationale](../docs/architecture.md#responses-and-errors)).
 - Keep transport and envelope results `unknown` until the owning decoder establishes a type. Generic
   type arguments and assertions are not decoders.
@@ -15,23 +15,30 @@ Production source.
 ## Features
 
 - A feature folder holds `resource.ts` (the `<X>Resource` interface and its factory), `types.ts`
-  (public types, type-only imports), `decoders.ts` when it decodes records, and `fake.ts`, which
-  encodes each method's result as the inverse of its decoder and decodes each request back into the
-  method's params as the inverse of its encoding; methods sharing an endpoint each pass a request
-  matcher. Only fakes and `testing/` import a fake. Code two features use lives in `shared/`.
-- A surface outside `PaylovClient` enters through `client.ts` (a class), `link.ts` (a pure function)
-  or `receiver.ts`. A pure decision over a feature's read result lives in that feature's `state.ts`.
+  (public types, type-only imports), `decoders.ts` when it decodes records, and `fake.ts`. Only
+  fakes and `testing/` import a fake. Code two features use lives in `shared/`.
+- The `fake.ts` of a surface that sends requests exports one `FakeSpecTable`, an entry per method:
+  the method's `ENDPOINTS` entry, an encoder that inverts its decoder, a request decoder that
+  inverts its encoding, a matcher when methods share an endpoint, and the success body of a miss its
+  decoder reads as an error. Describe a method nowhere else; the gateway serves scripted and
+  simulated answers from it.
+- A surface outside `PaylovClient` enters through `client.ts` (a class) or `receiver.ts`. A pure
+  decision over a feature's read result lives in that feature's `state.ts`.
 - Each surface declares its endpoints once, in an exported `ENDPOINTS` table of `as const`
   `Endpoint` literals. The resource and the testing fake both read it; never restate a route,
   method, or shape.
 - Key each `ENDPOINTS` entry by the method that sends it; only an endpoint several methods share
-  takes its wire name.
+  takes its wire name. Methods sharing a route with different effects take one entry each.
+- Declare each endpoint's `effect` by what the call changes: `read` only when it changes nothing,
+  `money` when it charges, reserves, captures, releases, refunds or splits funds, `write` otherwise.
+  It alone decides `isOutcomeUnknown`; never special-case a method instead.
 - A method opens with
   `const method = '<ns>.<name>'; const { input, signal } = readCall(params, options, method);`,
   builds the body or query, and returns `send(http, ENDPOINTS.x, request, decodeX)` from
   `core/call.ts`, passing identifiers as `path` values. Add no local request, path, or recovery
   wrappers.
-- Results and lookups of a transaction use the `shared/transactions.ts` types and readers.
+- Decode a result that only names a transaction with `decodeTransactionReference`, and map wire
+  status spellings with `statusDecoder`, both from `shared/transactions.ts`; add no feature copies.
 - Response decoders are module-level `decodeX: Decoder<T>` constants in `decoders.ts`; each method
   calls exactly one. Only a decoder that checks an echoed request id is a factory
   (`decodeRequestedTransaction(transactionId)`). `asX` names are reserved for core primitives.
@@ -54,7 +61,8 @@ Production source.
 
 - Params are `<Verb><Noun>Params`, one per method. An action result is `<Noun><Participle>`
   (`HoldCaptured`) or the shared `TransactionReference`; a read result is the entity noun.
-- Booleans read as predicates (`isActive`, `isHold`).
+- Booleans read as predicates (`isActive`, `isHold`); option flags may be imperatives (`persist`,
+  `simulate`).
 - The `Paylov` prefix marks only classes, configuration, errors, and core cross-cutting types.
 
 ## JSDoc
@@ -71,5 +79,6 @@ Production source.
 ## Comments
 
 - Comment only constraints the code cannot express, such as a Paylov quirk or a security reason.
-  Internal `//` comments cite `[OPEN Qn]` for undocumented behavior. No narration, restated code,
-  history, or file-header one-liners that restate the feature layout.
+  Internal `//` comments on undocumented behavior cite the evidence page, or an `[OPEN Qn]` when one
+  exists. No narration, restated code, history, or file-header one-liners that restate the feature
+  layout.

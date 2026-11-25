@@ -42,6 +42,7 @@ const fake: PaylovPort = {
 
 To test a failure branch, throw the SDK's own error, e.g.
 `new PaylovApiError({ code: 'insufficient_funds', httpStatus: 400, endpoint: 'POST /merchant/receipts/pay/' })`.
+Pass `isOutcomeUnknown: true` to test the reconciliation branch; it defaults to `false`.
 
 ## Script the fake gateway
 
@@ -63,11 +64,15 @@ fake.assertDone();
 - Each SDK method has a script with `reply`, `fail`, `disconnect` and `hang`. Scripting a value or a
   failure the gateway cannot send throws `TypeError`.
 - A lookup miss is a failure: `fake.holds.get.fail('transaction_not_found')`.
-  `fake.onboarding.checkToken.reply(false)` sends the gateway's `invalid_or_expired` answer.
+  `fake.transactions.get.fail('transaction_not_found')` answers as Paylov does, with an empty list
+  at HTTP 200 that the SDK reads as the miss: the error has `httpStatus` 200 and takes no failure
+  details. `fake.onboarding.checkToken.reply(false)` sends the gateway's `invalid_or_expired`
+  answer.
 - A status outside the SDK's vocabulary passes through; a raw gateway spelling the SDK renames, such
   as a hold's `'paid'`, throws `TypeError`.
 - An unscripted request fails with `fake_unscripted`, and a request the fake cannot read back into
-  its method's params with `fake_unreadable_request`, both HTTP 501; `assertDone()` reports each.
+  its method's params with `fake_unreadable_request`, both HTTP 501; `assertDone()` reports each by
+  its route template, such as `GET /merchant/userCard/getCard/{cardId}/`.
 - `hang()` ends the call with `sdk_timeout` after `timeoutMs`, or `sdk_aborted` when its signal
   aborts.
 - `PaylovOnboarding` takes `fake.onboardingConfig` and is scripted through `fake.onboarding`.
@@ -118,6 +123,9 @@ to 400. An unserved token answer fails `assertDone()`.
 and answers unscripted calls from that state, so a test can run a whole flow:
 
 ```ts
+import { PaylovClient } from '@isroilov_an/paylov';
+import { PaylovFakeGateway } from '@isroilov_an/paylov/testing';
+
 let now = new Date('2026-11-12T10:00:00Z');
 const fake = new PaylovFakeGateway({ simulate: true, now: () => now });
 const paylov = new PaylovClient(fake.clientConfig); // hold deadlines use the same clock
@@ -135,13 +143,27 @@ fake.assertDone();
 - It covers `cards.get`, `cards.list`, `cards.delete`, `payments.create`, `payments.pay`,
   `payments.refund`, `transactions.get`, `transactions.list` (and so `iterate`) and the four hold
   methods. Others still need a script.
-- It reproduces only what Paylov's test environment has shown: one capture per hold, a partial
-  capture ends the hold, an expired hold still reads `held`, capture after expiry fails with
-  `hold_time_expired` and releases the hold, an `externalId` is never reused, a second pay answers
-  `transaction_already_payed`, a second refund `transaction_not_available_for_cancel`, and the list
-  shows paid sales only, by Tashkent day.
-- A state it does not simulate, such as refunding a captured hold or a hold with a `serviceId`,
-  answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`: script that call instead.
+- It reproduces only what Paylov's test environment and documentation show: one capture per hold, a
+  partial capture ends the hold and charges only the captured amount, a dismiss before expiry makes
+  the held funds available to the card again, an expired hold still reads `held`, capture after
+  expiry fails with `hold_time_expired` and releases the hold, an `externalId` is never reused, a
+  second pay answers `transaction_already_payed`, a second refund
+  `transaction_not_available_for_cancel`, an unknown transaction reads as the HTTP 200 miss, and the
+  list shows paid rows only, newest first, by Tashkent day.
+- A state it does not simulate answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`:
+  script that call instead. Among them:
+  - a pay or hold that the card's `balanceTiyin`, less what the simulation charged or still holds on
+    that card, does not cover; script the decline or the approval;
+  - a pay or hold that fits only once funds Paylov returns on its own schedule reach the card: a
+    refund, the uncaptured rest of a partial capture, or a hold released after it expired, by a
+    dismiss or by `hold_time_expired`;
+  - a hold above 1 000 000 000 SUM, where Paylov answers `invalid_amount` from a bound it does not
+    state;
+  - a refund after the Tashkent day of the payment, since each merchant's refund window differs;
+  - `cards.get` or `cards.list` of a card the simulation charged or held, also after a release or
+    refund, whose balance it cannot report;
+  - a `transactions.list` with two rows paid in the same second, whose order is unobserved;
+  - refunding a captured hold, or a hold with a `serviceId`.
 - A scripted answer takes precedence over the simulation for the call it matches and does not change
   the stored state. Use it for declines and transient failures. A scripted `holds.create` decline
   stores no record, unlike Paylov, which keeps a `declined` hold and its used-up `externalId`:
@@ -155,7 +177,7 @@ Assert attempts through the logger instead of counting requests. Hooks are not a
 the call settles.
 
 ```ts
-import type { PaylovLoggerResponseEvent } from '@isroilov_an/paylov';
+import { PaylovClient, type PaylovLoggerResponseEvent } from '@isroilov_an/paylov';
 
 const events: PaylovLoggerResponseEvent[] = [];
 const paylov = new PaylovClient({
@@ -173,7 +195,10 @@ const paylov = new PaylovClient({
 import { PaylovWebhookReceiver } from '@isroilov_an/paylov';
 import { createWebhookRequest } from '@isroilov_an/paylov/testing';
 
-const credentials = { login: 'EXAMPLE-WEBHOOK-LOGIN', password: 'EXAMPLE-WEBHOOK-PASSWORD' };
+const credentials = {
+  login: 'EXAMPLE-WEBHOOK-LOGIN',
+  password: 'EXAMPLE-WEBHOOK-PASSWORD',
+};
 const receiver = new PaylovWebhookReceiver({ credentials: [credentials] });
 
 const request = createWebhookRequest(

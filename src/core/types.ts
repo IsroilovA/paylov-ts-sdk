@@ -1,13 +1,14 @@
 /** Shared public types and the internal transport contracts every surface builds on. */
 
+import type { Decoder } from './decoding.js';
 import type { PaylovErrorCode } from './errorCodes.js';
 
 /** Per-call options accepted by every SDK method that performs I/O. */
 export interface PaylovCallOptions {
   /**
-   * Aborts the call with `PaylovConnectionError` `sdk_aborted`. Once a request was sent
-   * (`isSent`), the outcome of a POST is unknown, like any connection error. A shared token grant
-   * other calls wait on is never cancelled by one caller's abort.
+   * Aborts the call with `PaylovConnectionError` `sdk_aborted`. An abort while a request of a
+   * write is in flight leaves its outcome unknown (`isOutcomeUnknown`), like any connection
+   * error. A shared token grant other calls wait on is never cancelled by one caller's abort.
    */
   readonly signal?: AbortSignal;
 }
@@ -49,7 +50,11 @@ export interface PaylovLoggerRequestEvent {
 export interface PaylovLoggerResponseEvent extends PaylovLoggerRequestEvent {
   readonly httpStatus: number;
   readonly durationMs: number;
-  /** The validated gateway `error.code` when the body carried one, or the SDK's own code. */
+  /**
+   * The gateway's error code, or the SDK's own: a connection code, `sdk_client_closed`, or
+   * `sdk_malformed_response` / `sdk_unexpected_status` when the response broke the endpoint's
+   * response contract, a 2xx included. Absent for a response the endpoint accepts.
+   */
   readonly errorCode?: PaylovErrorCode;
 }
 
@@ -86,11 +91,21 @@ export interface PaylovTransportConfig {
  */
 export type ResponseShape = 'envelope' | 'flat' | 'array';
 
+/**
+ * What an endpoint can change, which decides when its failure leaves the outcome unknown:
+ * - `read`: nothing.
+ * - `write`: gateway state other than funds, such as a receipt, a card binding or credentials.
+ * - `money`: funds, by charging, reserving, capturing, releasing, refunding or splitting them.
+ */
+export type EndpointEffect = 'read' | 'write' | 'money';
+
 /** No request body, query values or headers: they hold passwords and caller identifiers. */
 export interface ResponseContext {
   /** Static endpoint identity, e.g. `"POST /merchant/receipts/pay/"`. */
   readonly endpoint: string;
   readonly httpStatus: number;
+  /** The requested endpoint's effect, from which errors derive `isOutcomeUnknown`. */
+  readonly effect: EndpointEffect;
 }
 
 /** What one request adds to its endpoint: values only, never the route, method or shape. */
@@ -106,35 +121,41 @@ export interface RequestOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
-/**
- * One gateway endpoint as its owning surface declares it. Resources send through it and the fake
- * gateway answers from it, so the route, method and shape have one home.
- */
-export interface Endpoint {
-  readonly method: PaylovHttpMethod;
+interface EndpointDeclaration {
   /** Absolute path template; the transport fills each `{name}` from the request's `path`. */
   readonly route: `/${string}`;
   readonly shape: ResponseShape;
-  /**
-   * The endpoint can charge, reserve, capture, release, refund or split money, so a generic
-   * failure code from it leaves the outcome unknown (`PaylovApiError.isUnsettled`).
-   */
-  readonly movesMoney?: true;
-}
-
-/** Raw headers and `Response` objects never cross this boundary. */
-export interface HttpResponse {
-  /** Untyped until the owning decoder establishes a type. */
-  readonly payload: unknown;
-  readonly context: ResponseContext;
 }
 
 /**
+ * A GET only reads. Failure retries are GET-only, so no retried attempt can have changed anything
+ * and a refusal before a later attempt's fetch never leaves the outcome unknown.
+ */
+interface ReadEndpoint extends EndpointDeclaration {
+  readonly method: 'GET';
+  readonly effect: 'read';
+}
+
+interface SendEndpoint extends EndpointDeclaration {
+  readonly method: Exclude<PaylovHttpMethod, 'GET'>;
+  readonly effect: EndpointEffect;
+}
+
+/**
+ * One gateway endpoint as its owning surface declares it. Resources send through it and the fake
+ * gateway answers from it, so the route, method, shape and effect have one home.
+ */
+export type Endpoint = ReadEndpoint | SendEndpoint;
+
+/**
  * Logs and errors name a request by its endpoint, never by its filled path. Failure retries
- * derive from the method alone; never add an option that retries a POST.
+ * derive from the method alone; never add an option that retries a POST. Raw headers and
+ * `Response` objects never cross this boundary: the endpoint's decoder reads the success payload,
+ * from `result` for the enveloped shape and from `body` for the others, before the attempt's
+ * response event is emitted.
  */
 export interface HttpClient {
-  request(endpoint: Endpoint, options?: RequestOptions): Promise<HttpResponse>;
+  request<T>(endpoint: Endpoint, options: RequestOptions, decode: Decoder<T>): Promise<T>;
 }
 
 export interface AuthorizationContext {

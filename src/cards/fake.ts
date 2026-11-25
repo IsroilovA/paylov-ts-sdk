@@ -1,10 +1,4 @@
-import {
-  optionalEntry,
-  type FakeCodec,
-  type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
-} from '../core/fake.js';
+import { optionalEntry, type FakeRequest, type FakeSpecTable } from '../core/fake.js';
 import { ENDPOINTS, type CardsResource } from './resource.js';
 import type {
   Card,
@@ -106,53 +100,41 @@ function decodeDeleteRequest({ query }: FakeRequest): DeleteCardParams {
 }
 
 function decodeCheckPhoneRequest({ body }: FakeRequest): CheckCardPhoneParams {
-  return { cardId: body.string('cardId'), phoneNumber: body.string('phoneNumber') };
-}
-
-export const CARD_CODECS: {
-  readonly get: FakeCodec<Card, GetCardParams>;
-  readonly list: FakeCodec<readonly Card[], ListCardsParams>;
-  readonly delete: FakeCodec<void, DeleteCardParams>;
-} = {
-  get: { encode: encodeFetchedCard, decodeRequest: decodeGetRequest },
-  list: { encode: encodeCardList, decodeRequest: decodeListRequest },
-  delete: { encode: encodeTrue, decodeRequest: decodeDeleteRequest },
-};
-
-export function createCardsFake(
-  script: Scripter<'cards', CardsResource>,
-): PaylovFakeSurface<CardsResource> {
   return {
-    startPanBinding: script(
-      'cards.startPanBinding',
-      ENDPOINTS.startPanBinding,
-      encodePanBindingStarted,
-      decodeStartPanBindingRequest,
-    ),
-    confirmPanBinding: script(
-      'cards.confirmPanBinding',
-      ENDPOINTS.confirmPanBinding,
-      encodeConfirmedCard,
-      decodeConfirmPanBindingRequest,
-    ),
-    get: script('cards.get', ENDPOINTS.get, CARD_CODECS.get.encode, CARD_CODECS.get.decodeRequest),
-    list: script(
-      'cards.list',
-      ENDPOINTS.list,
-      CARD_CODECS.list.encode,
-      CARD_CODECS.list.decodeRequest,
-    ),
-    delete: script(
-      'cards.delete',
-      ENDPOINTS.delete,
-      CARD_CODECS.delete.encode,
-      CARD_CODECS.delete.decodeRequest,
-    ),
-    checkPhone: script(
-      'cards.checkPhone',
-      ENDPOINTS.checkPhone,
-      encodeMatch,
-      decodeCheckPhoneRequest,
-    ),
+    cardId: body.string('cardId'),
+    phoneNumber: body.string('phoneNumber'),
   };
 }
+
+export const CARD_FAKES: FakeSpecTable<CardsResource> = {
+  startPanBinding: {
+    endpoint: ENDPOINTS.startPanBinding,
+    encode: encodePanBindingStarted,
+    decodeRequest: decodeStartPanBindingRequest,
+  },
+  confirmPanBinding: {
+    endpoint: ENDPOINTS.confirmPanBinding,
+    encode: encodeConfirmedCard,
+    decodeRequest: decodeConfirmPanBindingRequest,
+  },
+  get: {
+    endpoint: ENDPOINTS.get,
+    encode: encodeFetchedCard,
+    decodeRequest: decodeGetRequest,
+  },
+  list: {
+    endpoint: ENDPOINTS.list,
+    encode: encodeCardList,
+    decodeRequest: decodeListRequest,
+  },
+  delete: {
+    endpoint: ENDPOINTS.delete,
+    encode: encodeTrue,
+    decodeRequest: decodeDeleteRequest,
+  },
+  checkPhone: {
+    endpoint: ENDPOINTS.checkPhone,
+    encode: encodeMatch,
+    decodeRequest: decodeCheckPhoneRequest,
+  },
+};

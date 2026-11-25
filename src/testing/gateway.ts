@@ -1,54 +1,56 @@
 /** The scripted in-memory Paylov gateway behind the `@isroilov_an/paylov/testing` entry point. */
 
-import { createCardsFake } from '../cards/fake.js';
+import { CARD_FAKES } from '../cards/fake.js';
 import type { CardsResource } from '../cards/resource.js';
+import type { Card } from '../cards/types.js';
 import type { PaylovClientConfig } from '../client.js';
 import { ENDPOINTS as AUTH_ENDPOINTS } from '../core/auth.js';
-import type { Card } from '../cards/types.js';
-import { isRecord } from '../core/decoding.js';
+import { endpointName } from '../core/endpoint.js';
 import {
   FAKE_AUTH_BODIES,
+  type FakeMethodSpec,
   type FakeRequest,
-  type MethodNameOf,
+  type FakeSpecTable,
+  type IoMethodOf,
   type PaylovFakeMethod,
-  type PaylovFakeSchedule,
   type PaylovFakeSurface,
-  type RequestDecoder,
+  type ReplyOf,
   type RequestMatcher,
+  type RequestOf,
 } from '../core/fake.js';
-import { endpointName } from '../core/http.js';
-import { readParams } from '../core/params.js';
+import { isClock, systemClock } from '../core/time.js';
 import type { Endpoint, FetchLike } from '../core/types.js';
-import { createFiscalizationFake } from '../fiscalization/fake.js';
+import { FISCALIZATION_FAKES } from '../fiscalization/fake.js';
 import type { FiscalizationResource } from '../fiscalization/resource.js';
-import { createGatewayFake } from '../gateway/fake.js';
+import { GATEWAY_FAKES } from '../gateway/fake.js';
 import type { GatewayResource } from '../gateway/resource.js';
-import { createHoldsFake, type HoldsFakeSurface } from '../holds/fake.js';
+import { HOLD_FAKES, type HoldsFakeReplies } from '../holds/fake.js';
 import type { HoldsResource } from '../holds/resource.js';
 import type { PaylovOnboarding } from '../onboarding/client.js';
-import { createOnboardingFake } from '../onboarding/fake.js';
+import { ONBOARDING_FAKES } from '../onboarding/fake.js';
 import type { PaylovOnboardingConfig } from '../onboarding/types.js';
-import { createPaymentsFake } from '../payments/fake.js';
+import { PAYMENT_FAKES } from '../payments/fake.js';
 import type { PaymentsResource } from '../payments/resource.js';
-import { createSplitsFake } from '../splits/fake.js';
+import { SPLIT_FAKES } from '../splits/fake.js';
 import type { SplitsResource } from '../splits/resource.js';
-import { createSubMerchantsFake } from '../subMerchants/fake.js';
+import { SUB_MERCHANT_FAKES } from '../subMerchants/fake.js';
 import type { SubMerchantsResource } from '../subMerchants/resource.js';
-import { createTransactionsFake } from '../transactions/fake.js';
-import { isClock, systemClock } from '../core/time.js';
+import { TRANSACTION_FAKES } from '../transactions/fake.js';
 import type { TransactionsResource } from '../transactions/resource.js';
+import { AnswerQueue } from './answerQueue.js';
 import {
   errorBody,
-  failureAnswer,
   FAKE_FAILURE_STATUS,
   isRetryableAnswer,
   jsonResponse,
+  methodFailureAnswer,
   replyAnswer,
   respond,
   respondWith,
   type Answer,
 } from './answers.js';
-import { createSimulators, GatewaySimulation, type Simulator } from './simulation.js';
+import { isRouteOf, parseBody, requestFor } from './requests.js';
+import { GatewaySimulation, type SimulatedOutcome } from './simulation.js';
 import { FakeTokenEndpoint, type PaylovFakeTokenEndpoint } from './token.js';
 
 const BASE_URL = 'https://gateway.example';
@@ -57,61 +59,40 @@ const UNSCRIPTED_CODE = 'fake_unscripted';
 const UNREADABLE_CODE = 'fake_unreadable_request';
 const UNSIMULATED_CODE = 'fake_unsimulated';
 
-/** The client surface behind each scripted namespace. */
-interface ScriptedSurfaces {
-  readonly gateway: GatewayResource;
-  readonly cards: CardsResource;
-  readonly payments: PaymentsResource;
-  readonly transactions: TransactionsResource;
-  readonly holds: HoldsResource;
-  readonly splits: SplitsResource;
-  readonly fiscalization: FiscalizationResource;
-  readonly subMerchants: SubMerchantsResource;
-  readonly onboarding: PaylovOnboarding;
+/** Answers the params of one request from the simulation's state. */
+type Simulator<T, P> = (simulation: GatewaySimulation, params: P) => SimulatedOutcome<T>;
+
+/** A request the fake received, before any route read it. */
+interface ReceivedRequest {
+  readonly method: string;
+  readonly url: URL;
+  readonly body: unknown;
 }
 
-/** `'<namespace>.<method>'` of every scripted SDK method, such as `'payments.pay'`. */
-type ScriptedMethod = {
-  [K in keyof ScriptedSurfaces]: MethodNameOf<K, ScriptedSurfaces[K]>;
-}[keyof ScriptedSurfaces];
-
-/** One request the fake received. */
-export interface PaylovFakeCall {
-  /**
-   * The SDK method whose scripted answer served the request, such as `'payments.pay'`; `null`
-   * for the token and revoke requests the fake answers itself and for requests no scripted
-   * answer served.
-   */
-  readonly method: ScriptedMethod | null;
-  /** The route as logger events name it, such as `'GET /merchant/userCard/getCard/{cardId}/'`. */
-  readonly endpoint: string;
-}
-
-/** Where one SDK method's requests arrive and how the fake records them. */
+/** Where one SDK method's requests arrive and how the fake reads them. */
 interface MethodRoute {
-  readonly method: ScriptedMethod;
+  /** `'<namespace>.<method>'`, such as `'payments.pay'`. */
+  readonly label: string;
   readonly endpoint: Endpoint;
   readonly matches: RequestMatcher | undefined;
-  /** Decodes the request into the method's `requests`; never keeps the raw request. */
-  readonly record: (request: FakeRequest) => void;
+  readonly isSimulated: boolean;
+  /**
+   * Decodes the request into the method's params and adds them to its `requests`; never keeps
+   * the raw request. Throws when the request does not read back. Returns the simulation's answer
+   * to those params, for a simulated method.
+   */
+  readonly read: (request: FakeRequest) => (() => Answer) | undefined;
 }
 
-interface ScriptedAnswer {
-  readonly route: MethodRoute;
-  readonly answer: Answer;
-  readonly persist: boolean;
-  /** Whether a persistent answer has served a request; one-time answers leave the queue instead. */
-  served: boolean;
-}
-
-/** A request and the route that serves it: a scripted answer, else the simulation. */
-type MatchedRequest = {
-  readonly route: MethodRoute;
-  readonly request: FakeRequest;
-} & (
-  | { readonly scripted: ScriptedAnswer; readonly simulator?: undefined }
-  | { readonly scripted: undefined; readonly simulator: Simulator }
-);
+/** A request read back into a method's params, and the scripted answer it takes, if any. */
+type ReadOutcome =
+  | { readonly kind: 'unmatched' }
+  | { readonly kind: 'unreadable'; readonly route: MethodRoute | undefined }
+  | {
+      readonly kind: 'read';
+      readonly route: MethodRoute;
+      readonly answer: () => Answer;
+    };
 
 /** Options of `PaylovFakeGateway`. */
 export interface PaylovFakeGatewayOptions {
@@ -147,49 +128,6 @@ interface ServedRequest {
 const RETRY_HINT =
   'the SDK retries a GET after a network error, a timeout or HTTP 500/502/503/504; script one answer per attempt or a persistent one';
 
-/** The placeholder values of `path` under `route`, or `undefined` when it does not match. */
-function routeValues(route: string, path: string): Record<string, string> | undefined {
-  const pattern = RegExp.escape(route).replaceAll(/\\\{(\w+)\\\}/g, '(?<$1>[^/]+)');
-  const match = new RegExp(`^${pattern}$`).exec(path);
-  if (match === null) return undefined;
-  return Object.fromEntries(
-    Object.entries(match.groups ?? {}).map(([name, value]) => [name, decodeURIComponent(value)]),
-  );
-}
-
-/** The parsed JSON body; anything else reads as no body, and never reaches an error. */
-function parseBody(body: RequestInit['body']): unknown {
-  if (typeof body !== 'string') return undefined;
-  try {
-    return JSON.parse(body) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The request as `route` reads it, or `undefined` when its path does not match. */
-function requestOf(route: string, url: URL, body: unknown): FakeRequest | undefined {
-  const path = routeValues(route, url.pathname);
-  if (path === undefined) return undefined;
-  return {
-    body: readParams(isRecord(body) ? body : {}, 'fake request body'),
-    query: readParams(Object.fromEntries(url.searchParams), 'fake request query'),
-    path: readParams(path, 'fake request path'),
-  };
-}
-
-/** The request as `route`'s method reads it, or `undefined` when it is another method's. */
-function requestFor(
-  route: MethodRoute,
-  method: string,
-  url: URL,
-  body: unknown,
-): FakeRequest | undefined {
-  const { endpoint, matches } = route;
-  const request = endpoint.method === method ? requestOf(endpoint.route, url, body) : undefined;
-  return request !== undefined && (matches?.(request) ?? true) ? request : undefined;
-}
-
 /**
  * An in-memory Paylov gateway for application tests. Pass `clientConfig` (or `onboardingConfig`)
  * to the SDK, script each expected call through the namespace that
@@ -224,7 +162,8 @@ export class PaylovFakeGateway {
   readonly cards: PaylovFakeSurface<CardsResource>;
   readonly payments: PaylovFakeSurface<PaymentsResource>;
   readonly transactions: PaylovFakeSurface<TransactionsResource>;
-  readonly holds: HoldsFakeSurface;
+  /** `create` replies `{ transactionId }`; the SDK adds the capture deadline itself. */
+  readonly holds: PaylovFakeSurface<HoldsResource, HoldsFakeReplies>;
   readonly splits: PaylovFakeSurface<SplitsResource>;
   readonly fiscalization: PaylovFakeSurface<FiscalizationResource>;
   readonly subMerchants: PaylovFakeSurface<SubMerchantsResource>;
@@ -245,9 +184,7 @@ export class PaylovFakeGateway {
   readonly #token = new FakeTokenEndpoint();
   readonly #routes: MethodRoute[] = [];
   readonly #simulation: GatewaySimulation | undefined;
-  readonly #simulators: ReadonlyMap<string, Simulator>;
-  readonly #scripted: ScriptedAnswer[] = [];
-  readonly #calls: PaylovFakeCall[] = [];
+  readonly #answers = new AnswerQueue<MethodRoute>();
   /** What `assertDone()` reports about requests the script could not serve. */
   readonly #unserved: string[] = [];
   #lastServed: ServedRequest | undefined;
@@ -258,25 +195,64 @@ export class PaylovFakeGateway {
     if (now !== undefined && !isClock(now)) throw new TypeError('now must be a function');
     const clock = checkedClock(now ?? systemClock);
     this.#simulation = simulate ? new GatewaySimulation(clock) : undefined;
-    this.#simulators =
-      this.#simulation === undefined ? new Map() : createSimulators(this.#simulation);
     this.token = this.#token;
-    const script = <T, P>(
-      method: ScriptedMethod,
-      endpoint: Endpoint,
-      encode: (result: T) => unknown,
-      decodeRequest: RequestDecoder<P>,
-      matches?: RequestMatcher,
-    ): PaylovFakeMethod<T, P> => this.#script(method, endpoint, encode, decodeRequest, matches);
-    this.gateway = createGatewayFake(script);
-    this.cards = createCardsFake(script);
-    this.payments = createPaymentsFake(script);
-    this.transactions = createTransactionsFake(script);
-    this.holds = createHoldsFake(script);
-    this.splits = createSplitsFake(script);
-    this.fiscalization = createFiscalizationFake(script);
-    this.subMerchants = createSubMerchantsFake(script);
-    this.onboarding = createOnboardingFake(script);
+
+    // Each surface lists its methods once; the spec, label and simulator follow from the key.
+    const gateway = this.#surface('gateway', GATEWAY_FAKES);
+    this.gateway = {
+      getStatus: gateway('getStatus'),
+      listBanks: gateway('listBanks'),
+    };
+    const cards = this.#surface('cards', CARD_FAKES);
+    this.cards = {
+      startPanBinding: cards('startPanBinding'),
+      confirmPanBinding: cards('confirmPanBinding'),
+      get: cards('get', (simulation, params) => simulation.getCard(params)),
+      list: cards('list', (simulation, params) => simulation.listCards(params)),
+      delete: cards('delete', (simulation, params) => simulation.deleteCard(params)),
+      checkPhone: cards('checkPhone'),
+    };
+    const payments = this.#surface('payments', PAYMENT_FAKES);
+    this.payments = {
+      create: payments('create', (simulation, params) => simulation.createPayment(params)),
+      pay: payments('pay', (simulation, params) => simulation.pay(params)),
+      refund: payments('refund', (simulation, params) => simulation.refund(params)),
+      startPanPayment: payments('startPanPayment'),
+      confirmPanPayment: payments('confirmPanPayment'),
+    };
+    const transactions = this.#surface('transactions', TRANSACTION_FAKES);
+    this.transactions = {
+      get: transactions('get', (simulation, params) => simulation.getTransaction(params)),
+      list: transactions('list', (simulation, params) => simulation.listTransactions(params)),
+      getRrn: transactions('getRrn'),
+    };
+    const holds = this.#surface('holds', HOLD_FAKES);
+    this.holds = {
+      create: holds('create', (simulation, params) => simulation.createHold(params)),
+      capture: holds('capture', (simulation, params) => simulation.capture(params)),
+      release: holds('release', (simulation, params) => simulation.release(params)),
+      get: holds('get', (simulation, params) => simulation.getHold(params)),
+    };
+    const splits = this.#surface('splits', SPLIT_FAKES);
+    this.splits = {
+      create: splits('create'),
+      resendReceipt: splits('resendReceipt'),
+      get: splits('get'),
+    };
+    const fiscalization = this.#surface('fiscalization', FISCALIZATION_FAKES);
+    this.fiscalization = {
+      registerReceipt: fiscalization('registerReceipt'),
+      getReceipt: fiscalization('getReceipt'),
+      refundReceipt: fiscalization('refundReceipt'),
+      checkActivityType: fiscalization('checkActivityType'),
+    };
+    const subMerchants = this.#surface('subMerchants', SUB_MERCHANT_FAKES);
+    this.subMerchants = { create: subMerchants('create') };
+    const onboarding = this.#surface('onboarding', ONBOARDING_FAKES);
+    this.onboarding = {
+      checkToken: onboarding('checkToken'),
+      complete: onboarding('complete'),
+    };
 
     this.fetch = (input, init) => this.#answer(input, init);
     this.clientConfig = {
@@ -289,17 +265,6 @@ export class PaylovFakeGateway {
       ...(now !== undefined ? { now: clock } : {}),
     };
     this.onboardingConfig = { baseUrl: BASE_URL, fetch: this.fetch };
-  }
-
-  /**
-   * Every request received so far, in order, token and revoke requests included. Each method's
-   * `requests` holds the params of its own requests.
-   *
-   * @example
-   * expect(fake.calls.map((call) => call.method)).toEqual([null, 'payments.create', 'payments.pay']);
-   */
-  get calls(): readonly PaylovFakeCall[] {
-    return [...this.#calls];
   }
 
   /**
@@ -329,127 +294,159 @@ export class PaylovFakeGateway {
   assertDone(): void {
     const problems = [
       ...this.#unserved,
-      ...this.#scripted.flatMap(({ route, persist, served }) => {
-        if (!persist) return [`unserved ${route.method} answer`];
-        return served ? [] : [`unserved persistent ${route.method} answer`];
-      }),
+      ...this.#answers.problems((route) => route.label),
       ...this.#token.problems(),
     ];
     if (problems.length > 0) throw new Error(`PaylovFakeGateway: ${problems.join('; ')}`);
   }
 
+  /** Scripts the methods of `namespace` from its spec table, one key at a time. */
+  #surface<R, Replies>(namespace: string, table: FakeSpecTable<R, Replies>) {
+    return <K extends IoMethodOf<R> & string>(
+      method: K,
+      simulate?: Simulator<ReplyOf<R, K, Replies>, RequestOf<R[K]>>,
+    ): PaylovFakeSurface<R, Replies>[K] =>
+      this.#script(`${namespace}.${method}`, table[method], simulate);
+  }
+
   #script<T, P>(
-    method: ScriptedMethod,
-    endpoint: Endpoint,
-    encode: (result: T) => unknown,
-    decodeRequest: RequestDecoder<P>,
-    matches: RequestMatcher | undefined,
+    label: string,
+    spec: FakeMethodSpec<T, P>,
+    simulate: Simulator<T, P> | undefined,
   ): PaylovFakeMethod<T, P> {
+    const { endpoint } = spec;
     const requests: P[] = [];
+    const simulation = this.#simulation;
+    const simulated =
+      simulation === undefined || simulate === undefined
+        ? undefined
+        : (params: P) => this.#simulatedAnswer(label, spec, simulate(simulation, params));
     const route: MethodRoute = {
-      method,
+      label,
       endpoint,
-      matches,
-      record: (request) => {
-        requests.push(decodeRequest(request));
+      matches: spec.matches,
+      isSimulated: simulated !== undefined,
+      read: (request) => {
+        const params = spec.decodeRequest(request);
+        requests.push(params);
+        return simulated === undefined ? undefined : () => simulated(params);
       },
     };
     this.#routes.push(route);
-    const enqueue = (answer: Answer, schedule: PaylovFakeSchedule = {}): void => {
-      this.#scripted.push({ route, answer, persist: schedule.persist === true, served: false });
-    };
     return {
       requests,
       reply: (result, schedule) => {
-        enqueue(replyAnswer(endpoint, encode(result)), schedule);
+        this.#answers.add(route, replyAnswer(endpoint, spec.encode(result)), schedule);
       },
-      fail: (code, failure = {}, schedule) => {
-        enqueue(failureAnswer(code, failure), schedule);
+      fail: (code, details = {}, schedule) => {
+        this.#answers.add(route, methodFailureAnswer(spec, code, details), schedule);
       },
       disconnect: (schedule) => {
-        enqueue({ kind: 'disconnect' }, schedule);
+        this.#answers.add(route, { kind: 'disconnect' }, schedule);
       },
       hang: (schedule) => {
-        enqueue({ kind: 'hang' }, schedule);
+        this.#answers.add(route, { kind: 'hang' }, schedule);
       },
     };
   }
 
-  /** The first one-time answer for the request, else its first persistent answer. */
-  #scriptedFor(method: string, url: URL, body: unknown): MatchedRequest | undefined {
-    const candidates = this.#scripted.flatMap((scripted) => {
-      const request = requestFor(scripted.route, method, url, body);
-      return request === undefined ? [] : [{ route: scripted.route, request, scripted }];
-    });
-    return candidates.find(({ scripted }) => !scripted.persist) ?? candidates[0];
-  }
-
-  /** The simulated method the request belongs to, when the simulation is on. */
-  #simulatedFor(method: string, url: URL, body: unknown): MatchedRequest | undefined {
-    for (const route of this.#routes) {
-      const simulator = this.#simulators.get(route.method);
-      if (simulator === undefined) continue;
-      const request = requestFor(route, method, url, body);
-      if (request !== undefined) return { route, request, scripted: undefined, simulator };
+  /**
+   * Reads the request with the route of its first scripted answer, else of its simulated method.
+   * A matcher or request decoder that disagrees with what the SDK sent is a fake defect.
+   */
+  #read(received: ReceivedRequest): ReadOutcome {
+    let route: MethodRoute | undefined;
+    try {
+      const found = this.#answers.find((candidate) =>
+        requestFor(candidate.endpoint, candidate.matches, received),
+      );
+      if (found !== undefined) {
+        route = found.queued.key;
+        route.read(found.match);
+        return {
+          kind: 'read',
+          route,
+          answer: () => this.#answers.serve(found),
+        };
+      }
+      for (const candidate of this.#routes) {
+        if (!candidate.isSimulated) continue;
+        const request = requestFor(candidate.endpoint, candidate.matches, received);
+        if (request === undefined) continue;
+        route = candidate;
+        const simulate = candidate.read(request);
+        if (simulate !== undefined) return { kind: 'read', route, answer: simulate };
+      }
+      return { kind: 'unmatched' };
+    } catch {
+      return { kind: 'unreadable', route };
     }
-    return undefined;
   }
 
-  /** Runs the simulation for a request; a state it does not simulate becomes a fake failure. */
-  #simulate(route: MethodRoute, request: FakeRequest, simulator: Simulator): Answer {
-    const simulated = simulator(request);
-    if (simulated.kind === 'answer') return simulated.answer;
-    const { reason } = simulated;
-    this.#unserved.push(`unsimulated ${route.method}: ${reason}; script this call`);
-    const message = `the simulation does not cover ${route.method}: ${reason}`;
-    return respond(FAKE_FAILURE_STATUS, errorBody({ code: UNSIMULATED_CODE, message }));
+  /** The route template a request fills, never its path values. */
+  #nameOf({ method, url }: ReceivedRequest): string {
+    const route = this.#routes.find(({ endpoint }) => isRouteOf(endpoint, method, url.pathname));
+    return route === undefined ? `${method} (unknown route)` : endpointName(route.endpoint);
   }
 
   async #answer(input: string, init: RequestInit): Promise<Response> {
-    const method = init.method ?? 'GET';
-    const url = new URL(input);
-    const endpoint = `${method} ${url.pathname}`;
-    const body = parseBody(init.body);
-    let found: MatchedRequest | undefined;
-    let answer: Answer;
-    try {
-      found = this.#scriptedFor(method, url, body) ?? this.#simulatedFor(method, url, body);
-      if (found === undefined) return await this.#answerUnmatched(method, url.pathname, body);
-      found.route.record(found.request);
-      answer =
-        found.scripted === undefined
-          ? this.#simulate(found.route, found.request, found.simulator)
-          : found.scripted.answer;
-    } catch {
-      // A matcher, request decoder or encoder that disagrees with what the SDK sent is a fake
-      // defect; a fetch rejection would read as a retried network failure instead.
-      return this.#answerUnreadable(endpoint, found?.route.method);
-    }
-    const { route, scripted } = found;
-    if (scripted?.persist === true) scripted.served = true;
-    else if (scripted !== undefined) this.#scripted.splice(this.#scripted.indexOf(scripted), 1);
-    this.#lastServed = { endpoint, isRetryable: method === 'GET' && isRetryableAnswer(answer) };
-    this.#calls.push({ method: route.method, endpoint: endpointName(route.endpoint) });
+    const received: ReceivedRequest = {
+      method: init.method ?? 'GET',
+      url: new URL(input),
+      body: parseBody(init.body),
+    };
+    const read = this.#read(received);
+    if (read.kind === 'unmatched') return await this.#answerUnmatched(received);
+    const endpoint = this.#nameOf(received);
+    if (read.kind === 'unreadable') return this.#answerUnreadable(endpoint, read.route);
+    const answer = this.#produce(read.route, read.answer);
+    const isRetryable = received.method === 'GET' && isRetryableAnswer(answer);
+    this.#lastServed = { endpoint, isRetryable };
     return await respondWith(answer, init.signal);
   }
 
-  #answerUnreadable(endpoint: string, method: ScriptedMethod | undefined): Response {
-    this.#calls.push({ method: null, endpoint });
-    const reader = method === undefined ? 'a request matcher' : `the ${method} request decoder`;
+  /** The scripted or simulated answer; a simulation or encoder that throws is a fake defect. */
+  #produce(route: MethodRoute, answer: () => Answer): Answer {
+    try {
+      return answer();
+    } catch {
+      return this.#unsimulated(route.label, 'the simulation or its encoder threw');
+    }
+  }
+
+  /** The simulation's outcome encoded with the method's own spec, as a scripted answer would be. */
+  #simulatedAnswer<T>(
+    label: string,
+    spec: FakeMethodSpec<T, unknown>,
+    outcome: SimulatedOutcome<T>,
+  ): Answer {
+    if (outcome.kind === 'result') return replyAnswer(spec.endpoint, spec.encode(outcome.value));
+    if (outcome.kind === 'error') return methodFailureAnswer(spec, outcome.code, outcome.failure);
+    return this.#unsimulated(label, outcome.reason);
+  }
+
+  #unsimulated(label: string, reason: string): Answer {
+    this.#unserved.push(`unsimulated ${label}: ${reason}; script this call`);
+    const message = `the simulation does not cover ${label}: ${reason}`;
+    return respond(FAKE_FAILURE_STATUS, errorBody({ code: UNSIMULATED_CODE, message }));
+  }
+
+  #answerUnreadable(endpoint: string, route: MethodRoute | undefined): Response {
+    const reader = route === undefined ? 'a request matcher' : `the ${route.label} request decoder`;
     this.#unserved.push(`unreadable request ${endpoint} (${reader} threw)`);
     const message = `the fake cannot read ${endpoint}`;
     return jsonResponse(FAKE_FAILURE_STATUS, errorBody({ code: UNREADABLE_CODE, message }));
   }
 
-  async #answerUnmatched(method: string, path: string, body: unknown): Promise<Response> {
-    const endpoint = `${method} ${path}`;
-    this.#calls.push({ method: null, endpoint });
-    if (method === AUTH_ENDPOINTS.token.method && path === AUTH_ENDPOINTS.token.route) {
+  async #answerUnmatched(received: ReceivedRequest): Promise<Response> {
+    const { method, url, body } = received;
+    if (isRouteOf(AUTH_ENDPOINTS.token, method, url.pathname)) {
       return await respondWith(this.#token.answer(body), undefined);
     }
-    if (method === AUTH_ENDPOINTS.revoke.method && path === AUTH_ENDPOINTS.revoke.route) {
+    if (isRouteOf(AUTH_ENDPOINTS.revoke, method, url.pathname)) {
       return jsonResponse(200, FAKE_AUTH_BODIES.revoke);
     }
+    const endpoint = this.#nameOf(received);
     const last = this.#lastServed;
     const isRetry = last?.endpoint === endpoint && last.isRetryable;
     const hint = isRetry ? ` (likely a retry: ${RETRY_HINT})` : '';

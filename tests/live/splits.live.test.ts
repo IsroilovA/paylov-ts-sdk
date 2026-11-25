@@ -14,6 +14,7 @@ import type { Split } from '../../src/index.js';
 import {
   expectRecent,
   externalId,
+  LiveCleanup,
   liveClient,
   liveGate,
   observe,
@@ -54,6 +55,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('splits writes', () => {
   const { config } = gate;
   const client = liveClient(config);
   const card = testCard.value;
+  const cleanup = new LiveCleanup();
   let bound: BoundCard | undefined;
   let merchantId: string | undefined;
   let paidId: string | undefined;
@@ -84,21 +86,22 @@ describe.skipIf(!writes || testCard?.ok !== true)('splits writes', () => {
       durationMinutes: 1,
       externalId: externalId('split-merchant'),
     });
-    try {
-      return (await client.holds.get({ transactionId })).serviceId;
-    } finally {
-      await client.holds.release({ transactionId });
-    }
+    cleanup.add(
+      'splits.cleanup.hold',
+      () => client.holds.release({ transactionId }),
+      'hold_not_found',
+    );
+    const { serviceId } = await client.holds.get({ transactionId });
+    await client.holds.release({ transactionId });
+    return serviceId;
   }
 
   beforeAll(async () => {
-    bound = await bindTestCard(client, card, 'splits');
+    bound = await bindTestCard(client, card, 'splits', cleanup);
     merchantId = await readMerchantId();
   });
 
-  afterAll(async () => {
-    await bound?.release();
-  });
+  afterAll(() => cleanup.run());
 
   it('a paid payment without a split reads split_not_found', async () => {
     const { userId, card: payer } = boundCard();
@@ -128,7 +131,8 @@ describe.skipIf(!writes || testCard?.ok !== true)('splits writes', () => {
     expect(split.shares).toHaveLength(1);
     expect(split.shares[0]).toMatchObject({ amountTiyin: PAYMENT_TIYIN, status: 'paid' });
     expect(split.shares[0]?.recipientId === recipientId(), 'share recipient').toBe(true);
-    expect(split.receipt).toBeNull();
+    // A receipt never reaches a matcher: a failure would print its URL and fiscal sign.
+    expect(split.receipt === null, 'no receipt without items').toBe(true);
     expectRecent('splits.get.paid.createdAt', split.shares[0]?.createdAt ?? null);
 
     const again = await refused(
@@ -151,6 +155,8 @@ describe.skipIf(!writes || testCard?.ok !== true)('splits writes', () => {
     expect(split.shares.map((share) => share.status)).toEqual(['cancelled']);
 
     const transaction = await client.transactions.get({ transactionId });
-    expect(transaction).toMatchObject({ status: 'refunded', isSplit: true });
+    // The transaction carries receipt URLs, so compare fields, never the whole record.
+    expect(transaction.status).toBe('refunded');
+    expect(transaction.isSplit, 'the transaction is split').toBe(true);
   });
 });

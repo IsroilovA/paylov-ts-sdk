@@ -1,4 +1,4 @@
-/** The package's only public entry point; every other module is internal. */
+/** The package root entry point; with `testing.ts` (`/testing`), the only public modules. */
 
 // Client
 export { PaylovClient, type PaylovClientConfig } from './client.js';
@@ -32,7 +32,7 @@ export type * from './webhooks/types.js';
 // Shared public types
 export type { FiscalReceipt, FiscalReceiptRegistered } from './shared/fiscalReceipts.js';
 export type { FiscalReceiptItem, FiscalReceiptItemBase } from './shared/receiptItems.js';
-export type { TransactionLookup, TransactionReference } from './shared/transactions.js';
+export type { TransactionReference } from './shared/transactions.js';
 export type {
   FetchLike,
   PaylovCallOptions,

@@ -3,6 +3,7 @@
 import { isRecord } from '../core/decoding.js';
 import type { PaylovErrorCode } from '../core/errorCodes.js';
 import { FAKE_AUTH_BODIES, type PaylovFakeFailure, type PaylovFakeSchedule } from '../core/fake.js';
+import { AnswerQueue } from './answerQueue.js';
 import { failureAnswer, respond, type Answer } from './answers.js';
 
 /** The OAuth2 grant of a token request: the password grant or a refresh. */
@@ -36,13 +37,6 @@ export interface PaylovFakeTokenEndpoint {
   readonly requests: readonly PaylovFakeGrant[];
 }
 
-interface TokenAnswer {
-  readonly grant: PaylovFakeGrant | undefined;
-  readonly answer: Answer;
-  readonly persist: boolean;
-  served: boolean;
-}
-
 const DEFAULT_STATUS: Readonly<Record<string, number>> = {
   invalid_grant: 401,
   invalid_client: 401,
@@ -55,7 +49,8 @@ function grantOf(body: unknown): PaylovFakeGrant | undefined {
 }
 
 export class FakeTokenEndpoint implements PaylovFakeTokenEndpoint {
-  readonly #answers: TokenAnswer[] = [];
+  /** Each answer keyed by the grant it answers; `undefined` answers either. */
+  readonly #answers = new AnswerQueue<PaylovFakeGrant | undefined>();
   readonly #requests: PaylovFakeGrant[] = [];
 
   get requests(): readonly PaylovFakeGrant[] {
@@ -69,33 +64,21 @@ export class FakeTokenEndpoint implements PaylovFakeTokenEndpoint {
   ): void {
     const { grant, ...details } = failure;
     const httpStatus = details.httpStatus ?? DEFAULT_STATUS[code] ?? 400;
-    this.#answers.push({
-      grant,
-      answer: failureAnswer(code, { ...details, httpStatus }),
-      persist: schedule.persist === true,
-      served: false,
-    });
+    this.#answers.add(grant, failureAnswer(code, { ...details, httpStatus }), schedule);
   }
 
-  /** The answer to one token request: the first matching one-time answer, then a persistent one. */
+  /** The answer to one token request: a scripted failure for its grant, else canary tokens. */
   answer(body: unknown): Answer {
     const grant = grantOf(body);
     if (grant !== undefined) this.#requests.push(grant);
-    const candidates = this.#answers.filter(
-      (scripted) => scripted.grant === undefined || scripted.grant === grant,
+    const found = this.#answers.find((answers) =>
+      answers === undefined || answers === grant ? true : undefined,
     );
-    const scripted = candidates.find(({ persist }) => !persist) ?? candidates[0];
-    if (scripted === undefined) return respond(200, FAKE_AUTH_BODIES.token);
-    if (scripted.persist) scripted.served = true;
-    else this.#answers.splice(this.#answers.indexOf(scripted), 1);
-    return scripted.answer;
+    return found === undefined ? respond(200, FAKE_AUTH_BODIES.token) : this.#answers.serve(found);
   }
 
   /** What `assertDone()` reports: scripted answers no token request took. */
   problems(): string[] {
-    return this.#answers.flatMap(({ persist, served }) => {
-      if (!persist) return ['unserved token answer'];
-      return served ? [] : ['unserved persistent token answer'];
-    });
+    return this.#answers.problems(() => 'token');
   }
 }

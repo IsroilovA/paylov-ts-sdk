@@ -10,7 +10,8 @@ export interface CreatePaymentParams {
   readonly amountTiyin: number;
   /**
    * Merchant data stored with the transaction. Transaction reads do not return it, so keep your
-   * own mapping from order to transaction.
+   * own mapping from order to transaction. Plain JSON only: finite numbers, no `BigInt`, `Date`, class instance, function, symbol or
+   * cycle, at most 64 levels deep; `undefined` properties are dropped.
    */
   readonly account?: PaylovJsonObject;
   /** Your id for the payer. When omitted, `pay` sets it. */
@@ -34,7 +35,10 @@ export interface RefundPaymentParams {
 
 /** Parameters for `payments.startPanPayment`. */
 export interface StartPanPaymentParams {
-  /** Full card number. PCI scope: never log or store it. */
+  /**
+   * Full card number. PCI scope: the SDK keeps it out of logger events and errors; never log or
+   * store it.
+   */
   readonly cardNumber: string;
   /**
    * Card expiry as `YYMM`, year first, e.g. `2911` for November 2029; Paylov answers
@@ -43,7 +47,10 @@ export interface StartPanPaymentParams {
   readonly cardExpiry: string;
   /** A multiple of 100: the wire takes whole SUM. Paylov answers `invalid_amount` for 0. */
   readonly amountTiyin: number;
-  /** Merchant data stored with the transaction; transaction reads do not return it. */
+  /**
+   * Merchant data stored with the transaction; transaction reads do not return it. Plain JSON only: finite numbers, no `BigInt`, `Date`, class instance, function, symbol or
+   * cycle, at most 64 levels deep; `undefined` properties are dropped.
+   */
   readonly account?: PaylovJsonObject;
 }
 

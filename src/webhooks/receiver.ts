@@ -31,12 +31,17 @@ function readCredentialDigests(pair: Params, index: number): CredentialDigests {
   return { login: sha256(login), password: sha256(pair.string('password')) };
 }
 
-/** The single Authorization header value; a repeated header is never a single value. */
+/**
+ * The single Authorization header value. A repeated header, or several keys that differ only in
+ * case, is never a single value.
+ */
 function readAuthorization(headers: unknown): unknown {
   if (headers instanceof Headers) return headers.get('authorization');
   if (!isRecord(headers)) return undefined;
-  const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization');
-  const value = key === undefined ? undefined : headers[key];
+  const [key, ...duplicates] = Object.keys(headers).filter(
+    (name) => name.toLowerCase() === 'authorization',
+  );
+  const value = key === undefined || duplicates.length > 0 ? undefined : headers[key];
   return Array.isArray(value) && value.length === 1 ? value[0] : value;
 }
 
@@ -59,7 +64,8 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
 }
 
 /**
- * Authenticates and decodes Paylov webhooks: the `transaction.cancel` notification. Moves no money and keeps no state.
+ * Authenticates and decodes Paylov webhooks: the `transaction.cancel` notification. Moves no
+ * money and keeps no state.
  *
  * `receive` never throws for anything a request carries. It checks `POST` and HTTP Basic
  * credentials against every configured pair in constant time, then returns a decoded event with
@@ -74,7 +80,8 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  * const receiver = new PaylovWebhookReceiver({
  *   credentials: [{ login: webhookLoginFromSecretManager, password: webhookPasswordFromSecretManager }],
  * });
- * const event = receiver.receive({ method: req.method, headers: req.headers, body: rawBody });
+ * // Node `http`: `headersDistinct` keeps a repeated Authorization header, `headers` drops it.
+ * const event = receiver.receive({ method: req.method, headers: req.headersDistinct, body: rawBody });
  * switch (event.kind) {
  *   case 'transaction.cancel':
  *     await markCancelledOnce(event.transactionId);

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PaylovClient } from '../../src/client.js';
+import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
 import { PaylovFakeGateway } from '../../src/testing/gateway.js';
 import { capture, captureAsync, expectApiError } from '../helpers/asserts.js';
+import { recordingLogger } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '00000000-0000-4000-8000-000000000001';
 const CARD_ID = '00000000-0000-4000-8000-000000000002';
@@ -19,39 +21,60 @@ const HOLD = {
 
 function setup(timeoutMs?: number) {
   const fake = new PaylovFakeGateway();
-  const config = timeoutMs === undefined ? fake.clientConfig : { ...fake.clientConfig, timeoutMs };
-  return { fake, paylov: new PaylovClient(config) };
+  const { logger, responses } = recordingLogger();
+  const config = {
+    ...fake.clientConfig,
+    logger,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
+  return { fake, paylov: new PaylovClient(config), responses };
+}
+
+/** What `assertDone()` reports, or `undefined` when it passes. */
+function problemsOf(fake: PaylovFakeGateway): string | undefined {
+  try {
+    fake.assertDone();
+    return undefined;
+  } catch (error) {
+    return String(error);
+  }
 }
 
 describe('PaylovFakeGateway', () => {
-  it('answers the token and revoke requests itself and records every request', async () => {
-    const { fake, paylov } = setup();
+  it('answers the token and revoke requests itself', async () => {
+    const { fake, paylov, responses } = setup();
     fake.payments.pay.reply({ transactionId: TRANSACTION_ID });
 
     await paylov.payments.pay(PAY);
     await paylov.close();
 
-    expect(fake.calls).toEqual([
-      { method: null, endpoint: 'POST /merchant/oauth2/token/' },
-      { method: 'payments.pay', endpoint: 'POST /merchant/receipts/pay/' },
-      { method: null, endpoint: 'POST /merchant/oauth2/revoke/' },
+    expect(responses.map(({ endpoint, httpStatus }) => [endpoint, httpStatus])).toEqual([
+      ['POST /merchant/oauth2/token/', 200],
+      ['POST /merchant/receipts/pay/', 200],
+      ['POST /merchant/oauth2/revoke/', 200],
     ]);
+    expect(fake.token.requests).toEqual(['password']);
+    expect(fake.payments.pay.requests).toEqual([PAY]);
     fake.assertDone();
   });
 
-  it('logs the route template of a request with identifiers', async () => {
+  it('names a request by its route template, never by its path values', async () => {
     const { fake, paylov } = setup();
-    fake.cards.delete.reply();
-    await paylov.cards.delete({ cardId: CARD_ID });
-    fake.cards.get.fail('card_not_found', { httpStatus: 404 });
-    await expectApiError(paylov.cards.get({ cardId: CARD_ID }), {
-      code: 'card_not_found',
-      httpStatus: 404,
+    const canaryId = 'CANARY-CARD-ID-NOT-A-REAL-ID';
+    await expectApiError(paylov.cards.get({ cardId: canaryId }), {
+      code: 'fake_unscripted',
+      httpStatus: 501,
     });
-    expect(fake.calls.map(({ endpoint }) => endpoint).slice(1)).toEqual([
-      'DELETE /merchant/userCard/deleteUserCard/',
-      'GET /merchant/userCard/getCard/{cardId}/',
-    ]);
+    const unrouted = await fake.fetch(`https://gateway.example/merchant/unknown/${canaryId}/`, {
+      method: 'GET',
+    });
+    expect(unrouted.status).toBe(501);
+    expect(await unrouted.text()).not.toContain(canaryId);
+
+    const problems = problemsOf(fake);
+    expect(problems).toContain('unscripted request GET /merchant/userCard/getCard/{cardId}/');
+    expect(problems).toContain('unscripted request GET (unknown route)');
+    expect(problems).not.toContain(canaryId);
   });
 
   it('serves each answer to its own method when methods share an endpoint', async () => {
@@ -61,15 +84,14 @@ describe('PaylovFakeGateway', () => {
 
     await expectApiError(paylov.transactions.get({ transactionId: TRANSACTION_ID }), {
       code: 'transaction_not_found',
+      httpStatus: 200,
     });
     await expectApiError(paylov.transactions.list({ fromDate: '2026-11-01' }), {
       code: 'field_not_valid',
       fields: ['beginDate'],
     });
-    expect(fake.calls.map(({ method }) => method).slice(1)).toEqual([
-      'transactions.get',
-      'transactions.list',
-    ]);
+    expect(fake.transactions.get.requests).toEqual([{ transactionId: TRANSACTION_ID }]);
+    expect(fake.transactions.list.requests).toEqual([{ fromDate: '2026-11-01' }]);
     fake.assertDone();
   });
 
@@ -82,7 +104,7 @@ describe('PaylovFakeGateway', () => {
       code: 'field_not_valid',
       fields: ['beginDate'],
     });
-    expect(fake.calls.at(-1)?.method).toBe('transactions.list');
+    expect(fake.transactions.get.requests).toEqual([]);
     await expectApiError(paylov.transactions.get({ transactionId: TRANSACTION_ID }), {
       code: 'server_error',
     });
@@ -134,9 +156,6 @@ describe('PaylovFakeGateway', () => {
       code: 'fake_unreadable_request',
       httpStatus: 501,
     });
-    expect(fake.calls.slice(1)).toEqual([
-      { method: null, endpoint: 'GET /merchant/payment/hold/status/' },
-    ]);
     expect(fake.holds.get.requests).toEqual([]);
     expect(
       capture(() => {
@@ -149,6 +168,31 @@ describe('PaylovFakeGateway', () => {
   });
 
   describe('fail', () => {
+    it('answers a transaction miss as the gateway does: an empty list at HTTP 200', async () => {
+      const { fake, paylov, responses } = setup();
+      fake.transactions.get.fail('transaction_not_found');
+
+      const miss = await expectApiError(
+        paylov.transactions.get({ transactionId: TRANSACTION_ID }),
+        {
+          code: 'transaction_not_found',
+          httpStatus: 200,
+        },
+      );
+      expect(isPaylovOutcomeUnknown(miss)).toBe(false);
+      expect(responses.at(-1)).toMatchObject({
+        endpoint: 'GET /merchant/getTransactions/',
+        httpStatus: 200,
+      });
+      expect(responses.at(-1)?.errorCode).toBeUndefined();
+      expect(
+        capture(() => {
+          fake.transactions.get.fail('transaction_not_found', { httpStatus: 404 });
+        }),
+      ).toBeInstanceOf(TypeError);
+      fake.assertDone();
+    });
+
     it('reports the requested fields and retry delays', async () => {
       const { fake, paylov } = setup();
       const validationFields = ['account.order_id', 'account.phone', 'amount'];
@@ -196,6 +240,34 @@ describe('PaylovFakeGateway', () => {
     });
   });
 
+  describe('token failures', () => {
+    it.each(['invalid_grant', 'card_is_blocked'] as const)(
+      'scripts a 429 %s with its Retry-After delay, which the client cools down for',
+      async (code) => {
+        const { fake, paylov } = setup();
+        fake.token.fail(code, { httpStatus: 429, retryAfterSeconds: 48 });
+
+        const error = await expectApiError(paylov.payments.pay(PAY), { code, httpStatus: 429 });
+        expect(error).toMatchObject({
+          endpoint: 'POST /merchant/oauth2/token/',
+          retryAfterSeconds: 48,
+        });
+        await expect(paylov.payments.pay(PAY)).rejects.toMatchObject({ code, httpStatus: 429 });
+        expect(fake.token.requests).toEqual(['password']);
+        expect(fake.payments.pay.requests).toEqual([]);
+      },
+    );
+
+    it('rejects a delay the gateway cannot report outside a 429', () => {
+      const { fake } = setup();
+      expect(
+        capture(() => {
+          fake.token.fail('invalid_grant', { retryAfterSeconds: 48 });
+        }),
+      ).toBeInstanceOf(TypeError);
+    });
+  });
+
   describe('reply', () => {
     it('re-authenticates after a gateway token rejection and replays once', async () => {
       const { fake, paylov } = setup();
@@ -203,12 +275,8 @@ describe('PaylovFakeGateway', () => {
       fake.payments.pay.reply({ transactionId: TRANSACTION_ID });
 
       await expect(paylov.payments.pay(PAY)).resolves.toEqual({ transactionId: TRANSACTION_ID });
-      expect(fake.calls.map(({ method }) => method)).toEqual([
-        null,
-        'payments.pay',
-        null,
-        'payments.pay',
-      ]);
+      expect(fake.token.requests).toEqual(['password', 'refresh_token']);
+      expect(fake.payments.pay.requests).toEqual([PAY, PAY]);
     });
 
     it.each([
@@ -244,7 +312,6 @@ describe('PaylovFakeGateway', () => {
         const read = captureAsync(paylov.holds.get({ transactionId: TRANSACTION_ID }));
         await vi.runAllTimersAsync();
         expect(await read).toMatchObject({ code: 'server_error', httpStatus: 500 });
-        expect(fake.calls.filter(({ method }) => method === 'holds.get')).toHaveLength(3);
         const lookup = { transactionId: TRANSACTION_ID };
         expect(fake.holds.get.requests).toEqual([lookup, lookup, lookup]);
         fake.assertDone();
@@ -332,7 +399,7 @@ describe('PaylovFakeGateway', () => {
       const pending = captureAsync(paylov.payments.pay(PAY, { signal: controller.signal }));
       await vi.waitFor(
         () => {
-          expect(fake.calls.at(-1)?.method).toBe('payments.pay');
+          expect(fake.payments.pay.requests).toHaveLength(1);
         },
         { interval: 1 },
       );

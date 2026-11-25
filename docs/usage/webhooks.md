@@ -44,6 +44,8 @@ configure the old and the new pair, ask Paylov to switch, and remove the old pai
 `event.credentialIndex` (its position in the list) shows only the new one:
 
 ```ts
+import { PaylovWebhookReceiver } from '@isroilov_an/paylov';
+
 const rotating = new PaylovWebhookReceiver({
   credentials: [
     { login: oldWebhookLogin, password: oldWebhookPassword },
@@ -117,7 +119,7 @@ function readBody(req: IncomingMessage, res: ServerResponse): Promise<Buffer | u
 async function serveNode(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readBody(req, res);
   if (body === undefined) return;
-  const status = await handleWebhook({ method: req.method, headers: req.headers, body });
+  const status = await handleWebhook({ method: req.method, headers: req.headersDistinct, body });
   res.writeHead(status).end();
 }
 
@@ -134,3 +136,10 @@ createServer((req, res) => {
 - **Deduplicate** on `transactionId`: Paylov retries up to 3 times at 60 s intervals after a non-2xx
   or no response.
 - **Invalid input** has no documented response; choose the status yourself.
+- **Only the documented notification decodes.** Any other method, such as a hosted checkout
+  `transaction.check` or `transaction.perform` request, is `unknown_method`; a `transaction.cancel`
+  with a JSON-RPC `id` is `invalid_request`, and one whose `params.status` is not `cancelled` is
+  `invalid_params`. The amount comes from `amount_in_tiyin`; the whole-SUM `amount` is ignored.
+- **Duplicate `Authorization` headers** are `unauthorized`, also as header-record keys that differ
+  only in case. With `node:http`, pass `req.headersDistinct`: `req.headers` keeps only the first
+  `Authorization` value, so a repeat goes unseen.

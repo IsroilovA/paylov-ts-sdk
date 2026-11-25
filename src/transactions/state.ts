@@ -1,17 +1,17 @@
 /** A pure decision over a `transactions.get` result. */
 
-import { isRecord } from '../core/decoding.js';
-import { invalidInput } from '../core/errors.js';
 import { readParams } from '../core/params.js';
-import type { ReadRefundStateParams, RefundState, Transaction } from './types.js';
+import type { ReadRefundStateParams, RefundState } from './types.js';
 
 const UNKNOWN: RefundState = { kind: 'unknown' };
 
 /**
- * Turns a `transactions.get` result for a sale into a refund decision, without I/O. Every status
- * the SDK cannot settle maps to `unknown`, never to a guess.
+ * Turns a `transactions.get` result for a sale or a captured hold into a refund decision, without
+ * I/O. Every status the SDK cannot settle maps to `unknown`, never to a guess: a hold that reads
+ * `refunded` is `unknown`, since a release reads the same.
  *
- * @throws {@link PaylovInputError} `sdk_invalid_input` for a missing transaction.
+ * @throws {@link PaylovInputError} `sdk_invalid_input` for a missing transaction or one that is not
+ * an object.
  *
  * @example
  * const transaction = await paylov.transactions.get({ transactionId: order.transactionId });
@@ -20,20 +20,10 @@ const UNKNOWN: RefundState = { kind: 'unknown' };
  */
 export function readRefundState(params: ReadRefundStateParams): RefundState {
   const method = 'readRefundState';
-  readParams(params, method);
-  const { transaction } = params;
-  if (!isRecord(transaction)) {
-    const message = `${method}: transaction must be a transactions.get result`;
-    throw invalidInput(message, 'transaction', 'type');
-  }
-  return stateOf(transaction);
-}
-
-function stateOf(transaction: Transaction): RefundState {
-  const { status, isHold, cancelledAt } = transaction;
+  const { status, isHold, cancelledAt } = readParams(params, method).record('transaction');
   if (status === 'paid' && cancelledAt === null) return { kind: 'not_refunded' };
   // On a hold, `refunded` marks a release, by dismissal or by Paylov after expiry.
-  if (status === 'refunded' && !isHold && cancelledAt instanceof Date) {
+  if (status === 'refunded' && isHold === false && cancelledAt instanceof Date) {
     return { kind: 'refunded', refundedAt: cancelledAt };
   }
   return UNKNOWN;

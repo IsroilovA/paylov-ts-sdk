@@ -9,7 +9,15 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { isPaylovApiError, type Card } from '../../src/index.js';
-import { liveClient, liveGate, liveUserId, observe, refused, settle } from '../helpers/live.js';
+import {
+  LiveCleanup,
+  liveClient,
+  liveGate,
+  liveUserId,
+  observe,
+  refused,
+  settle,
+} from '../helpers/live.js';
 import { uzcardTestCard } from './sandboxCards.js';
 
 const gate = await liveGate();
@@ -59,6 +67,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('cards writes: PAN binding', (
   const client = liveClient(config);
   const card = testCard.value;
   const userId = liveUserId('cards');
+  const cleanup = new LiveCleanup();
   let cardId: string | undefined;
 
   function boundCardId(): string {
@@ -66,9 +75,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('cards writes: PAN binding', (
     return cardId;
   }
 
-  afterAll(async () => {
-    if (cardId !== undefined) await settle('cards.cleanup.delete', client.cards.delete({ cardId }));
-  });
+  afterAll(() => cleanup.run());
 
   it('startPanBinding then confirmPanBinding binds the card', async () => {
     const started = await client.cards.startPanBinding({
@@ -76,8 +83,13 @@ describe.skipIf(!writes || testCard?.ok !== true)('cards writes: PAN binding', (
       cardNumber: card.pan,
       cardExpiry: card.expiry,
     });
-    expect(started.otpSentPhone.length).toBeGreaterThan(0);
+    cleanup.add(
+      'cards.cleanup.delete',
+      () => client.cards.delete({ cardId: started.cardId }),
+      'card_not_found',
+    );
     cardId = started.cardId;
+    expect(started.otpSentPhone.length).toBeGreaterThan(0);
 
     const confirmed = await client.cards.confirmPanBinding({
       cardId: started.cardId,
@@ -119,7 +131,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('cards writes: PAN binding', (
   it('delete unbinds the card; list and get drop it once their caches expire', async () => {
     const id = boundCardId();
     await expect(client.cards.delete({ cardId: id })).resolves.toBeUndefined();
-    cardId = undefined;
     const deletedAt = Date.now();
     const again = await refused('cards.delete.repeat', client.cards.delete({ cardId: id }));
     expect(again.code).toBe('card_not_found');

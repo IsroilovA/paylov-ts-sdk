@@ -1,12 +1,13 @@
 /** A pure decision over a `holds.get` result. */
 
-import { isRecord } from '../core/decoding.js';
-import { invalidInput } from '../core/errors.js';
+import { isTiyin } from '../core/money.js';
 import { readParams } from '../core/params.js';
-import type { Hold, HoldState, HoldTransactionRead, ReadHoldStateParams } from './types.js';
+import type { HoldState, ReadHoldStateParams } from './types.js';
 
 const UNKNOWN: HoldState = { kind: 'unknown' };
 const DECLINED: HoldState = { kind: 'declined' };
+
+type Fields = Readonly<Record<string, unknown>>;
 
 /**
  * Turns a `holds.get` result into a decision, without I/O. Every status the SDK cannot settle
@@ -31,35 +32,35 @@ export function readHoldState(params: ReadHoldStateParams): HoldState {
   const input = readParams(params, method);
   const deadline = input.date('clientCaptureDeadline');
   const now = input.date('now');
-  const { hold, transaction } = params;
-  if (!isRecord(hold)) {
-    throw invalidInput(`${method}: hold must be a holds.get result`, 'hold', 'type');
-  }
-  if (transaction !== undefined && !isRecord(transaction)) {
-    const message = `${method}: transaction must be a transactions.get result`;
-    throw invalidInput(message, 'transaction', 'type');
-  }
-  if (hold.status === 'declined') return isDeclineConfirmed(hold, transaction) ? DECLINED : UNKNOWN;
-  return stateOf(hold, now.getTime() < deadline.getTime());
+  const hold = input.record('hold');
+  const transaction = input.optionalRecord('transaction');
+  return stateOf(hold, transaction, now.getTime() < deadline.getTime());
 }
 
 /** Paylov documents a transaction's `failed`, not the hold record's `check`. */
-function isDeclineConfirmed(hold: Hold, transaction: HoldTransactionRead | undefined): boolean {
-  if (hold.capturedAt !== null || hold.releasedAt !== null || transaction === undefined) {
-    return false;
-  }
-  const { transactionId, isHold, status } = transaction;
-  return transactionId === hold.transactionId && isHold && status === 'failed';
+function isFailedHoldOf(transactionId: unknown, transaction: Fields | undefined): boolean {
+  if (typeof transactionId !== 'string' || transaction === undefined) return false;
+  const { transactionId: readId, isHold, status } = transaction;
+  return readId === transactionId && isHold === true && status === 'failed';
 }
 
-function stateOf(hold: Hold, isBeforeDeadline: boolean): HoldState {
-  const { status, capturedAt, releasedAt, amountTiyin } = hold;
-  if (status === 'captured' && capturedAt instanceof Date && releasedAt === null) {
+function stateOf(
+  hold: Fields,
+  transaction: Fields | undefined,
+  isBeforeDeadline: boolean,
+): HoldState {
+  const { transactionId, status, amountTiyin, capturedAt, releasedAt } = hold;
+  const isSettled = capturedAt !== null || releasedAt !== null;
+  if (status === 'declined') {
+    return !isSettled && isFailedHoldOf(transactionId, transaction) ? DECLINED : UNKNOWN;
+  }
+  const isAmount = isTiyin(amountTiyin);
+  if (status === 'captured' && capturedAt instanceof Date && releasedAt === null && isAmount) {
     return { kind: 'captured', amountTiyin, capturedAt };
   }
   if (status === 'released' && releasedAt instanceof Date && capturedAt === null) {
     return { kind: 'released', releasedAt };
   }
-  if (capturedAt !== null || releasedAt !== null || status !== 'held') return UNKNOWN;
+  if (isSettled || status !== 'held') return UNKNOWN;
   return isBeforeDeadline ? { kind: 'open' } : { kind: 'possibly_expired' };
 }

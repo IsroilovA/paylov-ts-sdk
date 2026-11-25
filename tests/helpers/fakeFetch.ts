@@ -37,7 +37,7 @@ export interface FakeResponseSpec {
 }
 
 /** A barrier that tells a test when a call reached the fake and lets it choose when to answer. */
-export interface ResponseGate {
+interface ResponseGate {
   /** Resolves once the gated call has reached the fake. */
   readonly started: Promise<void>;
   /** Lets the gated call answer. */
@@ -101,7 +101,7 @@ function headersToRecord(init: RequestInit['headers']): Record<string, string> {
  * @example
  * const fetchImpl = createFakeFetch([{ status: 500 }, { body: { result: { ok: true } } }]);
  * const http = createHttpClient({ origin: 'https://api.test', fetch: fetchImpl });
- * await http.request({ method: 'GET', path: '/merchant/status/', shape: 'envelope' });
+ * await http.request({ method: 'GET', route: '/merchant/status/', shape: 'envelope', effect: 'read' });
  * expect(fetchImpl.calls).toHaveLength(2);
  */
 export function createFakeFetch(script: FakeResponseSpec[]): FetchLike & { calls: FakeCall[] } {

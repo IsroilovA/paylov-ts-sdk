@@ -42,10 +42,11 @@ features, which the SDK's applications do not need:
   or OFD provider of their own.
 
 The reference keeps no open questions for them, and no research apart from the hosted-checkout, Card
-Bind and fiscalization facts in [paylov/checkout.md](paylov/checkout.md),
-[paylov/cards.md](paylov/cards.md) and [paylov/fiscalization.md](paylov/fiscalization.md); adding
-one starts from the vendor mirror. Transaction rows still decode `isA2c`, and holds keep their
-optional `serviceId`: those are data of supported surfaces.
+Bind, fiscalization and A2C `merchant.deposit` facts in [paylov/checkout.md](paylov/checkout.md),
+[paylov/cards.md](paylov/cards.md), [paylov/fiscalization.md](paylov/fiscalization.md) and
+[paylov/callbacks.md](paylov/callbacks.md#merchantdeposit); adding one starts from the vendor
+mirror. Transaction rows still decode `isA2c`, and holds keep their optional `serviceId`: those are
+data of supported surfaces.
 
 Any other endpoint without a known success shape stays out until Paylov documents one, because a
 decoder would have to guess; [paylov/README.md](paylov/README.md#surface-outside-the-sdk) lists them
@@ -77,31 +78,45 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   after `close()`), API (a gateway code), protocol (an undecodable or unexpected response) and
   connection (timeout, network, abort). Never infer a class from a code's name; unknown codes stay
   plain API errors.
-- `isPaylovOutcomeUnknown` is the one definition of an ambiguous failure. Docs and JSDoc refer to it
-  instead of restating the predicate. On an endpoint that moves money, the generic codes
-  `processing_error`, `unknown_error` and `error_at_pay` count as ambiguous: they name no reason,
-  and Paylov documents neither their triggers nor whether money moved (a maintainer decision). The
-  endpoint declaration carries that classification, so the predicate never matches routes. Specific
-  declines stay definitive. A connection error records whether any attempt reached fetch (`isSent`),
-  because an abort before that provably sent nothing.
-- Decoders report failures as an internal decode failure carrying only the path. It becomes a public
-  protocol error only where a response exists; the webhook receiver maps it to an outcome. Any other
-  exception from a decoder is an SDK bug and propagates.
+- An ambiguous failure has one carrier: `isOutcomeUnknown`, set when the error is built and read
+  through `isPaylovOutcomeUnknown`. Docs and JSDoc refer to the predicate instead of restating it.
+  Each endpoint declares its effect (`read`, `write`, `money`), and the response context carries it,
+  so neither the predicate nor the transport matches routes. A read is never ambiguous: its
+  reconciliation must not need reconciling. A write is ambiguous after a 5xx, a protocol error, or a
+  connection failure once sent. On a `money` endpoint the generic codes `processing_error`,
+  `unknown_error` and `error_at_pay` count too: they name no reason, and Paylov documents neither
+  their triggers nor whether money moved (a maintainer decision). Specific declines stay definitive.
+  Methods sharing a route with different effects (`splits.create`, `splits.resendReceipt`) declare
+  separate endpoints.
+- The flag describes the requested operation, not the request that failed. A token-grant failure
+  keeps the token endpoint and code for diagnostics but stays known, as does an abort after a 401
+  rejection and before its replay: no attempt that could execute the operation was sent. A grant's
+  error is shared by its waiters, the password latch and the cool-down, so each caller gets its own
+  copy, known outcome or not: an application decorating one error must not change another's. GET
+  endpoints are reads by type, so a retried attempt never leaves anything to reconcile. `isSent`
+  stays a plain transport fact: whether any attempt of the call reached fetch.
+- Decoders throw an internal decode failure carrying only the path, or an internal decoded miss
+  carrying the gateway's not-found code for a success body that means a miss. `decodePayload` is the
+  only converter of either into a public error, and runs only where a response exists; the webhook
+  receiver maps a decode failure to an outcome. Any other exception from a decoder is an SDK bug and
+  propagates.
 - API errors never read `message`, which Paylov documents as display text not to be parsed, and
   never give a code a meaning by HTTP status, which Paylov does not document: callers branch on
   `code`.
-- A method maps a code to a value only when it is a verified not-found answer. `phone_not_match` is
-  not one: DEV answers it for the card's own phone too ([cards](paylov/cards.md)).
+- A method maps an error code to a value only where the code is the method's documented answer:
+  `invalid_or_expired` is `PaylovOnboarding.checkToken`'s `false`. A lookup miss stays an error.
+  `phone_not_match` is no such answer: DEV answers it for the card's own phone too
+  ([cards](paylov/cards.md)).
 - Errors and logger events carry allowlisted metadata only, because key-based redaction cannot make
   arbitrary payload strings safe.
-- Caller input is checked only for presence and type, the money invariant, path and link safety, and
-  SDK configuration. Paylov owns business validation (bounds, lengths, formats, id shapes): a local
-  copy drifts from the gateway, whose limits are mostly measured on DEV alone, and makes callers
-  handle one failure in two shapes (`sdk_invalid_input` and the gateway's code).
+- Caller input is checked only for presence and type, the money invariant, path safety, and SDK
+  configuration. Paylov owns business validation (bounds, lengths, formats, id shapes): a local copy
+  drifts from the gateway, whose limits are mostly measured on DEV alone, and makes callers handle
+  one failure in two shapes (`sdk_invalid_input` and the gateway's code).
 - Response decoders establish the public type and the conversions the SDK owns: money units,
-  timestamps of known zone, `…Raw` text and status words. For the same reason they do not re-check
-  Paylov's invariants (id shapes, non-empty text, echoed statuses, cross-field consistency). The
-  remaining checks guard SDK promises:
+  timestamps of known zone and status words. For the same reason they do not re-check Paylov's
+  invariants (id shapes, non-empty text, echoed statuses, cross-field consistency). The remaining
+  checks guard SDK promises:
   - a masked card number, because anything else may be a full PAN;
   - the id `transactions.get` echoes, because without a usable id the endpoint lists other
     transactions.
@@ -118,19 +133,27 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   response does not prove the operation did not execute. The GET retry count is bounded so a
   misconfiguration cannot turn one read into a request storm.
 - Nothing retries a 429: the gateway asks for tens of seconds, so callers read `retryAfterSeconds`.
-  A 429 whose body read fails stays a 429, so it still starts the token cool-down.
+  A 429 whose body read fails stays a 429, and any 429 keeps its `Retry-After` delay whatever its
+  body holds, a delay in the body included, so it still starts the token cool-down for that long. A
+  429 is never a credential verdict: no `invalid_grant` it carries latches the client or falls back
+  to the password grant.
 - One re-authentication replay follows a 401 carrying the enveloped `permission_denied`, for any
   method. Replaying a POST is safe because Bearer authentication rejects before the handler runs: a
   `hold/create` refused with 401 for a superseded or malformed token left no transaction, while the
   same body with a valid token created a hold (W c1493–c1505,
   [Bearer failures](paylov/authentication.md#bearer-failures)). A bare 401 comes from a proxy,
-  proves nothing about the token, and is never replayed.
+  proves nothing about the token, and is never replayed; nor is an envelope without `result: null`,
+  which contradicts the documented rejection and so does not prove the request did not execute.
 - A caller's abort is final and abandons only that caller's wait on a shared token grant, never the
   grant.
 - Redirects are not followed. Deadlines cover body reading even when an injected fetch ignores
   abort. Logger failures never delay or fail a request.
 - The transport receives the declared endpoint and fills its route itself, so logs and errors name
   the route template and never a filled path.
+- The transport runs the endpoint's decoder before it emits the attempt's response event, so the
+  event reports a 2xx that breaks the method's contract, and an unacknowledged revocation, which
+  nothing else reports. A miss decoded from a success body is a successful exchange and logs no
+  code.
 
 ## Authentication lifecycle
 
@@ -141,12 +164,12 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   can lock the merchant account. Recovery is a new client.
 - A token-endpoint 429 starts a cool-down without I/O instead of a lock.
 - `close()` waits for an in-flight grant, revokes the newest token, and always resolves once closed
-  locally; a failed revocation appears only in logger events and leaves the token valid until it
-  expires. Later calls throw `sdk_client_closed`. It does not wait for requests already sent:
-  production revocation is assumed immediate
-  ([authentication](paylov/authentication.md#revoke-tokens)), so one still in flight may answer 401
-  and its single replay fails with `sdk_client_closed`. The 401 proves it never ran, so draining is
-  left to the caller.
+  locally; a failed revocation, or one answered with anything but the recorded acknowledgement,
+  appears only in logger events and leaves the token valid until it expires. Later calls throw
+  `sdk_client_closed`. It does not wait for requests already sent: production revocation is assumed
+  immediate ([authentication](paylov/authentication.md#revoke-tokens)), so one still in flight may
+  answer 401 and its single replay fails with `sdk_client_closed`. The 401 proves it never ran, so
+  draining is left to the caller.
 - One long-lived client per credential set per process. A shared token cache cannot coordinate
   rotation safely, because a refresh invalidates the old refresh token; distributed auth needs a
   separately approved design with locking and time bounds.
@@ -157,8 +180,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   readers validate and convert once, rejecting values the wire cannot represent exactly.
 - Amount bounds are Paylov's ([Responses and errors](#responses-and-errors)). Money whose unit is
   not stated is withheld, never inferred.
-- Timestamps become `Date` only where the zone is known; others stay strings in `…Raw` fields. Zones
-  per field: [usage/money-and-time.md](usage/money-and-time.md#dates-and-times).
+- Timestamps become `Date` only where the zone is known; a timestamp of unknown zone is withheld,
+  like money of unknown unit. Zones per field:
+  [usage/money-and-time.md](usage/money-and-time.md#dates-and-times).
 
 ## Holds and recovery
 
@@ -182,8 +206,8 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   caller cannot mistake a miss for an empty record and cannot skip it silently. Where Paylov reports
   a miss only through a success body (`transactions.get`'s empty list), the SDK throws that
   endpoint's not-found code itself (`transaction_not_found`, as `holds.get` does), definitive and
-  never unsettled. `null` remains only where it is a documented state, not a miss (a fiscal receipt
-  not registered yet).
+  never an unknown outcome. `null` remains only where it is a documented state, not a miss (a fiscal
+  receipt not registered yet).
 - A refund receipt comes from `payments.refund`, which registers it in the background;
   `refundReceipt` runs only when `getReceipt({ isRefund: true })` still shows none minutes later.
   The docs reserve the direct refund for that case

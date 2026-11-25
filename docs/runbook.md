@@ -68,8 +68,9 @@ git-ignored `captures/` and never committed: they hold unredacted DEV identifier
    Never probe wrong credentials.
 3. Run other probes with `node --env-file=<env file> scripts/probes/<probe>.mjs`. State-changing
    probes track every card and hold they create for cleanup.
-4. Audit the captures with `node --env-file=<env file> scripts/probes/scanCaptures.mjs`. Back up the
-   directory before a `--fix` run, then scan again to confirm zero hits.
+4. Audit the captures with `node --env-file=<env file> scripts/probes/scanCaptures.mjs`; with the
+   same env file it reads the directory the probes wrote to. Back up the directory before a `--fix`
+   run, then scan again to confirm zero hits.
 5. If cleanup fails or a resource was created untracked or ambiguously, reconcile it by hand before
    the next run.
 6. Delete temporary credential files. Promote evidence through the
@@ -80,8 +81,11 @@ git-ignored `captures/` and never committed: they hold unredacted DEV identifier
 
 Pushing to `main` releases: [`release.yml`](../.github/workflows/release.yml) runs the CI checks,
 then publishes `package.json`'s version to npm unless that version is already there, then tags
-`vX.Y.Z` and creates the GitHub release from the version's `CHANGELOG.md` section. Never tag or
-publish by hand.
+`vX.Y.Z` and creates the GitHub release from the version's `CHANGELOG.md` section. For a version
+already on npm, a later push only fills in a missing tag or release, at the commit npm recorded for
+that version (`npm view <package>@<version> gitHead`). It fails without tagging when npm records no
+commit, the remote tag cannot be read, or an existing tag points elsewhere; take that to the
+maintainer. Never tag or publish by hand.
 
 1. On `dev`, set the version and move `Unreleased` `CHANGELOG.md` entries under a dated
    `## [X.Y.Z] - YYYY-MM-DD` heading with its `[X.Y.Z]:` release link; `check:changelog` fails

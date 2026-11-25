@@ -8,8 +8,16 @@ for these policies.
 - A caller's abort is final: never retry `sdk_aborted`, and abandon only the caller's wait on a
   shared token grant, never the grant itself. Its `isSent` is `false` only while no attempt of the
   call has reached fetch.
-- Decoders throw only `DecodeFailure`. Convert it to a public error only where a response exists
-  (`decodePayload`), and never catch other exceptions around a decoder.
+- Decoders throw only `DecodeFailure` or `DecodedMiss`. `decodePayload` is their only converter to a
+  public error, used only where a response exists; never catch other exceptions around a decoder.
+- The transport runs the endpoint's decoder before it emits an attempt's response event, exactly
+  once per attempt; a decoded miss logs no code. Never emit the event before decoding.
+- `isOutcomeUnknown` is the only carrier of an ambiguous outcome: set it when the error is built,
+  from the requested endpoint's effect, and add no second flag or predicate. It describes the
+  requested operation: a failure before any attempt that could execute it (a failed grant, a refusal
+  before fetch) is known. Derive a caller's copy of a shared grant error; never mutate it.
+- GET endpoints are reads. Keep them so: GET-only retries rely on a retried attempt changing
+  nothing.
 - `close()` never rejects after the local close; report revocation failures through logger events.
 - Logger hooks run synchronously and may close the client or abort the call. Recheck both after the
   request hook, immediately before fetch, and register a shared grant before starting work that can

@@ -28,19 +28,21 @@
  * - `probe.id(value, kind)` returns a stable placeholder such as `<user 1>` for an identifier.
  * - `probe.track.card(cardId)` and `probe.track.hold(transactionId)` register created resources
  *   immediately. Closing releases holds, then deletes cards, even after a thrown probe, and rejects
- *   when any cleanup fails.
+ *   when any cleanup fails or answers without Paylov's acknowledgement (`status: "cancelled"` for
+ *   the released hold, `result: true` for a deleted card).
  *
  * Every response, including the grant and cleanup, is written to the git-ignored `captures/`, or to
- * `PAYLOV_CAPTURE_DIR` outside this checkout, as `NNN_<label>.json`, numbered across labels. A capture keeps the redacted
- * request with query values replaced, the status, `content-type`, `retry-after` and `keepHeaders`,
- * and the redacted body. A re-read scan deletes the capture and throws when a known secret,
+ * `PAYLOV_CAPTURE_DIR` outside this checkout, as `NNN_<label>.json`, numbered across labels. A
+ * capture keeps the redacted request with query values replaced, the status, `content-type`,
+ * `retry-after` and `keepHeaders`, and the redacted body. `keepHeaders` refuses cookie,
+ * authorization, token, session and key headers. A re-read scan deletes the capture and throws when a known secret,
  * Luhn-valid PAN or JWT remains; that is a backstop, not permission to send unregistered secrets.
  * Tokens stay in memory.
  */
 
 import { setTimeout } from 'node:timers/promises';
 
-import { assertDevUrl, env, readSandboxConfig, SANDBOX_GRAPHQL_URL } from '../sandboxConfig.mjs';
+import { assertDevUrl, readSandboxConfig, SANDBOX_GRAPHQL_URL } from '../sandboxConfig.mjs';
 import { assertCaptureLabel, sdkCommit, writeCapture } from './captures.mjs';
 import { captureDirectory } from './paths.mjs';
 import { loadRedactor } from './redaction.mjs';
@@ -102,6 +104,16 @@ function redactedUrl(url, redactor) {
   return redactor.replace(safe.href);
 }
 
+/** Headers that carry credentials or sessions, which no capture may keep. */
+const credentialHeader = /cookie|auth|token|secret|session|password|key/i;
+
+/** @param {readonly string[]} names */
+function assertKeepableHeaders(names) {
+  const refused = names.filter((name) => credentialHeader.test(name));
+  if (refused.length > 0)
+    throw new Error(`keepHeaders refused credential-bearing headers: ${refused.join(', ')}`);
+}
+
 /** @param {Headers} headers @param {readonly string[]} extra */
 function capturedHeaders(headers, extra) {
   return Object.fromEntries(
@@ -118,7 +130,7 @@ export async function openProbe({ label }) {
   const loaded = readSandboxConfig();
   if (typeof loaded === 'string') throw new Error(loaded);
   const config = loaded;
-  const directory = await captureDirectory(env('PAYLOV_CAPTURE_DIR'));
+  const directory = await captureDirectory();
   const redactor = loadRedactor();
   const commit = sdkCommit();
   const basic = `Basic ${Buffer.from(`${config.consumerKey}:${config.consumerSecret}`).toString('base64')}`;
@@ -145,6 +157,7 @@ export async function openProbe({ label }) {
 
   /** @param {string} method @param {URL} url @param {RestOptions} options @returns {Promise<ProbeResponse>} */
   async function send(method, url, options) {
+    assertKeepableHeaders(options.keepHeaders ?? []);
     for (const [name, value] of Object.entries(options.query ?? {}))
       url.searchParams.set(name, String(value));
     assertDevUrl(url, url.origin === graphqlOrigin ? 'graphql' : 'rest');
@@ -253,14 +266,18 @@ export async function openProbe({ label }) {
   }
 
   /**
+   * Accepts only the gateway's recorded acknowledgement, never any other 2xx body.
    * @param {string} kind @param {string} method @param {string} path @param {RestOptions} options
+   * @param {(result: unknown) => boolean} acknowledged
    * @returns {Promise<string | undefined>} a value-free failure message
    */
-  async function cleanResource(kind, method, path, options) {
+  async function cleanResource(kind, method, path, options, acknowledged) {
     try {
-      const result = await send(method, new URL(path, config.baseUrl), options);
-      if (result.status < 200 || result.status >= 300) return `${kind} HTTP ${result.status}`;
-      if (isRecord(result.body) && result.body['error']) return `${kind} gateway error`;
+      const response = await send(method, new URL(path, config.baseUrl), options);
+      if (response.status < 200 || response.status >= 300) return `${kind} HTTP ${response.status}`;
+      const { body } = response;
+      if (!isRecord(body) || body['error'] !== null || !acknowledged(body['result']))
+        return `${kind} unacknowledged`;
       return undefined;
     } catch {
       return `${kind} cleanup failed`;
@@ -271,15 +288,26 @@ export async function openProbe({ label }) {
     const failures = [];
     for (const transactionId of holds)
       failures.push(
-        await cleanResource('hold', 'POST', '/merchant/payment/hold/dismiss/', {
-          body: { transactionId },
-        }),
+        await cleanResource(
+          'hold',
+          'POST',
+          '/merchant/payment/hold/dismiss/',
+          { body: { transactionId } },
+          (result) =>
+            isRecord(result) &&
+            result['transactionId'] === transactionId &&
+            result['status'] === 'cancelled',
+        ),
       );
     for (const cardId of cards)
       failures.push(
-        await cleanResource('card', 'DELETE', '/merchant/userCard/deleteUserCard/', {
-          query: { userCardId: cardId },
-        }),
+        await cleanResource(
+          'card',
+          'DELETE',
+          '/merchant/userCard/deleteUserCard/',
+          { query: { userCardId: cardId } },
+          (result) => result === true,
+        ),
       );
     const messages = failures.filter((failure) => failure !== undefined);
     if (messages.length > 0) throw new Error(`probe cleanup: ${messages.join(', ')}`);

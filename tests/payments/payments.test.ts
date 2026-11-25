@@ -1,3 +1,5 @@
+import { runInNewContext } from 'node:vm';
+
 import { describe, expect, it } from 'vitest';
 
 import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
@@ -8,6 +10,7 @@ import {
   expectInputError,
   expectMalformed,
   expectNoSecretLeak,
+  recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
 import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
@@ -93,6 +96,22 @@ describe('payments.create', () => {
     },
   );
 
+  it('sends a record from another realm, and array contents by index as JSON does', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('payments/create.success.wire.json')]);
+    const lines = [1];
+    Object.defineProperty(lines, Symbol.iterator, {
+      value: function* () {
+        yield 2;
+      },
+    });
+    const account = { order: 1, lines };
+    Object.setPrototypeOf(account, recordOf(runInNewContext('Object.prototype')));
+
+    await resource.create({ amountTiyin: 100, account });
+
+    expect(fetchImpl.calls[0]?.body).toEqual({ amount: 1, account: { order: 1, lines: [1] } });
+  });
+
   it('rejects a blank userId before any request', async () => {
     const { resource, fetchImpl } = setup([]);
 
@@ -123,13 +142,13 @@ describe('payments.pay', () => {
       wireResponse('payments/pay.cardNotForCheck.wire.json'),
     ]);
 
-    for (const [code, isUnsettled] of [
+    for (const [code, isOutcomeUnknown] of [
       ['processing_error', true],
       ['card_is_not_for_this_check', false],
     ] as const) {
       const error = await captureAsync(resource.pay(params));
-      expect(error).toMatchObject({ code, isUnsettled });
-      expect(isPaylovOutcomeUnknown(error)).toBe(isUnsettled);
+      expect(error).toMatchObject({ code });
+      expect(isPaylovOutcomeUnknown(error)).toBe(isOutcomeUnknown);
     }
   });
 
@@ -188,7 +207,7 @@ describe('payments.refund', () => {
     ]);
 
     const error = await captureAsync(resource.refund({ transactionId: TRANSACTION_ID }));
-    expect(error).toMatchObject({ code: 'processing_error', isUnsettled: true });
+    expect(error).toMatchObject({ code: 'processing_error' });
     expect(isPaylovOutcomeUnknown(error)).toBe(true);
   });
 
@@ -236,7 +255,9 @@ describe('payments.refund', () => {
 
 describe('payments.startPanPayment', () => {
   it('posts the card, whole SUM and account, never an extId, and returns the OTP phone', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('payments/startPan.success.wire.json')]);
+    const { resource, fetchImpl } = setup([
+      wireResponse('payments/startPanPayment.success.wire.json'),
+    ]);
 
     const started = await resource.startPanPayment(startPanParams);
 
@@ -254,7 +275,9 @@ describe('payments.startPanPayment', () => {
   });
 
   it('sends an omitted account as the required {}', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('payments/startPan.success.wire.json')]);
+    const { resource, fetchImpl } = setup([
+      wireResponse('payments/startPanPayment.success.wire.json'),
+    ]);
 
     await resource.startPanPayment({
       cardNumber: PAN,
@@ -288,7 +311,7 @@ describe('payments.startPanPayment', () => {
 
   it('keeps the card number and expiry out of logger events and errors', async () => {
     const { resource, requests, responses } = setup([
-      wireResponse('payments/startPan.cardNotFound.wire.json'),
+      wireResponse('payments/startPanPayment.cardNotFound.wire.json'),
     ]);
 
     const apiError = await expectApiError(resource.startPanPayment(startPanParams), {
@@ -314,7 +337,7 @@ describe('payments.startPanPayment', () => {
 describe('payments.confirmPanPayment', () => {
   it('posts the transaction id and OTP and returns the transaction id', async () => {
     const { resource, fetchImpl, requests } = setup([
-      wireResponse('payments/confirmPan.success.wire.json'),
+      wireResponse('payments/confirmPanPayment.success.wire.json'),
     ]);
 
     const confirmed = await resource.confirmPanPayment({

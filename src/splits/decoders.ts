@@ -44,12 +44,14 @@ export const decodeSplit: Decoder<Split> = (value, path) => {
   };
 };
 
-/** `splitPayment/` result of a `resendOFD` call. */
+/**
+ * `splitPayment/` result of a `resendOFD` call. `lastOfdError` is skipped: it is the OFD's raw
+ * answer to the previous submission.
+ */
 export const decodeSplitReceiptResent: Decoder<SplitReceiptResent> = (value, path) => {
   const field = readFields(value, path);
   return {
     transactionId: field('transactionId', asString),
     status: field('status', asString),
-    lastOfdError: field('lastOfdError', asString),
   };
 };

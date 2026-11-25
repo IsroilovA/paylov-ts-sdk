@@ -41,7 +41,8 @@ Server-side TypeScript SDK for the Paylov payment gateway.
 ## Contracts
 
 - Read the owning `docs/paylov/` page and fixtures before endpoint changes. Never guess undocumented
-  behavior; track it as an `[OPEN Qn]` question in `docs/paylov/open-questions.md`.
+  behavior. Track it as an `[OPEN Qn]` question in `docs/paylov/open-questions.md` only when its
+  answer would change the SDK; otherwise record the gap on the owning page.
 - Never edit `docs/vendor/paylov/` outside an explicitly authorized vendor sync.
 - Unreleased: replace, never deprecate. No compatibility shims, dual paths, or migration notes.
 - Refactor first so the change fits, then make it.

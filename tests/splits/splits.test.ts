@@ -9,7 +9,7 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { wireResponse } from '../helpers/fixtures.js';
+import { fixtureResponse, loadWire, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
@@ -121,7 +121,9 @@ describe('splits.create', () => {
 
 describe('splits.resendReceipt', () => {
   it('sends the recipients with their items and resendOFD, and reads the resend answer', async () => {
-    const { resource, fetchImpl } = setup(wireResponse('splits/resendReceipt.success.wire.json'));
+    const fixture = 'splits/resendReceipt.success.wire.json';
+    const { resource, fetchImpl } = setup(wireResponse(fixture));
+    const diagnostic = recordOf(recordOf(loadWire(fixture).body)['result'])['lastOfdError'];
 
     const resent = await resource.resendReceipt({
       transactionId: TRANSACTION_ID,
@@ -140,9 +142,10 @@ describe('splits.resendReceipt', () => {
     expect(resent).toEqual({
       transactionId: '5eed0000-0000-4000-8000-000000000202',
       status: 'sent_to_ofd',
-      lastOfdError:
-        "{'Code': 30, 'Message': 'failed to validate receipt item spic: invalid package code values of items: [0]'}",
     });
+    // The OFD's raw diagnostic for the previous submission never reaches the result.
+    expect(diagnostic).toEqual(expect.any(String));
+    expectNoSecretLeak(resent, [String(diagnostic)]);
   });
 
   it('rejects a recipient without items before any request', async () => {
@@ -176,6 +179,27 @@ describe('splits.get', () => {
       createdAt: new Date('2026-11-25T06:56:19Z'),
     };
     expect(split).toEqual({ shares: [share, share], receipt: null });
+  });
+
+  it('reads each recipient its own share', async () => {
+    const { resource } = setup(fixtureResponse('splits/get.twoRecipients.synthesized.json'));
+
+    const split = await resource.get({ transactionId: TRANSACTION_ID });
+
+    expect(split.shares).toEqual([
+      {
+        recipientId: RECIPIENT,
+        amountTiyin: 30_000,
+        status: 'paid',
+        createdAt: new Date('2026-11-25T06:56:19Z'),
+      },
+      {
+        recipientId: '5eed0000-0000-4000-8000-000000000102',
+        amountTiyin: 70_000,
+        status: 'cancelled',
+        createdAt: new Date('2026-11-25T06:57:20Z'),
+      },
+    ]);
   });
 
   it('reads the fiscal receipt entry that follows the shares', async () => {

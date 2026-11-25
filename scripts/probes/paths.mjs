@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
+import { env } from '../sandboxConfig.mjs';
 import { ProbeError } from './probeError.mjs';
 
 export const repositoryRoot = resolve(import.meta.dirname, '../..');
@@ -61,12 +62,37 @@ async function allowedCaptureTarget(path) {
   return target;
 }
 
-/** Checks the path again after creation, so a directory swapped in meanwhile is refused.
- * @param {string | undefined} path defaults to {@link repositoryCaptures}
+/** The probe writer and the capture audit choose the same directory: an explicit path, then
+ * `PAYLOV_CAPTURE_DIR`, then {@link repositoryCaptures}.
+ * @param {string | undefined} explicit
+ */
+function chosenCaptureDirectory(explicit) {
+  const path = explicit?.trim() === '' ? undefined : explicit;
+  return path ?? env('PAYLOV_CAPTURE_DIR') ?? repositoryCaptures;
+}
+
+/** The directory probes write to, created if missing and checked again after creation, so a
+ * directory swapped in meanwhile is refused.
+ * @param {string} [path] overrides `PAYLOV_CAPTURE_DIR`
  */
 export async function captureDirectory(path) {
-  const chosen = path === undefined || path.trim() === '' ? repositoryCaptures : path;
-  const target = await allowedCaptureTarget(chosen);
+  const target = await allowedCaptureTarget(chosenCaptureDirectory(path));
   await mkdir(target, { recursive: true, mode: 0o700 });
   return allowedCaptureTarget(target);
+}
+
+/** The existing directory the audit reads; a missing one is an error, never created.
+ * @param {string} [path] overrides `PAYLOV_CAPTURE_DIR`
+ */
+export async function auditedCaptureDirectory(path) {
+  const target = await allowedCaptureTarget(chosenCaptureDirectory(path));
+  let stats;
+  try {
+    stats = await stat(target);
+  } catch (error) {
+    if (hasErrorCode(error, 'ENOENT')) throw new ProbeError('capture directory does not exist');
+    throw error;
+  }
+  if (!stats.isDirectory()) throw new ProbeError('capture path is not a directory');
+  return target;
 }

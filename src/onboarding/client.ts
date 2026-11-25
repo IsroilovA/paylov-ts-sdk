@@ -15,8 +15,8 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  checkToken: { method: 'GET', route: '/merchant/onboarding/', shape: 'flat' },
-  complete: { method: 'POST', route: '/merchant/onboarding/', shape: 'flat' },
+  checkToken: { method: 'GET', route: '/merchant/onboarding/', shape: 'flat', effect: 'read' },
+  complete: { method: 'POST', route: '/merchant/onboarding/', shape: 'flat', effect: 'write' },
 } as const;
 
 /**
@@ -45,7 +45,7 @@ export class PaylovOnboarding {
   /**
    * Checks whether an onboarding token can still be used (`GET /merchant/onboarding/?token=`).
    * Resolves `false` when Paylov reports the token unknown, consumed or expired
-   * (`invalid_or_expired`).
+   * (`invalid_or_expired`). Moves no money.
    *
    * @throws {@link PaylovApiError} any other gateway error, e.g. `validation_error`.
    *
@@ -74,14 +74,14 @@ export class PaylovOnboarding {
    * (`POST /merchant/onboarding/?token=`). The token is single-use and `consumerSecret` is shown
    * only once: persist the whole result before doing anything else. The account stays inactive
    * until Paylov activates it; until then a `PaylovClient` with these credentials fails with
-   * `invalid_grant`.
+   * `invalid_grant`. Moves no money.
    *
    * Recovery: never retried. When `isPaylovOutcomeUnknown(error)`, the credentials may have been
    * issued and lost: call `checkToken`; `true` means `complete` can run again, `false` that the
    * token was used, so ask Paylov to reissue the credentials.
    *
    * @throws {@link PaylovApiError} `validation_error` (see `fields`), or `invalid_or_expired`
-   *   for an unknown, used or expired token.
+   * for an unknown, used or expired token.
    *
    * @example
    * const credentials = await onboarding.complete({

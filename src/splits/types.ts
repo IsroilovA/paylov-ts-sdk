@@ -44,13 +44,14 @@ export interface SplitReceiptRecipient extends SplitRecipient {
 /** The resubmission status Paylov reports. Open: Paylov may add values. */
 export type SplitReceiptStatus = 'sent_to_ofd' | (string & {});
 
-/** Paylov accepted a split's receipt lines for another OFD submission. */
+/**
+ * Paylov accepted a split's receipt lines for another OFD submission. The OFD's diagnostic text
+ * for the previous submission, which Paylov returns too, is not exposed.
+ */
 export interface SplitReceiptResent {
   /** The split transaction. */
   readonly transactionId: string;
   readonly status: SplitReceiptStatus;
-  /** The OFD's answer to the previous submission, verbatim text, such as a rejected item code. */
-  readonly lastOfdError: string;
 }
 
 /** Parameters for `splits.get`. */

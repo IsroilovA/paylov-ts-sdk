@@ -44,6 +44,11 @@ function stateAt(hold: Hold, now: Date, transaction?: Transaction) {
   return readHoldState(transaction === undefined ? params : { ...params, transaction });
 }
 
+const INHERITED_HOLD: unknown = Object.assign(Object.create({ hold: HELD }), {
+  clientCaptureDeadline: DEADLINE,
+  now: BEFORE,
+});
+
 describe('readHoldState', () => {
   it('reads a held hold before the deadline as open, and at or after it as possibly expired', () => {
     expect(stateAt(HELD, BEFORE)).toEqual({ kind: 'open' });
@@ -82,11 +87,44 @@ describe('readHoldState', () => {
     expect(stateAt(DECLINED, BEFORE, transaction)).toEqual({ kind: 'unknown' });
   });
 
+  it('ignores an inherited transaction, which the caller never passed', () => {
+    const params: unknown = Object.assign(Object.create({ transaction: FAILED }), {
+      hold: DECLINED,
+      clientCaptureDeadline: DEADLINE,
+      now: BEFORE,
+    });
+    // @ts-expect-error malformed JavaScript input
+    expect(readHoldState(params)).toEqual({ kind: 'unknown' });
+  });
+
+  it('decides from the one read of each parameter it validated', () => {
+    const reads = { hold: 0, transaction: 0 };
+    const params = {
+      clientCaptureDeadline: DEADLINE,
+      now: BEFORE,
+      get hold(): Hold | null {
+        reads.hold += 1;
+        return reads.hold === 1 ? DECLINED : null;
+      },
+      get transaction(): Transaction | null {
+        reads.transaction += 1;
+        return reads.transaction === 1 ? FAILED : null;
+      },
+    };
+    // @ts-expect-error malformed JavaScript input
+    expect(readHoldState(params)).toEqual({ kind: 'declined' });
+    expect(reads).toEqual({ hold: 1, transaction: 1 });
+  });
+
   it.each<[string, Hold]>([
     ['the documented but unobserved created status', { ...HELD, status: 'created' }],
     ['a status outside the vocabulary', { ...HELD, status: 'expired' }],
     ['a capture without its time', { ...HELD, status: 'captured' }],
     ['a release without its time', { ...HELD, status: 'released' }],
+    [
+      'a capture whose amount is not money',
+      { ...HELD, status: 'captured', capturedAt: CAPTURED_AT, amountTiyin: 1.5 },
+    ],
     ['a held hold with a capture time', { ...HELD, capturedAt: CAPTURED_AT }],
     ['a held hold with a release time', { ...HELD, releasedAt: RELEASED_AT }],
     ['a declined hold with a capture time', { ...DECLINED, capturedAt: CAPTURED_AT }],
@@ -104,7 +142,8 @@ describe('readHoldState', () => {
   });
 
   it.each([
-    ['a missing hold', { clientCaptureDeadline: DEADLINE, now: BEFORE }, 'hold', 'type'],
+    ['a missing hold', { clientCaptureDeadline: DEADLINE, now: BEFORE }, 'hold', 'required'],
+    ['an inherited hold', INHERITED_HOLD, 'hold', 'required'],
     ['a null hold', { hold: null, clientCaptureDeadline: DEADLINE, now: BEFORE }, 'hold', 'type'],
     [
       'a null transaction',

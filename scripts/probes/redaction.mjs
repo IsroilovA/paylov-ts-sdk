@@ -74,23 +74,32 @@ function identifierKind(key) {
   return undefined;
 }
 
-/** One traversal owns card-record context for discovery and replacement: a card record's
- * `number` is visited as `pan`.
+/** One traversal owns field context for discovery and replacement: a card record's `number` is
+ * visited as `pan`, and `message` marks a list element under the `data` of a `validation_error`
+ * envelope, where the gateway names fields it rejected, such as `token: ["This field is required."]`.
  * @param {unknown} value @param {string} key
- * @param {(value: unknown, key: string) => unknown} visit @returns {unknown}
+ * @param {(value: unknown, key: string, message: boolean) => unknown} visit
+ * @param {boolean} validationData @param {boolean} listed @returns {unknown}
  */
-function mapFields(value, key, visit) {
-  if (Array.isArray(value)) return value.map((child) => mapFields(child, key, visit));
+function mapFields(value, key, visit, validationData = false, listed = false) {
+  if (Array.isArray(value))
+    return value.map((child) => mapFields(child, key, visit, validationData, true));
   if (value !== null && typeof value === 'object') {
     const card = isCardRecord(Object.keys(value), key);
+    const validation = 'code' in value && value.code === 'validation_error';
     return Object.fromEntries(
       Object.entries(value).map(([name, child]) => [
         name,
-        mapFields(child, card && name === 'number' ? 'pan' : name, visit),
+        mapFields(
+          child,
+          card && name === 'number' ? 'pan' : name,
+          visit,
+          validationData || (validation && name === 'data'),
+        ),
       ]),
     );
   }
-  return visit(value, key);
+  return visit(value, key, validationData && listed);
 }
 
 /**
@@ -102,22 +111,27 @@ function applies(secret, key, containedPan) {
   return containedPan || kind === secret.kind || kind === 'PAN';
 }
 
-/** The sensitive kind of a real-shaped value under a sensitive field name.
- * @param {string} value @param {string} key @returns {SensitiveKind | undefined}
+/** Credential-like field names that a validation message may carry as the field it rejected.
+ * @type {ReadonlySet<string>}
  */
-function shapeKind(value, key) {
+const messageKinds = new Set(['token', 'credential', 'login']);
+
+/** The sensitive kind of a real-shaped value under a sensitive field name.
+ * @param {string} value @param {string} key @param {boolean} message
+ * @returns {SensitiveKind | undefined}
+ */
+function shapeKind(value, key, message) {
   if (value === '' || isPlaceholder(value)) return undefined;
   const kind = fieldKind(key);
-  return kind !== undefined && hasSensitiveShape(kind, value) ? kind : undefined;
+  if (kind === undefined || (message && messageKinds.has(kind))) return undefined;
+  return hasSensitiveShape(kind, value) ? kind : undefined;
 }
 
-/** Catches personal values missing from an incomplete secret list; placeholders and canaries in
- * existing captures are left alone.
- * @param {string} value @param {string} key
+/** Placeholders, masks and canaries already in a capture are not values to report.
+ * @param {string} value
  */
-function unlistedFieldKind(value, key) {
-  if (/[<*>]|redacted|^EXAMPLE-/i.test(value)) return undefined;
-  return shapeKind(value, key);
+function isRecordedRedaction(value) {
+  return /[<*>]|redacted|^EXAMPLE-/i.test(value);
 }
 
 export class Redactor {
@@ -158,24 +172,31 @@ export class Redactor {
     return placeholder;
   }
 
-  /** Discovers fields before replacing strings, including copies preceding their source field.
+  /** Registers a real-shaped field value missing from the secret list, so every copy of it is
+   * replaced, including copies in free text or preceding their source field.
+   * @param {string} literal @param {SensitiveKind | undefined} kind
+   */
+  #registerUnlisted(literal, kind) {
+    if (kind === undefined || this.secrets.some((secret) => secret.value === literal)) return;
+    this.register(
+      literal,
+      unlistedPlaceholders.get(kind) ?? '<redacted>',
+      kind,
+      isContextual(kind),
+    );
+  }
+
+  /** Discovers identifiers and sensitive fields before any string is replaced.
    * @param {unknown} value @param {string} key
    */
   learn(value, key = '') {
-    mapFields(value, key, (field, name) => {
+    mapFields(value, key, (field, name, message) => {
       if (typeof field !== 'string' && typeof field !== 'number') return field;
       const literal = String(field);
       if (isPlaceholder(literal)) return field;
       const idKind = identifierKind(name);
       if (idKind !== undefined) this.id(field, idKind);
-      const kind = shapeKind(literal, name);
-      if (kind !== undefined && !this.secrets.some((secret) => secret.value === literal))
-        this.register(
-          field,
-          unlistedPlaceholders.get(kind) ?? '<redacted>',
-          kind,
-          isContextual(kind),
-        );
+      this.#registerUnlisted(literal, shapeKind(literal, name, message));
       return field;
     });
   }
@@ -203,38 +224,43 @@ export class Redactor {
       hit('PAN');
       return '<test card PAN>';
     });
-    result = result.replace(dottedToken, () => {
+    return result.replace(dottedToken, () => {
       hit('JWT');
       return '<token>';
     });
-    const kind = unlistedFieldKind(result, key);
-    if (kind === undefined) return result;
-    hit(kind);
-    return unlistedPlaceholders.get(kind) ?? '<redacted>';
   }
 
   /** @param {unknown} value @param {string} key @returns {unknown} */
   clean(value, key = '') {
-    return mapFields(value, key, (field, name) => {
+    return mapFields(value, key, (field, name, message) => {
       if (typeof field !== 'string' && typeof field !== 'number') return field;
       const idKind = identifierKind(name);
       if (idKind !== undefined && !isPlaceholder(String(field))) return this.id(field, idKind);
       const text = this.replace(String(field), name);
-      if (text !== String(field)) return text;
-      const kind = shapeKind(text, name);
-      return kind === undefined ? field : (unlistedPlaceholders.get(kind) ?? '<redacted>');
+      const kind = shapeKind(text, name, message);
+      if (kind !== undefined) return unlistedPlaceholders.get(kind) ?? '<redacted>';
+      return text === String(field) ? field : text;
     });
   }
 
-  /** Preserves JSON whitespace, numbers and escaping except changed secret literals.
+  /** Discovers sensitive fields from the parsed capture, then replaces every occurrence of a
+   * secret literal in the source, preserving JSON whitespace, numbers and escaping elsewhere.
    * @param {string} source @returns {{ text: string, hits: Hit[] }}
    */
   scan(source) {
+    let parsed;
     try {
-      JSON.parse(source);
+      parsed = JSON.parse(source);
     } catch {
       throw new ProbeError('capture is not valid JSON');
     }
+    mapFields(parsed, '', (field, name, message) => {
+      if (typeof field !== 'string' && typeof field !== 'number') return field;
+      const literal = String(field);
+      if (!isRecordedRedaction(literal))
+        this.#registerUnlisted(literal, shapeKind(literal, name, message));
+      return field;
+    });
     /** @type {Map<string, number>} */
     const counts = new Map();
     let key = '';

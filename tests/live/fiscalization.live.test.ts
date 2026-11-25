@@ -15,6 +15,7 @@ import type { FiscalActivityType, FiscalReceipt, PaylovClient } from '../../src/
 import {
   expectRecent,
   externalId,
+  LiveCleanup,
   liveClient,
   liveGate,
   observe,
@@ -98,6 +99,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
   const { config } = gate;
   const client = liveClient(config);
   const card = testCard.value;
+  const cleanup = new LiveCleanup();
   let bound: BoundCard | undefined;
   let paidId: string | undefined;
   let sale: FiscalReceipt | undefined;
@@ -108,7 +110,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
   }
 
   beforeAll(async () => {
-    bound = await bindTestCard(client, card, 'fiscalization');
+    bound = await bindTestCard(client, card, 'fiscalization', cleanup);
     const { userId, card: boundCard } = bound;
     const { transactionId } = await client.payments.create({
       amountTiyin: PAYMENT_TIYIN,
@@ -119,9 +121,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
     paidId = transactionId;
   });
 
-  afterAll(async () => {
-    await bound?.release();
-  });
+  afterAll(() => cleanup.run());
 
   it('getReceipt of a paid, unfiscalized payment is null', async () => {
     const receipt = await client.fiscalization.getReceipt({
@@ -129,7 +129,8 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
       isRefund: false,
     });
     observe('fiscalization.getReceipt.paid', { found: receipt !== null });
-    expect(receipt).toBeNull();
+    // Receipts never reach a matcher: a failure would print the receipt URL and fiscal sign.
+    expect(receipt === null, 'no receipt before registration').toBe(true);
   });
 
   it('registerReceipt registers the sale; getReceipt reads it; a repeat is refused', async () => {
@@ -151,7 +152,14 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
     const registered = await client.fiscalization.registerReceipt(params);
     const read = await client.fiscalization.getReceipt({ transactionId, isRefund: false });
     observe('fiscalization.getReceipt.registered', { found: read !== null });
-    expect(read).toEqual({ ...registered, isRefund: false });
+    const readsRegistered =
+      read !== null &&
+      !read.isRefund &&
+      read.receiptId === registered.receiptId &&
+      read.receiptUrl === registered.receiptUrl &&
+      read.terminalId === registered.terminalId &&
+      read.fiscalSign === registered.fiscalSign;
+    expect(readsRegistered, 'getReceipt reads the registered sale receipt').toBe(true);
 
     const again = await refused(
       'fiscalization.registerReceipt.repeat',
@@ -162,8 +170,9 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
 
     const transaction = await client.transactions.get({ transactionId });
     const [summary] = transaction.fiscalReceipts;
-    expect(transaction.fiscalReceipts).toHaveLength(1);
-    expect(summary).toMatchObject({ receiptId: registered.receiptId, isRefund: false });
+    expect(transaction.fiscalReceipts.length, 'fiscal receipt count').toBe(1);
+    const summarizesSale = summary?.receiptId === registered.receiptId && !summary.isRefund;
+    expect(summarizesSale, 'the transaction lists the sale receipt').toBe(true);
     expect(summary?.issuedAt).toBeInstanceOf(Date);
     const skewMs = Math.abs(
       (summary?.issuedAt.getTime() ?? Number.NaN) - transaction.paidOrCreatedAt.getTime(),
@@ -190,7 +199,9 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
       expect(transaction.status).toBe('refunded');
       expect(transaction.fiscalReceipts.map((receipt) => receipt.isRefund)).toEqual([false, true]);
       const refundSummary = transaction.fiscalReceipts[1];
-      expect(refundSummary?.receiptId).toBe(refund.receiptId);
+      expect(refundSummary?.receiptId === refund.receiptId, 'the refund receipt is listed').toBe(
+        true,
+      );
       const skewMs = Math.abs(
         (refundSummary?.issuedAt.getTime() ?? Number.NaN) - refunded.refundedAt.getTime(),
       );

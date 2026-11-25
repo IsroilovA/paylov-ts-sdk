@@ -4,10 +4,12 @@ import {
   readRefundState,
   type PaylovClient,
   type FiscalReceiptSummary,
+  type IterateTransactionsParams,
   type Transaction,
   type TransactionPage,
   type TransactionStatus,
 } from '../../src/index.js';
+import type { IsEqual } from './exact.js';
 
 declare const client: PaylovClient;
 const transactionId = '5eed0000-0000-4000-8000-000000000001';
@@ -34,9 +36,12 @@ const transaction: Transaction = await client.transactions.get({ transactionId }
   // @ts-expect-error the receipt time is a Date, not raw text
   void receipts[0]?.issuedAtRaw;
 }
-// @ts-expect-error a miss throws, so get never returns null
-const missing: null = await client.transactions.get({ transactionId });
-void missing;
+// A miss throws, so get resolves exactly a transaction, never null.
+const getResolvesTransaction: IsEqual<
+  Awaited<ReturnType<PaylovClient['transactions']['get']>>,
+  Transaction
+> = true;
+void getResolvesTransaction;
 // @ts-expect-error get needs a transactionId
 void client.transactions.get({});
 
@@ -48,6 +53,13 @@ void client.transactions.list({ fromDate: '2026-11-01', toDate: '2026-11-30', pa
 void client.transactions.list({ fromDate: new Date() });
 // @ts-expect-error the list has no status filter; it holds paid rows only
 void client.transactions.list({ status: 'paid' });
+
+const range = { fromDate: '2026-11-01', toDate: '2026-11-30' } satisfies IterateTransactionsParams;
+const everyPaid: AsyncIterable<Transaction> = client.transactions.iterate(range);
+for await (const paid of client.transactions.iterate()) void paid.amountTiyin;
+void everyPaid;
+// @ts-expect-error iterate requests every page itself; it takes no page
+void client.transactions.iterate({ ...range, page: 2 });
 
 const rrn: string = await client.transactions.getRrn({ transactionId });
 void rrn;

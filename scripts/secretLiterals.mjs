@@ -10,7 +10,6 @@ import {
   hasSensitiveShape,
   hasSyntheticDigits,
   isCardRecord,
-  isCredentialLiteral,
   jwtLiteral,
 } from './sensitiveData.mjs';
 
@@ -66,20 +65,11 @@ const syntheticNeeded = (category) => (key) => `${category} literal in "${key}" 
 
 /**
  * What a real-shaped, non-placeholder value of a kind needs instead, as a value-free message.
- * `isReal` replaces the recorded-data shape where a literal is judged differently.
- * @typedef {{
- *   synthetic: boolean,
- *   problem: (key: string) => string,
- *   isReal?: (value: string) => boolean,
- * }} KindRule
+ * @typedef {{ synthetic: boolean, problem: (key: string) => string }} KindRule
  */
 
 /** @type {KindRule} */
-const credentialRule = {
-  synthetic: false,
-  problem: placeholderNeeded('credential-shaped'),
-  isReal: isCredentialLiteral,
-};
+const credentialRule = { synthetic: false, problem: placeholderNeeded('credential-shaped') };
 
 /**
  * Personal ids pass with synthetic digits. A login name, a card expiry, a personal date or a
@@ -113,7 +103,7 @@ function fieldProblem({ key, value: raw, siblings, parent }) {
   const kind = fieldKind(key, isCardRecord(siblings, parent));
   const rule = kind === undefined ? undefined : kindRules.get(kind);
   if (rule === undefined || kind === undefined) return undefined;
-  if (!(rule.isReal?.(value) ?? hasSensitiveShape(kind, value))) return undefined;
+  if (!hasSensitiveShape(kind, value)) return undefined;
   return rule.synthetic && hasSyntheticDigits(value) ? undefined : rule.problem(key);
 }
 

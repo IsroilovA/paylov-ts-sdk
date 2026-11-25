@@ -57,6 +57,13 @@ export function fieldKind(key, inCardRecord = false) {
   return kindNames.find(([, pattern]) => pattern.test(name))?.[0];
 }
 
+/**
+ * A credential is eight or more UTF-16 code units, spaces included (`Bearer …`, a passphrase), as
+ * `String.length` counts them; Paylov rejects shorter tokens, so shorter values are validation
+ * probes. The pattern has no `u` flag so that `.` matches one code unit, not one code point.
+ */
+const credentialLiteral = /^.{8,}$/s;
+
 /** Numeric kinds are matched with separators removed; text kinds against the raw value. */
 const shapes = new Map(
   /** @type {readonly [SensitiveKind, { pattern: RegExp, numeric: boolean }][]} */ ([
@@ -66,10 +73,9 @@ const shapes = new Map(
     ['PINFL', { pattern: /^\d{14}$/, numeric: true }],
     ['phone', { pattern: /^\d{9,15}$/, numeric: true }],
     ['account', { pattern: /^\d+$/, numeric: true }],
-    // Messages such as `data.token: ["This field is required."]` contain spaces; secrets do not.
-    ['token', { pattern: /^\S{8,}$/, numeric: false }],
-    ['credential', { pattern: /^\S{8,}$/, numeric: false }],
-    ['login', { pattern: /^\S{8,}$/, numeric: false }],
+    ['token', { pattern: credentialLiteral, numeric: false }],
+    ['credential', { pattern: credentialLiteral, numeric: false }],
+    ['login', { pattern: credentialLiteral, numeric: false }],
     ['name', { pattern: /\p{L}/u, numeric: false }],
     ['passport', { pattern: /[\p{L}\d]/u, numeric: false }],
     ['date', { pattern: /^\d{4}-\d{2}-\d{2}$/, numeric: false }],
@@ -77,19 +83,8 @@ const shapes = new Map(
   ]),
 );
 
-/**
- * A credential written as a scalar literal: eight or more characters, spaces included (`Bearer …`,
- * a passphrase). Paylov rejects shorter tokens, so shorter values are validation probes.
- * Validation messages arrive as lists, which the repository scan never reads as field values;
- * `hasSensitiveShape` keeps them out of recorded captures by their spaces instead.
- * @param {string} value a trimmed value
- */
-export function isCredentialLiteral(value) {
-  return value.length >= 8;
-}
-
 /** @param {string} value */
-export function digitsOf(value) {
+function digitsOf(value) {
   return value.replace(/[\s_()+-]/g, '');
 }
 

@@ -4,14 +4,17 @@
  *
  * Usage: `node --env-file=<env file> scripts/probes/scanCaptures.mjs [<dir>] [--fix]`
  *
- * - Scans every `*.json` file in `<dir>` (default: the git-ignored `captures/`), against the
- *   credentials and `PAYLOV_LIVE_TEST_CARDS` from the environment, Luhn-valid PANs, JWTs and
- *   personal-data field shapes.
+ * - Scans every `*.json` file in `<dir>`, else `PAYLOV_CAPTURE_DIR`, else the git-ignored
+ *   `captures/`, the same directory the probes write to. A missing directory is an error. It
+ *   checks against the credentials and `PAYLOV_LIVE_TEST_CARDS` from the environment, Luhn-valid
+ *   PANs, JWTs and personal-data field shapes; a value found in a personal-data field is replaced
+ *   wherever it occurs in the file.
  * - `PAYLOV_PROBE_SECRETS` optionally lists more `key=value` entries separated by `;`. Keys such as
  *   `pan`, `expiry`, `otp`, `pinfl` and `phone` set the kind; any other key is a credential. Short
  *   expiry and OTP values match only in card fields or in strings containing a full PAN.
  * - Output names files, kinds, counts and the scanner's own value-free messages, never values. A
- *   file that cannot be read or parsed is reported and the scan goes on.
+ *   file that cannot be read or parsed is reported and the scan goes on. The last line reads
+ *   `examined=<files scanned>; flagged=<files with hits>; <kind>=<count>, ...` (or `hits=0`).
  * - Exit status: `0` clean or fixed, `1` hits found, `2` any scan error.
  * - `--fix` replaces only the secret literals and preserves every other byte. Back up the
  *   directory first and scan again afterwards.
@@ -19,7 +22,7 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { captureDirectory } from './paths.mjs';
+import { auditedCaptureDirectory } from './paths.mjs';
 import { ProbeError } from './probeError.mjs';
 import { loadRedactor } from './redaction.mjs';
 
@@ -51,7 +54,7 @@ export function scanCaptureSources(captures, redactor, fix) {
   const fixes = new Map();
   /** @type {Map<string, number>} */
   const totals = new Map();
-  let files = 0;
+  let flagged = 0;
   let failed = false;
   for (const [name, source] of captures) {
     let scan;
@@ -63,15 +66,15 @@ export function scanCaptureSources(captures, redactor, fix) {
       continue;
     }
     if (scan.hits.length === 0) continue;
-    files += 1;
+    flagged += 1;
     for (const { kind, count } of scan.hits) totals.set(kind, (totals.get(kind) ?? 0) + count);
     if (fix) fixes.set(name, scan.text);
     lines.push(`${name}: ${formatHits(scan.hits)}${fix ? ' fixed' : ''}`);
   }
   const totalHits = [...totals].map(([kind, count]) => ({ kind, count }));
-  lines.push(`files=${files}; ${formatHits(totalHits) || 'hits=0'}`);
+  lines.push(`examined=${captures.size}; flagged=${flagged}; ${formatHits(totalHits) || 'hits=0'}`);
   if (failed) return { lines, fixes, status: 2 };
-  return { lines, fixes, status: files > 0 && !fix ? 1 : 0 };
+  return { lines, fixes, status: flagged > 0 && !fix ? 1 : 0 };
 }
 
 /** @param {string[]} args @returns {{ directory: string | undefined, fix: boolean }} */
@@ -87,7 +90,7 @@ function parseArgs(args) {
 /** @param {string[]} args @returns {Promise<number>} the exit status */
 async function main(args) {
   const { directory, fix } = parseArgs(args);
-  const target = await captureDirectory(directory);
+  const target = await auditedCaptureDirectory(directory);
   const redactor = loadRedactor();
   const entries = (await readdir(target, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))

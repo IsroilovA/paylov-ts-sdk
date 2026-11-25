@@ -1,6 +1,7 @@
 import { vi, type Mock } from 'vitest';
 
 import type { HttpClientConfig } from '../../src/core/http.js';
+import type { Decoder } from '../../src/core/decoding.js';
 import type { AuthProvider, Endpoint, HttpClient } from '../../src/core/types.js';
 import type { createFakeFetch, FakeResponseSpec } from '../helpers/fakeFetch.js';
 import { fixtureResponse } from '../helpers/fixtures.js';
@@ -15,17 +16,22 @@ export const SUCCESS_PAYLOAD = { transactionId: '9b370dde-dfe1-4365-be8a-d3581c9
 export const FUNDS_ERROR = fixtureResponse('envelope/generic.error.synthesized.json', {
   status: 400,
 });
+/** Hands the success payload back as the transport unwrapped it. */
+export const rawPayload: Decoder<unknown> = (value) => value;
+
 export const NETWORK_FAILURE: FakeResponseSpec = { throw: new TypeError('fetch failed') };
 
 export const GET_STATUS: Endpoint = {
   method: 'GET',
   route: '/merchant/status/',
   shape: 'envelope',
+  effect: 'read',
 };
 export const CREATE_RECEIPT: Endpoint = {
   method: 'POST',
   route: '/merchant/receipts/create/',
   shape: 'envelope',
+  effect: 'write',
 };
 export const RECEIPT_BODY = { body: { amount: 1 } } as const;
 

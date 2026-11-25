@@ -23,7 +23,11 @@ if (outcome.kind !== 'invalid') {
 }
 
 declare const nodeRequest: IncomingMessage;
-void receiver.receive({ method: nodeRequest.method, headers: nodeRequest.headers, body: '' });
+void receiver.receive({
+  method: nodeRequest.method,
+  headers: nodeRequest.headersDistinct,
+  body: '',
+});
 declare const fetchRequest: Request;
 void receiver.receive({ method: fetchRequest.method, headers: fetchRequest.headers, body: '' });
 // @ts-expect-error the body is required, even when empty

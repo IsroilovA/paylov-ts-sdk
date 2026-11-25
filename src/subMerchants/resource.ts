@@ -5,7 +5,12 @@ import { decodeSubMerchantCreated } from './decoders.js';
 import type { CreateSubMerchantParams, SubMerchantCreated } from './types.js';
 
 export const ENDPOINTS = {
-  create: { method: 'POST', route: '/merchant/subMerchant/merchant-create/', shape: 'envelope' },
+  create: {
+    method: 'POST',
+    route: '/merchant/subMerchant/merchant-create/',
+    shape: 'envelope',
+    effect: 'write',
+  },
 } as const;
 
 /**
@@ -18,7 +23,9 @@ export interface SubMerchantsResource {
    * director and bank details never reach logger events or errors.
    *
    * Recovery: no lookup exists. When `isPaylovOutcomeUnknown(error)`, repeat the call with the
-   * same data; `sub_merchant_already_created` then means it exists.
+   * same data. `sub_merchant_already_created` on the repeat leaves the outcome unresolved: Paylov
+   * answers it when any one of `name`, `tin`, `pinfl` or `externalId` collides and returns no id,
+   * so it does not prove the intended child exists. Confirm the child and its id with Paylov.
    *
    * @throws {@link PaylovApiError} `sub_merchant_already_created` (the `name`, `tin`, `pinfl` or
    * `externalId` is taken among your sub-merchants), `validation_error` (`fields` names wire

@@ -36,7 +36,6 @@ import {
   type PaymentsResource,
   type SplitsResource,
   type SubMerchantsResource,
-  type TransactionLookup,
   type TransactionReference,
   type TransactionsResource,
 } from '../../src/index.js';
@@ -114,12 +113,7 @@ void itemWithBoth;
 
 declare const transactionId: string;
 const reference: TransactionReference = { transactionId };
-const byId: TransactionLookup = { transactionId };
-const byExternalId: TransactionLookup = { externalId: 'booking-1', transactionId: undefined };
-void [reference, byId, byExternalId];
-// @ts-expect-error a lookup carries exactly one of transactionId or externalId
-const byBoth: TransactionLookup = { transactionId, externalId: 'booking-1' };
-void byBoth;
+void reference;
 
 // Logger events
 const logger: PaylovLogger = {
@@ -165,14 +159,22 @@ if (isPaylovError(caught)) {
       break;
     case 'api':
       void [caught.httpStatus, caught.fields, caught.retryAfterSeconds];
+      void (caught.isOutcomeUnknown satisfies boolean);
+      // @ts-expect-error the outcome has one field, isOutcomeUnknown
+      void caught.isUnsettled;
       break;
     case 'protocol':
-      void [caught.httpStatus, caught.path];
+      void [
+        caught.httpStatus,
+        caught.path,
+        caught.retryAfterSeconds satisfies number | undefined,
+        caught.isOutcomeUnknown satisfies boolean,
+      ];
       break;
     case 'connection': {
       const code: 'sdk_timeout' | 'sdk_network_error' | 'sdk_aborted' = caught.code;
       const isSent: boolean = caught.isSent;
-      void [code, isSent, caught.timeoutMs];
+      void [code, isSent, caught.timeoutMs, caught.isOutcomeUnknown satisfies boolean];
       break;
     }
     default: {
@@ -185,6 +187,13 @@ if (isPaylovError(caught)) {
 }
 const outcomeUnknown: boolean = isPaylovOutcomeUnknown(caught);
 void outcomeUnknown;
+// A caller-built error states its outcome; it defaults to known.
+void new PaylovApiError({
+  code: 'server_error',
+  httpStatus: 503,
+  endpoint: 'POST /merchant/receipts/pay/',
+  isOutcomeUnknown: true,
+});
 if (isPaylovApiError(caught)) {
   const code: PaylovErrorCode = caught.code;
   const fields: readonly string[] | undefined = caught.fields;

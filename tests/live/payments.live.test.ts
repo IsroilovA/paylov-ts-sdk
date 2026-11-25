@@ -12,6 +12,7 @@ import type { PaylovClient, Transaction } from '../../src/index.js';
 import {
   expectRecent,
   externalId,
+  LiveCleanup,
   liveClient,
   liveGate,
   observe,
@@ -48,9 +49,11 @@ describe.skipIf(!gate.enabled)('transactions reads', () => {
   const client = liveClient(gate.config);
 
   it('get of an unknown transaction id throws transaction_not_found', async () => {
-    await expect(client.transactions.get({ transactionId: randomUUID() })).rejects.toMatchObject({
-      code: 'transaction_not_found',
-    });
+    const error = await refused(
+      'transactions.get.unknown',
+      client.transactions.get({ transactionId: randomUUID() }),
+    );
+    expect(error.code).toBe('transaction_not_found');
   });
 
   it('list pages hold paid transactions only', async () => {
@@ -74,6 +77,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('payments writes', () => {
   const { config } = gate;
   const client = liveClient(config);
   const card = testCard.value;
+  const cleanup = new LiveCleanup();
   let bound: BoundCard | undefined;
   let paidId: string | undefined;
 
@@ -88,12 +92,10 @@ describe.skipIf(!writes || testCard?.ok !== true)('payments writes', () => {
   }
 
   beforeAll(async () => {
-    bound = await bindTestCard(client, card, 'payments');
+    bound = await bindTestCard(client, card, 'payments', cleanup);
   });
 
-  afterAll(async () => {
-    await bound?.release();
-  });
+  afterAll(() => cleanup.run());
 
   it('create leaves an unpaid transaction; pay settles it for the exact tiyin amount', async () => {
     const { userId, card: payer } = boundCard();

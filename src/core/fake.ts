@@ -1,5 +1,5 @@
 /**
- * The contract between the testing fake gateway and the per-surface reply tables, and the fake's
+ * The contract between the testing fake gateway and the per-surface spec tables, and the fake's
  * inverses of core's own wire reads: token bodies, error details, and timestamps. Each surface
  * encodes its own SDK results into wire payloads and decodes its own requests back into SDK
  * params, so wire names stay in the owning feature. Only fakes and `testing/` load this module,
@@ -28,7 +28,10 @@ export interface PaylovFakeFailure {
   readonly httpStatus?: number;
   /** `validation_error`, `field_not_valid` (one field) and `field_required` (one field) only. */
   readonly fields?: readonly string[];
-  /** `rate_limit_exceeded` and `card_is_blocked` only, from 1 to 3600. */
+  /**
+   * From 1 to 3600, for `rate_limit_exceeded`, `card_is_blocked`, or any code at `httpStatus` 429.
+   * Sent as the `Retry-After` header for a rate limit or a 429, else as the card block's rest.
+   */
   readonly retryAfterSeconds?: number;
 }
 
@@ -69,7 +72,7 @@ export interface PaylovFakeMethod<T, P> {
 
   /**
    * Fails the attempt before any response: the call rejects with `PaylovConnectionError`
-   * `sdk_network_error`, and the outcome of a POST is unknown.
+   * `sdk_network_error`, and the outcome of a method that writes is unknown.
    *
    * @example
    * fake.payments.pay.disconnect();
@@ -112,19 +115,7 @@ export interface FakeRequest {
 export type RequestMatcher = (request: FakeRequest) => boolean;
 
 /** Reads a request back into the params of the method that sent it; the inverse of its encoding. */
-export type RequestDecoder<P> = (request: FakeRequest) => P;
-
-/**
- * How one SDK method's results and requests cross the wire in the fake: `encode` returns the
- * success payload, unwrapped, or a `FakeRefusal`; `decodeRequest` reads a request back into the params.
- * Both the scripted answers and the simulation use it.
- */
-export interface FakeCodec<T, P> {
-  readonly encode: (result: T) => unknown;
-  readonly decodeRequest: RequestDecoder<P>;
-  /** For methods sharing an endpoint: whether a request is this method's. */
-  readonly matches?: RequestMatcher;
-}
+type RequestDecoder<P> = (request: FakeRequest) => P;
 
 /** The result type of an SDK method. */
 type ResultOf<M> = M extends (...args: never[]) => Promise<infer T> ? T : never;
@@ -136,37 +127,62 @@ type RecordedParams<P> = P extends { readonly password: unknown } ? Omit<P, 'pas
  * What the fake records of a request. Every I/O method takes its call options last, so a method
  * of at most one parameter takes only options and sends no params.
  */
-type RequestOf<M> = M extends (...args: infer A) => Promise<unknown>
+export type RequestOf<M> = M extends (...args: infer A) => Promise<unknown>
   ? [A['length']] extends [0 | 1]
     ? undefined
     : RecordedParams<NonNullable<A[0]>>
   : never;
 
 /** The I/O methods of surface `R`. */
-type IoMethodOf<R> = {
+export type IoMethodOf<R> = {
   [K in keyof R]: R[K] extends (...args: never[]) => Promise<unknown> ? K : never;
 }[keyof R];
 
-/** One script per I/O method of surface `R`, mirroring how the client exposes it. */
-export type PaylovFakeSurface<R> = {
-  readonly [K in IoMethodOf<R>]: PaylovFakeMethod<ResultOf<R[K]>, RequestOf<R[K]>>;
-};
-
-/** `'<namespace>.<method>'` for each I/O method of surface `R`, exposed as `namespace`. */
-export type MethodNameOf<Namespace extends string, R> = `${Namespace}.${IoMethodOf<R> & string}`;
+/** What method `K` of surface `R` is scripted with: its result, unless `Replies` names another. */
+export type ReplyOf<R, K extends keyof R, Replies> = K extends keyof Replies
+  ? Replies[K]
+  : ResultOf<R[K]>;
 
 /**
- * Builds the script of SDK method `method` of surface `R`, which sends to `endpoint`. `encode`
- * returns the success payload, unwrapped, or a `FakeRefusal`. A method that shares an endpoint with another
- * passes `matches`, so each answer reaches only its own method's requests.
+ * A miss the gateway reports in a success body, which the method's decoder reads as `code`.
+ * Scripting or simulating `code` for the method sends `payload` at HTTP 200, as the gateway does.
  */
-export type Scripter<Namespace extends string, R> = <T, P>(
-  method: MethodNameOf<Namespace, R>,
-  endpoint: Endpoint,
-  encode: (result: T) => unknown,
-  decodeRequest: RequestDecoder<P>,
-  matches?: RequestMatcher,
-) => PaylovFakeMethod<T, P>;
+interface FakeMiss {
+  readonly code: PaylovKnownErrorCode;
+  /** The success payload, unwrapped. */
+  readonly payload: unknown;
+}
+
+/**
+ * One SDK method in the fake: where its requests arrive, how its replies are encoded, and how its
+ * requests read back into its params. Scripted answers and the simulation both use it.
+ */
+export interface FakeMethodSpec<T, P> {
+  readonly endpoint: Endpoint;
+  /** The success payload, unwrapped, or a `FakeRefusal`. */
+  readonly encode: (result: T) => unknown;
+  readonly decodeRequest: RequestDecoder<P>;
+  /** For methods sharing an endpoint: whether a request is this method's. */
+  readonly matches?: RequestMatcher;
+  readonly miss?: FakeMiss;
+}
+
+/**
+ * The spec of every I/O method of surface `R`, keyed by method. `Replies` names the methods whose
+ * reply is what the gateway sends rather than the method's result.
+ */
+export type FakeSpecTable<R, Replies = unknown> = {
+  readonly [K in IoMethodOf<R>]: FakeMethodSpec<ReplyOf<R, K, Replies>, RequestOf<R[K]>>;
+};
+
+/**
+ * One script per I/O method of surface `R`, mirroring how the client exposes it. `Replies` names
+ * the methods scripted with what the gateway sends rather than the method's result, as
+ * `holds.create` replies `{ transactionId }` and the SDK adds the capture deadline itself.
+ */
+export type PaylovFakeSurface<R, Replies = unknown> = {
+  readonly [K in IoMethodOf<R>]: PaylovFakeMethod<ReplyOf<R, K, Replies>, RequestOf<R[K]>>;
+};
 
 /** `{ [key]: value }`, or `{}` for a value the request omitted. */
 export function optionalEntry<K extends string, V>(
@@ -266,8 +282,10 @@ function nestFieldPaths(paths: readonly string[]): Record<string, unknown> {
   return root;
 }
 
+const RATE_LIMITED = 429;
+
 /** A gateway error response: its `error` body and its `Retry-After` header. */
-export interface EncodedError {
+interface EncodedError {
   readonly error: Readonly<Record<string, unknown>>;
   readonly retryAfter: string | null;
 }
@@ -281,17 +299,23 @@ function errorDataOf(code: string, fields: readonly string[], retryAfterSeconds?
 }
 
 /**
- * A gateway error response that `decodeErrorDetails` reads back as `details`, when the gateway
- * can express them for `code`; the caller verifies by decoding it.
+ * A gateway error response at `httpStatus` that `decodeErrorDetails` reads back as `details`,
+ * when the gateway can express them for `code`; the caller verifies by decoding it.
  */
 export function encodeErrorDetails(
   code: string,
+  httpStatus: number,
   details: Pick<PaylovFakeFailure, 'fields' | 'retryAfterSeconds'>,
 ): EncodedError {
   const { fields = [], retryAfterSeconds } = details;
-  const isRateLimitDelay = code === 'rate_limit_exceeded' && retryAfterSeconds !== undefined;
+  const isRateLimit = code === 'rate_limit_exceeded' || httpStatus === RATE_LIMITED;
+  const isRateLimitDelay = isRateLimit && retryAfterSeconds !== undefined;
   return {
-    error: { code, message: code, data: errorDataOf(code, fields, retryAfterSeconds) },
+    error: {
+      code,
+      message: code,
+      data: errorDataOf(code, fields, retryAfterSeconds),
+    },
     retryAfter: isRateLimitDelay ? String(retryAfterSeconds) : null,
   };
 }

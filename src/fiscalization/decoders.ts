@@ -28,7 +28,7 @@ export const decodeReceiptLookup: Decoder<FiscalReceipt | null> = (value, path) 
   return field('success', asBoolean) ? decodeFiscalReceipt(value, path) : null;
 };
 
-export const decodeReceiptRefunded: Decoder<FiscalReceiptRefunded> = (value, path) => {
+export const decodeFiscalReceiptRefunded: Decoder<FiscalReceiptRefunded> = (value, path) => {
   const field = readFields(value, path);
   return {
     refund: field('ofd', fieldOf('refund', decodeRegisteredReceipt)),

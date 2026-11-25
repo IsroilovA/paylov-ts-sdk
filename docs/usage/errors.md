@@ -55,7 +55,7 @@ Each method's JSDoc names the codes worth branching on.
 | ---------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Credentials and access       | `invalid_grant`, `permission_denied`, `invalid_token`                                         | Fix configuration or ask Paylov; never retry automatically                       |
 | Request validation           | `validation_error`, `field_required`, `field_not_valid`, `not_found`                          | Fix the call; `not_found` means the route does not exist                         |
-| Infrastructure               | `rate_limit_exceeded`, `server_error`                                                         | Wait `retryAfterSeconds`; a 5xx leaves the outcome unknown                       |
+| Infrastructure               | `rate_limit_exceeded`, `server_error`                                                         | Wait `retryAfterSeconds`; a 5xx on a write leaves the outcome unknown            |
 | Generic failures             | `processing_error`, `unknown_error`, `error_at_pay`                                           | On a money-moving call the outcome is unknown                                    |
 | Card                         | `card_not_found`, `card_not_match`, `card_exists`, `phone_not_match`                          | Ask the end user for another card or corrected details                           |
 | OTP and PIN                  | `invalid_otp`, `otp_expired`, `too_many_attempts`, `otp_code_already_sent`, `card_is_blocked` | Re-prompt or restart the flow; after `card_is_blocked`, wait `retryAfterSeconds` |
@@ -75,15 +75,26 @@ Each method's JSDoc names the codes worth branching on.
 
 ## Recovery after an ambiguous failure
 
-`isPaylovOutcomeUnknown(error)` is true when the call may have run: a protocol error, a connection
-error after a request was sent, a gateway error with HTTP status 500 or above, or a generic failure
-code (`processing_error`, `unknown_error`, `error_at_pay`) from a call that can charge, reserve,
-capture, release, refund or split funds: `payments.pay`, `payments.refund`,
-`payments.confirmPanPayment`, `holds.create`, `holds.capture`, `holds.release`, `splits.create` and
-`splits.resendReceipt`, which shares its endpoint. `error.isUnsettled` carries the same answer.
-Those codes name no reason, and Paylov does not document whether money moved. Specific declines such
-as `insufficient_funds` or `card_is_not_for_this_check` stay definitive. Nothing that moves money is
-retried automatically. Then:
+`isPaylovOutcomeUnknown(error)` returns the error's `isOutcomeUnknown`: whether the requested
+operation may have run although the call failed. It depends on what the method can change:
+
+- A read never leaves the outcome unknown; repeat it. The reads are every `get`, `list` and
+  `iterate`, `transactions.getRrn`, `gateway.getStatus`, `gateway.listBanks`,
+  `fiscalization.getReceipt`, `fiscalization.checkActivityType`, `cards.checkPhone` and
+  `PaylovOnboarding.checkToken`.
+- A write (every other method) leaves it unknown after a protocol error, a gateway error with HTTP
+  status 500 or above, or a connection failure once its request was sent, an abort in flight
+  included.
+- A method that charges, reserves, captures, releases, refunds or splits funds (`payments.pay`,
+  `payments.refund`, `payments.confirmPanPayment`, `holds.create`, `holds.capture`, `holds.release`,
+  `splits.create`) also leaves it unknown after a generic failure code (`processing_error`,
+  `unknown_error`, `error_at_pay`). Those codes name no reason, and Paylov does not document whether
+  money moved.
+
+A failure before the method's request was sent stays known, even when it names the token endpoint: a
+failed token grant, or an abort after the gateway rejected the token and before the SDK replayed the
+request. Specific declines such as `insufficient_funds` or `card_is_not_for_this_check` stay
+definitive. Nothing that moves money is retried automatically. Then:
 
 - Read the record named below before acting again. Never repeat a money-moving call blindly.
 - Repeat a call that takes an `externalId` or a `transactionId` with the same value, never a new
@@ -93,6 +104,9 @@ retried automatically. Then:
   payment and a hold whose requests the client abandoned after about 200 ms.
 - A read that throws `transaction_not_found` (or `split_not_found` for a split), or still shows
   `created`, is not proof that the call did not run: read again with backoff before repeating.
+- After `payments.refund`, settle the read with `readRefundState`. A hold reads `refunded` after a
+  release too, so a captured hold reading `refunded` is `unknown`: confirm its refund in the Paylov
+  business panel.
 - After `payments.pay`, keep reading while the status is `transfer`, `pending` or `held`; `failed`
   needs a new transaction. A status that stays `created` across those reads means, by the SDK's
   assumption, that the pay did not take effect (Paylov does not document it): pay again with the
@@ -103,14 +117,14 @@ retried automatically. Then:
 | Method                                                                 | Read next                                                            | Code on a repeated call                                                                                      |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `payments.pay`                                                         | `transactions.get`                                                   | `transaction_already_payed`: already paid                                                                    |
-| `payments.refund`                                                      | `transactions.get`: `refunded` with `cancelledAt`                    | `transaction_not_available_for_cancel`: already cancelled, never paid, or not refundable by API              |
+| `payments.refund`                                                      | `transactions.get` through `readRefundState`: `refunded` for a sale  | `transaction_not_available_for_cancel`: already cancelled, never paid, or not refundable by API              |
 | `payments.confirmPanPayment`                                           | `transactions.get`                                                   | `otp_expired`: the first confirm may have succeeded                                                          |
 | `holds.create`                                                         | `holds.get({ externalId })` ([holds.md](holds.md#recovery))          | `external_id_already_exists`: a record exists, possibly released or declined                                 |
 | `holds.capture`                                                        | `holds.get`: `captured`, and `amountTiyin` is the captured amount    | `transaction_not_available_for_payment`: already captured or released; `hold_time_expired`: the hold ran out |
 | `holds.release`                                                        | `holds.get`: `released`                                              | `hold_not_found`: already released, captured, or expired; nothing left to release, by the SDK's assumption   |
-| `splits.create`                                                        | `splits.get`: `split_not_found` means no split exists                | `split_already_done`                                                                                         |
+| `splits.create`                                                        | `splits.get`: shares mean the split exists                           | `split_already_done`: the split exists                                                                       |
 | `splits.resendReceipt`                                                 | `splits.get`: a `receipt` means the resend took effect               | `ofd_check_already_generated`: a receipt exists                                                              |
-| `subMerchants.create`                                                  | None exists: repeat with the same data                               | `sub_merchant_already_created`: it exists                                                                    |
+| `subMerchants.create`                                                  | None exists: repeat with the same data                               | `sub_merchant_already_created`: unresolved; confirm the child and its id with Paylov                         |
 | `fiscalization.registerReceipt`                                        | `fiscalization.getReceipt`: `null` means nothing is registered yet   | `ofd_check_already_generated`                                                                                |
 | `fiscalization.refundReceipt`                                          | `fiscalization.getReceipt({ transactionId, isRefund: true })`        | `ofd_check_already_generated`: a refund receipt exists                                                       |
 | `cards.confirmPanBinding`                                              | `cards.get`                                                          | `card_is_already_activated`: done                                                                            |

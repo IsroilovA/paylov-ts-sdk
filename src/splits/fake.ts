@@ -2,8 +2,7 @@ import {
   optionalEntry,
   tashkentDateTimeOf,
   type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
+  type FakeSpecTable,
 } from '../core/fake.js';
 import type { Params } from '../core/params.js';
 import {
@@ -43,16 +42,15 @@ function decodeRecipient(recipient: Params): SplitRecipient {
   };
 }
 
-function encodeReceiptResent(resent: SplitReceiptResent): unknown {
-  return {
-    transactionId: resent.transactionId,
-    status: resent.status,
-    lastOfdError: resent.lastOfdError,
-  };
+function encodeSplitReceiptResent(resent: SplitReceiptResent): unknown {
+  return { transactionId: resent.transactionId, status: resent.status };
 }
 
 function decodeReceiptRecipient(recipient: Params): SplitReceiptRecipient {
-  return { ...decodeRecipient(recipient), items: recipient.array('items', decodeReceiptItem) };
+  return {
+    ...decodeRecipient(recipient),
+    items: recipient.array('items', decodeReceiptItem),
+  };
 }
 
 function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
@@ -62,7 +60,7 @@ function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
   };
 }
 
-function decodeResendRequest({ body }: FakeRequest): ResendSplitReceiptParams {
+function decodeResendReceiptRequest({ body }: FakeRequest): ResendSplitReceiptParams {
   return {
     transactionId: body.string('transactionId'),
     recipients: body.array('recipients', decodeReceiptRecipient),
@@ -78,24 +76,22 @@ function decodeGetRequest({ query }: FakeRequest): GetSplitParams {
   return { transactionId: query.string('transactionId') };
 }
 
-export function createSplitsFake(
-  script: Scripter<'splits', SplitsResource>,
-): PaylovFakeSurface<SplitsResource> {
-  return {
-    create: script(
-      'splits.create',
-      ENDPOINTS.splitPayment,
-      encodeTransactionReference,
-      decodeCreateRequest,
-      (request) => !isResend(request),
-    ),
-    resendReceipt: script(
-      'splits.resendReceipt',
-      ENDPOINTS.splitPayment,
-      encodeReceiptResent,
-      decodeResendRequest,
-      isResend,
-    ),
-    get: script('splits.get', ENDPOINTS.get, encodeSplit, decodeGetRequest),
-  };
-}
+export const SPLIT_FAKES: FakeSpecTable<SplitsResource> = {
+  create: {
+    endpoint: ENDPOINTS.create,
+    encode: encodeTransactionReference,
+    decodeRequest: decodeCreateRequest,
+    matches: (request) => !isResend(request),
+  },
+  resendReceipt: {
+    endpoint: ENDPOINTS.resendReceipt,
+    encode: encodeSplitReceiptResent,
+    decodeRequest: decodeResendReceiptRequest,
+    matches: isResend,
+  },
+  get: {
+    endpoint: ENDPOINTS.get,
+    encode: encodeSplit,
+    decodeRequest: decodeGetRequest,
+  },
+};

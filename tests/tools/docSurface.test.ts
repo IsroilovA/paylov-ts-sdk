@@ -161,6 +161,12 @@ it('rejects a resource method missing from its index row', () => {
   ]);
 });
 
+it('rejects a namespace row listing a method the namespace lacks', () => {
+  expect(problemsOf(edit('INDEX.md', '`get`, `list`', '`get`, `list`, `createBindLink`'))).toEqual([
+    'INDEX.md: the paylov.cards row lists createBindLink, not a method',
+  ]);
+});
+
 it('checks a resource interface declared outside resource.ts', () => {
   const base = surface();
   const sources = new Map(base.sources).set(

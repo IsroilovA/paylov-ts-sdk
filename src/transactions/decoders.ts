@@ -31,8 +31,8 @@ export const TRANSACTION_STATUS_BY_WIRE: ReadonlyMap<string, TransactionStatus> 
   ['payed', 'paid'],
   ['cancel', 'refunded'],
   // On DEV `cancel` marked a refunded sale and a dismissed hold, `refunded` an expired hold Paylov
-  // released after a failed capture, against the vendor's "Refunded"; both mean the money went back,
-  // so both read `refunded`.
+  // released after a failed capture, against the vendor's "Refunded"; both mean the money went
+  // back, so both read `refunded`.
   ['refunded', 'refunded'],
 ]);
 

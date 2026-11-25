@@ -62,6 +62,7 @@ const requiredPaths = {
 /** Core modules without I/O, credentials or client state; they import only each other. */
 const pureCore = [
   'types',
+  'endpoint',
   'errors',
   'errorCodes',
   'numbers',
@@ -72,7 +73,17 @@ const pureCore = [
   'fake',
 ];
 /** What a resource feature needs: the pure primitives and the request helpers of `call`. */
-const resourceCore = ['call', 'decoding', 'params', 'types', 'errors', 'money', 'time', 'fake'];
+const resourceCore = [
+  'call',
+  'decoding',
+  'endpoint',
+  'params',
+  'types',
+  'errors',
+  'money',
+  'time',
+  'fake',
+];
 
 /** Folders with a `fake.ts`, which the testing fake gateway assembles or the fakes share. */
 const fakeFolders = [...Object.keys(features), 'onboarding', 'webhooks', 'shared'];

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { decodeErrorDetails } from '../../src/core/errorDetails.js';
-import { expectNoSecretLeak, recordOf } from '../helpers/asserts.js';
+import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
+import { ENDPOINTS as PAYMENT_ENDPOINTS } from '../../src/payments/resource.js';
+import { expectApiError, expectNoSecretLeak, recordOf } from '../helpers/asserts.js';
 import { loadWire } from '../helpers/fixtures.js';
+import { client, rawPayload } from './httpCases.js';
 
 const SECRET = 'EXAMPLE-GATEWAY-MESSAGE-NOT-A-REAL-VALUE';
 
@@ -10,8 +13,14 @@ function decode(
   code: string,
   error: Readonly<Record<string, unknown>>,
   retryAfter: string | null = null,
+  httpStatus = 400,
 ): ReturnType<typeof decodeErrorDetails> {
-  return decodeErrorDetails(code, error, retryAfter);
+  return decodeErrorDetails(code, error, httpStatus, retryAfter);
+}
+
+/** `['x']` wrapped in `levels` objects under the key `a`. */
+function nestedUnderA(levels: number): unknown {
+  return Array.from({ length: levels }).reduce<unknown>((child) => ({ a: child }), ['x']);
 }
 
 describe('fields', () => {
@@ -46,6 +55,26 @@ describe('fields', () => {
   it('keeps at most 32 paths', () => {
     const data = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`f${index}`, ['x']]));
     expect(decode('validation_error', { data }).fields).toHaveLength(32);
+  });
+
+  it('discards branches nested deeper than 16 segments', () => {
+    expect(
+      decode('validation_error', { data: { kept: nestedUnderA(15), dropped: nestedUnderA(16) } }),
+    ).toEqual({
+      fields: [`kept${'.a'.repeat(15)}`],
+    });
+  });
+
+  it('keeps the gateway error of a payment whose validation data nests too deep to walk', async () => {
+    const levels = 20_000;
+    const data = `${'{"a":'.repeat(levels)}["x"]${'}'.repeat(levels)}`;
+    const rawBody = `{"result":null,"error":{"code":"validation_error","data":${data}}}`;
+    const { http } = client([{ status: 500, rawBody }]);
+    const error = await expectApiError(http.request(PAYMENT_ENDPOINTS.pay, {}, rawPayload), {
+      code: 'validation_error',
+      httpStatus: 500,
+    });
+    expect(isPaylovOutcomeUnknown(error)).toBe(true);
   });
 
   it('reads field_not_valid from data.field or a bare data string', () => {
@@ -99,6 +128,14 @@ describe('retryAfterSeconds', () => {
     expect(
       decode('rate_limit_exceeded', { message: 'Too many requests. Retry after 42s.' }),
     ).toEqual({});
+  });
+
+  it('prefers a 429 Retry-After header to a card block delay, which counts at other statuses', () => {
+    const blocked = { data: { sec_to_retry: 2 } };
+    expect(decode('card_is_blocked', blocked, '48', 429)).toEqual({ retryAfterSeconds: 48 });
+    expect(decode('card_is_blocked', blocked, null, 429)).toEqual({ retryAfterSeconds: 2 });
+    expect(decode('card_is_blocked', blocked, '48', 400)).toEqual({ retryAfterSeconds: 2 });
+    expect(decode('invalid_grant', {}, '48', 429)).toEqual({ retryAfterSeconds: 48 });
   });
 
   it('reads the rest of a card block from card_is_blocked data', () => {

@@ -51,13 +51,22 @@ export interface FiscalReceiptSummary {
   readonly isRefund: boolean;
 }
 
-/** One gateway transaction: a receipt, PAN or hold payment. */
+/**
+ * One of the merchant's gateway transactions, whatever created it: SDK payments and holds, and
+ * payments made elsewhere, such as through Paylov's hosted checkout.
+ */
 export interface Transaction {
   /** Gateway transaction id. */
   readonly transactionId: string;
-  /** The external reference stored with the transaction: a hold's `externalId`; `null` for receipt and PAN payments. */
+  /**
+   * The external reference stored with the transaction: a hold's `externalId`; `null` for other
+   * payments.
+   */
   readonly externalId: string | null;
-  /** `null` for PAN payments, and for a receipt created without one until paid. */
+  /**
+   * `null` for PAN and hosted-checkout payments, and for a receipt created without one until
+   * paid.
+   */
   readonly userId: string | null;
   /** Card id; `null` until a card is attached. A PAN payment gets a new one each time. */
   readonly cardId: string | null;
@@ -87,17 +96,18 @@ export interface TransactionPage {
 
 /** Parameters for `readRefundState`. */
 export interface ReadRefundStateParams {
-  /** A `transactions.get` result for a sale. */
+  /** A `transactions.get` result for a sale or a captured hold. */
   readonly transaction: Transaction;
 }
 
 /**
- * What a `transactions.get` read establishes about the refund of a paid sale, from
+ * What a `transactions.get` read establishes about the refund of a paid transaction, from
  * `readRefundState`:
- * - `refunded`: the sale reads `refunded`, with the refund time.
- * - `not_refunded`: the sale still reads `paid`.
- * - `unknown`: the read proves nothing: a hold (whose `refunded` can also mark a release), a
- *   transaction that was never paid, an unobserved status, or a refund without a
+ * - `refunded`: a sale (`isHold` false) reads `refunded`, with the refund time.
+ * - `not_refunded`: the transaction, a sale or a captured hold, still reads `paid` without a
+ *   refund time: not refunded at the time of the read.
+ * - `unknown`: the read proves nothing: any hold reading `refunded` (a release reads the same as
+ *   a refund), a transaction that was never paid, an unobserved status, or a refund without a
  *   time. Read again later or check the Paylov business panel; never refund again on it.
  */
 export type RefundState =

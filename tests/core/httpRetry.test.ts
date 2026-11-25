@@ -8,6 +8,7 @@ import {
 } from '../../src/core/errors.js';
 import { createHttpClient } from '../../src/core/http.js';
 import { ClientLifecycle, untilAborted } from '../../src/core/lifecycle.js';
+import { ENDPOINTS as PAYMENT_ENDPOINTS } from '../../src/payments/resource.js';
 import type {
   AuthorizationContext,
   AuthProvider,
@@ -29,6 +30,7 @@ import {
   CREATE_RECEIPT,
   client,
   rotatingAuth,
+  rawPayload,
 } from './httpCases.js';
 
 const EXPIRED = wireResponse('envelope/bearer.expired.wire.json');
@@ -53,7 +55,7 @@ function recordingSleep(): { sleeps: number[]; sleep: (ms: number) => Promise<vo
 describe('deadlines and connection failures', () => {
   it('aborts the fetch and reports sdk_timeout', async () => {
     const { http, fetchImpl } = client([STALLED, STALLED, STALLED], { timeoutMs: 30 });
-    const error = await captureAsync(http.request(GET_STATUS));
+    const error = await captureAsync(http.request(GET_STATUS, {}, rawPayload));
     expect(error).toBeInstanceOf(PaylovConnectionError);
     expect(error).toMatchObject({
       code: 'sdk_timeout',
@@ -72,7 +74,7 @@ describe('deadlines and connection failures', () => {
       timeoutMs: 30,
       fetch: () => Promise.resolve(stalled),
     });
-    await expect(http.request(CREATE_RECEIPT)).rejects.toMatchObject({
+    await expect(http.request(CREATE_RECEIPT, {}, rawPayload)).rejects.toMatchObject({
       code: 'sdk_timeout',
       timeoutMs: 30,
     });
@@ -84,7 +86,9 @@ describe('deadlines and connection failures', () => {
       timeoutMs: 30,
       fetch: () => new Promise<Response>(() => undefined),
     });
-    await expect(http.request(CREATE_RECEIPT)).rejects.toMatchObject({ code: 'sdk_timeout' });
+    await expect(http.request(CREATE_RECEIPT, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_timeout',
+    });
   });
 
   it('retains no fetch-error data anywhere in the public error', async () => {
@@ -115,7 +119,7 @@ describe('deadlines and connection failures', () => {
     const failure = { throw: cause };
     const { http } = client([failure, failure, failure]);
     const error = await captureAsync(
-      http.request(GET_STATUS, { query: { externalId: secrets.query } }),
+      http.request(GET_STATUS, { query: { externalId: secrets.query } }, rawPayload),
     );
     expect(error).toBeInstanceOf(PaylovConnectionError);
     expect(error).toMatchObject({ code: 'sdk_network_error' });
@@ -130,7 +134,7 @@ describe('deadlines and connection failures', () => {
     vi.stubGlobal('fetch', platformFetch);
     try {
       const http = createHttpClient({ origin: BASE_URL });
-      await expect(http.request(GET_STATUS)).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+      await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
       expect(platformFetch).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
@@ -142,7 +146,9 @@ describe('caller abort', () => {
   it('fails before any I/O when the signal is already aborted, with a known outcome', async () => {
     const { auth, authorize } = rotatingAuth();
     const { http, fetchImpl } = client([SUCCESS], { auth });
-    const error = await captureAsync(http.request(CREATE_RECEIPT, { signal: AbortSignal.abort() }));
+    const error = await captureAsync(
+      http.request(CREATE_RECEIPT, { signal: AbortSignal.abort() }, rawPayload),
+    );
     expect(error).toMatchObject({
       code: 'sdk_aborted',
       endpoint: 'POST /merchant/receipts/create/',
@@ -157,25 +163,31 @@ describe('caller abort', () => {
   it('aborts an in-flight GET and never retries it', async () => {
     const controller = new AbortController();
     const { http, fetchImpl } = client([STALLED, SUCCESS]);
-    const pending = captureAsync(http.request(GET_STATUS, { signal: controller.signal }));
+    const pending = captureAsync(
+      http.request(GET_STATUS, { signal: controller.signal }, rawPayload),
+    );
     controller.abort();
     await expect(pending).resolves.toMatchObject({ code: 'sdk_aborted', isSent: true });
     expect(fetchImpl.calls).toHaveLength(1);
     expect(fetchImpl.calls[0]?.signal?.aborted).toBe(true);
   });
 
-  it('abandons a backoff sleep', async () => {
+  it('abandons a backoff sleep without leaving an abort listener', async () => {
     const controller = new AbortController();
+    const { signal } = controller;
+    const added = vi.spyOn(signal, 'addEventListener');
+    const removed = vi.spyOn(signal, 'removeEventListener');
     const sleep = (): Promise<void> => {
       controller.abort();
       return new Promise<void>(() => undefined);
     };
     const { http, fetchImpl } = client([{ status: 503 }, SUCCESS], { sleep });
-    await expect(http.request(GET_STATUS, { signal: controller.signal })).rejects.toMatchObject({
+    await expect(http.request(GET_STATUS, { signal }, rawPayload)).rejects.toMatchObject({
       code: 'sdk_aborted',
       isSent: true,
     });
     expect(fetchImpl.calls).toHaveLength(1);
+    expect(added.mock.calls.length).toBe(removed.mock.calls.length);
   });
 
   it('stops waiting for authorization without cancelling it', async () => {
@@ -186,12 +198,14 @@ describe('caller abort', () => {
       invalidate: vi.fn<AuthProvider['invalidate']>(),
     };
     const { http, fetchImpl } = client([SUCCESS], { auth });
-    const waiting = captureAsync(http.request(GET_STATUS, { signal: controller.signal }));
-    const other = http.request(GET_STATUS);
+    const waiting = captureAsync(
+      http.request(GET_STATUS, { signal: controller.signal }, rawPayload),
+    );
+    const other = http.request(GET_STATUS, {}, rawPayload);
     controller.abort();
     await expect(waiting).resolves.toMatchObject({ code: 'sdk_aborted', isSent: false });
     grant.resolve({ header: 'Bearer shared', generation: 1 });
-    await expect(other).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(other).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(fetchImpl.calls).toHaveLength(1);
   });
 
@@ -211,7 +225,9 @@ describe('client lifecycle', () => {
     expect(lifecycle.closed).toBe(false);
     lifecycle.close();
     expect(lifecycle.closed).toBe(true);
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'sdk_client_closed' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_client_closed',
+    });
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
@@ -225,7 +241,9 @@ describe('client lifecycle', () => {
       invalidate: vi.fn<AuthProvider['invalidate']>(),
     };
     const { http, fetchImpl } = client([SUCCESS], { lifecycle, auth });
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'sdk_client_closed' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_client_closed',
+    });
     expect(fetchImpl.calls).toHaveLength(0);
   });
 
@@ -247,7 +265,7 @@ describe('client lifecycle', () => {
         logger: { onRequest, onResponse },
       });
       await expect(
-        http.request(CREATE_RECEIPT, { signal: controller.signal }),
+        http.request(CREATE_RECEIPT, { signal: controller.signal }, rawPayload),
       ).rejects.toMatchObject({ code });
       expect(fetchImpl.calls).toHaveLength(0);
       expect(onResponse.mock.calls.map(([event]) => event)).toEqual([
@@ -263,7 +281,9 @@ describe('client lifecycle', () => {
       return Promise.resolve();
     };
     const { http, fetchImpl } = client([{ status: 503 }, SUCCESS], { lifecycle, sleep });
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'sdk_client_closed' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_client_closed',
+    });
     expect(fetchImpl.calls).toHaveLength(1);
   });
 });
@@ -271,17 +291,14 @@ describe('client lifecycle', () => {
 describe('GET retries', () => {
   it('makes one attempt for a success and unwraps its result', async () => {
     const { http, fetchImpl } = client([SUCCESS]);
-    await expect(http.request(GET_STATUS)).resolves.toEqual({
-      payload: SUCCESS_PAYLOAD,
-      context: { endpoint: 'GET /merchant/status/', httpStatus: 200 },
-    });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(fetchImpl.calls).toHaveLength(1);
   });
 
   it('retries a 500 up to the 2-retry ceiling, then throws its error', async () => {
     const serverError = wireResponse('envelope/serverError.wire.json');
     const { http, fetchImpl } = client([serverError, serverError, serverError]);
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
       code: 'server_error',
       httpStatus: 500,
     });
@@ -290,7 +307,7 @@ describe('GET retries', () => {
 
   it.each([502, 503, 504])('retries a %i and returns the later payload', async (status) => {
     const { http, fetchImpl } = client([{ status }, { status }, SUCCESS]);
-    await expect(http.request(GET_STATUS)).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(fetchImpl.calls).toHaveLength(3);
   });
 
@@ -299,13 +316,15 @@ describe('GET retries', () => {
     ['timeout', { delayMs: 5_000 }, { timeoutMs: 30 }],
   ] as const)('retries a pre-response %s', async (_label, failure, overrides) => {
     const { http, fetchImpl } = client([failure, SUCCESS], overrides);
-    await http.request(GET_STATUS);
+    await http.request(GET_STATUS, {}, rawPayload);
     expect(fetchImpl.calls).toHaveLength(2);
   });
 
   it('does not retry a 400', async () => {
     const { http, fetchImpl } = client([FUNDS_ERROR]);
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'insufficient_funds' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'insufficient_funds',
+    });
     expect(fetchImpl.calls).toHaveLength(1);
   });
 
@@ -315,7 +334,7 @@ describe('GET retries', () => {
       [wireResponse('auth/token.rateLimitedRetryAfter.wire.json'), SUCCESS],
       { sleep },
     );
-    const error = await captureAsync(http.request(GET_STATUS));
+    const error = await captureAsync(http.request(GET_STATUS, {}, rawPayload));
     expect(error).toBeInstanceOf(PaylovApiError);
     expect(error).toMatchObject({
       code: 'rate_limit_exceeded',
@@ -337,7 +356,7 @@ describe('GET retries', () => {
     });
     const onResponse = vi.fn<(event: PaylovLoggerResponseEvent) => void>();
     const { http } = client([], { fetch: fetchImpl, logger: { onResponse } });
-    const error = await captureAsync(http.request(GET_STATUS));
+    const error = await captureAsync(http.request(GET_STATUS, {}, rawPayload));
     expect(error).toBeInstanceOf(PaylovProtocolError);
     expect(error).toMatchObject({ code: 'sdk_unexpected_status', httpStatus: 429 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -359,7 +378,9 @@ describe('GET retries', () => {
       return Promise.resolve(new Response(body, { status: 429 }));
     });
     const { http } = client([], { fetch: fetchImpl });
-    const error = await captureAsync(http.request(GET_STATUS, { signal: controller.signal }));
+    const error = await captureAsync(
+      http.request(GET_STATUS, { signal: controller.signal }, rawPayload),
+    );
     expect(error).toBeInstanceOf(PaylovConnectionError);
     expect(error).toMatchObject({ code: 'sdk_aborted' });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -374,7 +395,9 @@ describe('GET retries', () => {
       sleep,
       random: () => randomValue,
     });
-    await expect(http.request(GET_STATUS)).rejects.toBeInstanceOf(PaylovProtocolError);
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toBeInstanceOf(
+      PaylovProtocolError,
+    );
     expect(sleeps).toEqual(expected);
   });
 
@@ -384,12 +407,12 @@ describe('GET retries', () => {
     try {
       const { fetchImpl } = client([{ status: 503 }, SUCCESS]);
       const http = createHttpClient({ origin: BASE_URL, fetch: fetchImpl });
-      const pending = http.request(GET_STATUS);
+      const pending = http.request(GET_STATUS, {}, rawPayload);
       await vi.advanceTimersByTimeAsync(99);
       expect(fetchImpl.calls).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(fetchImpl.calls).toHaveLength(2);
-      await expect(pending).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+      await expect(pending).resolves.toEqual(SUCCESS_PAYLOAD);
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
@@ -408,7 +431,9 @@ describe('non-GET requests are never retried', () => {
       for (const maxGetRetries of [undefined, 0, 5]) {
         const retry = maxGetRetries === undefined ? {} : { maxGetRetries };
         const { http, fetchImpl } = client([failure, SUCCESS], { ...overrides, ...retry });
-        await expect(http.request({ ...CREATE_RECEIPT, method })).rejects.toMatchObject({ code });
+        await expect(
+          http.request({ ...CREATE_RECEIPT, method }, {}, rawPayload),
+        ).rejects.toMatchObject({ code });
         expect(fetchImpl.calls).toHaveLength(1);
       }
     }
@@ -426,7 +451,9 @@ describe('the GET retry count', () => {
     const { sleeps, sleep } = recordingSleep();
     const script = Array.from({ length: attempts + 1 }, () => serverError);
     const { http, fetchImpl } = client(script, { maxGetRetries, sleep });
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'server_error' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'server_error',
+    });
     expect(fetchImpl.calls).toHaveLength(attempts);
     // The backoff stays exponential from 200 ms (jitter pinned at 1 by the harness).
     expect(sleeps).toEqual(Array.from({ length: maxGetRetries }, (_, i) => 200 * 2 ** i));
@@ -437,7 +464,7 @@ describe('401 replay', () => {
   it('invalidates the rejected generation and replays a GET once', async () => {
     const { auth, authorize, invalidate } = rotatingAuth();
     const { http, fetchImpl } = client([EXPIRED, SUCCESS], { auth });
-    await expect(http.request(GET_STATUS)).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(invalidate.mock.calls).toEqual([[1]]);
     expect(authorize).toHaveBeenCalledTimes(2);
     expect(fetchImpl.calls.map((call) => call.headers['authorization'])).toEqual([
@@ -452,7 +479,7 @@ describe('401 replay', () => {
       [wireResponse('envelope/bearer.invalidToken.wire.json'), SUCCESS],
       { auth },
     );
-    await http.request(CREATE_RECEIPT);
+    await http.request(CREATE_RECEIPT, {}, rawPayload);
     expect(fetchImpl.calls).toHaveLength(2);
     expect(invalidate).toHaveBeenCalledTimes(1);
   });
@@ -461,7 +488,7 @@ describe('401 replay', () => {
     const { auth, invalidate } = rotatingAuth();
     const { http, fetchImpl } = client([EXPIRED, EXPIRED], { auth });
     const error = await captureAsync(
-      http.request(CREATE_RECEIPT, { body: { password: PASSWORD } }),
+      http.request(CREATE_RECEIPT, { body: { password: PASSWORD } }, rawPayload),
     );
     expect(error).toBeInstanceOf(PaylovApiError);
     expect(error).toMatchObject({
@@ -498,14 +525,31 @@ describe('401 replay', () => {
   ] as const)('does not replay a %s', async (_label, response, code) => {
     const { auth, invalidate } = rotatingAuth();
     const { http, fetchImpl } = client([response, SUCCESS], { auth });
-    await expect(http.request(CREATE_RECEIPT)).rejects.toMatchObject({ code });
+    await expect(http.request(CREATE_RECEIPT, {}, rawPayload)).rejects.toMatchObject({ code });
     expect(fetchImpl.calls).toHaveLength(1);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a non-null result', { result: { transactionId: 'x' }, error: { code: 'permission_denied' } }],
+    ['no result', { error: { code: 'permission_denied' } }],
+  ])('never replays a payment after a 401 permission_denied with %s', async (_label, body) => {
+    const { auth, authorize, invalidate } = rotatingAuth();
+    const { http, fetchImpl } = client([{ status: 401, body }, SUCCESS], { auth });
+    const error = await captureAsync(http.request(PAYMENT_ENDPOINTS.pay, {}, rawPayload));
+    expect(error).toBeInstanceOf(PaylovProtocolError);
+    expect(error).toMatchObject({ code: 'sdk_unexpected_status', httpStatus: 401 });
+    expect(isPaylovOutcomeUnknown(error)).toBe(true);
+    expect(fetchImpl.calls).toHaveLength(1);
+    expect(authorize).toHaveBeenCalledTimes(1);
     expect(invalidate).not.toHaveBeenCalled();
   });
 
   it('never replays without an AuthProvider', async () => {
     const { http, fetchImpl } = client([EXPIRED, SUCCESS]);
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'permission_denied' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'permission_denied',
+    });
     expect(fetchImpl.calls).toHaveLength(1);
   });
 
@@ -518,7 +562,7 @@ describe('401 replay', () => {
     async (_label, failure, overrides, code) => {
       const { auth, invalidate } = rotatingAuth();
       const { http, fetchImpl } = client([EXPIRED, failure, SUCCESS], { auth, ...overrides });
-      await expect(http.request(CREATE_RECEIPT)).rejects.toMatchObject({ code });
+      await expect(http.request(CREATE_RECEIPT, {}, rawPayload)).rejects.toMatchObject({ code });
       expect(fetchImpl.calls).toHaveLength(2);
       expect(invalidate).toHaveBeenCalledTimes(1);
     },
@@ -530,7 +574,9 @@ describe('401 replay', () => {
       [EXPIRED, { status: 500 }, { status: 500 }, { status: 500 }],
       { auth },
     );
-    await expect(http.request(GET_STATUS)).rejects.toBeInstanceOf(PaylovProtocolError);
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toBeInstanceOf(
+      PaylovProtocolError,
+    );
     expect(fetchImpl.calls).toHaveLength(4);
   });
 });

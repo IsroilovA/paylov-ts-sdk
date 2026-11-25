@@ -410,7 +410,8 @@ describe('transactions.iterate', () => {
       listPage(6, ROWS.slice(0, 3)),
     ]);
 
-    await expectMalformed(collectIds(resource.iterate()), 'result.transactions');
+    const error = await expectMalformed(collectIds(resource.iterate()), 'result.transactions');
+    expect(isPaylovOutcomeUnknown(error)).toBe(false);
     expect(fetchImpl.calls).toHaveLength(3);
   });
 
@@ -449,7 +450,7 @@ describe('transactions.iterate', () => {
 describe('transactions.getRrn', () => {
   it('puts the id in the path, logs only the route and returns the RRN', async () => {
     const { resource, fetchImpl, requests } = setup([
-      wireResponse('transactions/rrn.success.wire.json'),
+      wireResponse('transactions/getRrn.success.wire.json'),
     ]);
 
     const rrn = await resource.getRrn({ transactionId: RECEIPT_ID });

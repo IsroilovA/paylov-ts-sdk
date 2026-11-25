@@ -13,16 +13,18 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  splitPayment: {
+  create: { method: 'POST', route: '/merchant/splitPayment/', shape: 'envelope', effect: 'money' },
+  resendReceipt: {
     method: 'POST',
     route: '/merchant/splitPayment/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'write',
   },
   get: {
     method: 'GET',
     route: '/merchant/splitPayment/status/',
     shape: 'envelope',
+    effect: 'read',
   },
 } as const;
 
@@ -37,9 +39,10 @@ export interface SplitsResource {
    * A recipient's `items` are registered with the OFD in the background; read the result with
    * `splits.get`.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get` before splitting again:
-   * `split_not_found` means no split exists; `split_already_done` on a repeated call means the
-   * split exists.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get` before splitting again: its
+   * shares mean the split exists. `split_not_found` right after the failure proves nothing: read
+   * again after a backoff before splitting again with the same recipients. `split_already_done` on
+   * a repeated call means the split exists.
    *
    * @throws {@link PaylovApiError} `split_already_done`, `invalid_amount` (amounts do not add up),
    * `recipient_not_found`, `receipt_not_available_for_split` (the transaction is not paid),
@@ -68,12 +71,14 @@ export interface SplitsResource {
    * resend took effect, and `ofd_check_already_generated` on a repeated call means a receipt
    * exists.
    *
+   * @throws {@link PaylovInputError} `sdk_invalid_input` for a recipient without `items`, before
+   * anything is sent.
    * @throws {@link PaylovApiError} `ofd_check_already_generated` (the split has a receipt),
-   * `split_not_found` (the transaction has no split), `field_required` (a recipient without
-   * items), `ofd_comitent_not_provided`, `permission_denied`.
+   * `split_not_found` (the transaction has no split), `ofd_comitent_not_provided`,
+   * `permission_denied`.
    *
    * @example
-   * const { lastOfdError } = await paylov.splits.resendReceipt({
+   * const { status } = await paylov.splits.resendReceipt({
    *   transactionId,
    *   recipients: [{ recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedItems }],
    * });
@@ -125,7 +130,7 @@ export function createSplitsResource(http: HttpClient): SplitsResource {
         transactionId: input.string('transactionId'),
         recipients: input.array('recipients', readRecipient),
       };
-      return send(http, ENDPOINTS.splitPayment, { body, signal }, decodeTransactionReference);
+      return send(http, ENDPOINTS.create, { body, signal }, decodeTransactionReference);
     },
 
     async resendReceipt(params, options) {
@@ -136,7 +141,7 @@ export function createSplitsResource(http: HttpClient): SplitsResource {
         recipients: input.array('recipients', readReceiptRecipient),
         resendOFD: true,
       };
-      return send(http, ENDPOINTS.splitPayment, { body, signal }, decodeSplitReceiptResent);
+      return send(http, ENDPOINTS.resendReceipt, { body, signal }, decodeSplitReceiptResent);
     },
 
     async get(params, options) {

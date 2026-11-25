@@ -86,7 +86,8 @@ export class PaylovClient {
    */
   readonly payments: PaymentsResource;
   /**
-   * Transaction lookups, paid-transaction listings and RRNs. See docs/usage/transactions.md.
+   * Reads of the merchant's transactions, paid-transaction listings and RRNs. See
+   * docs/usage/transactions.md.
    * @example const transaction = await paylov.transactions.get({ transactionId });
    */
   readonly transactions: TransactionsResource;
@@ -97,7 +98,7 @@ export class PaylovClient {
   readonly holds: HoldsResource;
   /**
    * Splits of a paid transaction between recipients. See docs/usage/splits.md.
-   * @example const shares = await paylov.splits.get({ transactionId });
+   * @example const { shares } = await paylov.splits.get({ transactionId });
    */
   readonly splits: SplitsResource;
   /**
@@ -106,7 +107,7 @@ export class PaylovClient {
    */
   readonly fiscalization: FiscalizationResource;
   /**
-   * Sub-merchant registration for splits. See docs/usage/splits.md.
+   * Registration of child merchants under yours. See docs/usage/splits.md.
    * @example const { subMerchantId } = await paylov.subMerchants.create(subMerchantParams);
    */
   readonly subMerchants: SubMerchantsResource;
@@ -151,9 +152,9 @@ export class PaylovClient {
    * Every later call throws `PaylovClientClosedError` `sdk_client_closed`. A request still in
    * flight may also fail with it once the revocation lands; Paylov rejected it before running it,
    * so it had no effect. Settle requests before closing to keep their results. Concurrent calls
-   * share one revocation. Resolves once the client is closed locally even when the revocation fails or
-   * `signal` abandons the wait: the revoke attempt's `logger` events report its outcome, metadata
-   * only.
+   * share one revocation. Resolves once the client is closed locally even when the revocation
+   * fails or `signal` abandons the wait: the revoke attempt's `logger` events report its outcome,
+   * metadata only.
    *
    * @throws {@link PaylovInputError} `sdk_invalid_input` for options without an `AbortSignal`.
    *

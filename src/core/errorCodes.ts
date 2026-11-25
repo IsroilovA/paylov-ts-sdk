@@ -62,7 +62,6 @@ export type PaylovKnownErrorCode =
   | 'invalid_amount'
   | 'limit_exceeded'
   | 'daily_limit_used_for_this_card'
-  | 'insufficient_deposit'
   | 'do_not_honor'
   | 'call_issuer'
   | 'transaction_not_permitted'
@@ -76,7 +75,6 @@ export type PaylovKnownErrorCode =
   // Transaction state and lookup: reconcile through a status read.
   | 'transaction_not_found'
   | 'transaction_already_payed'
-  | 'already_confirmed'
   | 'transaction_not_available_for_payment'
   | 'transaction_not_available_for_cancel'
   | 'receipt_not_available_for_operation'
@@ -88,7 +86,6 @@ export type PaylovKnownErrorCode =
   | 'ofd_commitent_or_subcommission_not_active'
   | 'ofd_comitent_not_provided'
   | 'ofd_check_already_generated'
-  | 'ofd_too_many_requests_for_this_receipt'
   | 'ofd_check_not_found'
   | 'ofd_error'
   | 'fiscal_receipt_not_generated'

@@ -3,10 +3,8 @@ import {
   optionalEntry,
   tashkentDateTimeOf,
   utcDateTimeOf,
-  type FakeCodec,
   type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
+  type FakeSpecTable,
 } from '../core/fake.js';
 import { encodeStatus } from '../shared/fake.js';
 import { TRANSACTION_STATUS_BY_WIRE } from './decoders.js';
@@ -47,7 +45,6 @@ function encodeTransaction(transaction: Transaction): unknown {
     is_hold: transaction.isHold,
     is_split: transaction.isSplit,
     is_a2c: transaction.isA2c,
-    via_link: null,
     ofd: transaction.fiscalReceipts.map(encodeFiscalReceiptSummary),
   };
 }
@@ -85,44 +82,31 @@ function decodeListRequest({ query }: FakeRequest): ListTransactionsParams {
   };
 }
 
-function decodeRrnRequest({ path }: FakeRequest): GetRrnParams {
+function decodeGetRrnRequest({ path }: FakeRequest): GetRrnParams {
   return { transactionId: path.string('transactionId') };
 }
 
-export const TRANSACTION_CODECS: {
-  readonly get: FakeCodec<Transaction, GetTransactionParams>;
-  readonly list: FakeCodec<TransactionPage, ListTransactionsParams>;
-} = {
+export const TRANSACTION_FAKES: FakeSpecTable<TransactionsResource> = {
   get: {
+    endpoint: ENDPOINTS.getTransactions,
     encode: encodeRequestedTransaction,
     decodeRequest: decodeGetRequest,
     matches: isSingleRead,
+    // An unknown id is an empty list, not an error (W c144).
+    miss: {
+      code: 'transaction_not_found',
+      payload: { totalTransaction: 0, transactions: [] },
+    },
   },
   list: {
+    endpoint: ENDPOINTS.getTransactions,
     encode: encodeTransactionPage,
     decodeRequest: decodeListRequest,
-    matches: (request: FakeRequest) => !isSingleRead(request),
+    matches: (request) => !isSingleRead(request),
+  },
+  getRrn: {
+    endpoint: ENDPOINTS.getRrn,
+    encode: encodeRrn,
+    decodeRequest: decodeGetRrnRequest,
   },
 };
-
-export function createTransactionsFake(
-  script: Scripter<'transactions', TransactionsResource>,
-): PaylovFakeSurface<TransactionsResource> {
-  return {
-    get: script(
-      'transactions.get',
-      ENDPOINTS.getTransactions,
-      TRANSACTION_CODECS.get.encode,
-      TRANSACTION_CODECS.get.decodeRequest,
-      TRANSACTION_CODECS.get.matches,
-    ),
-    list: script(
-      'transactions.list',
-      ENDPOINTS.getTransactions,
-      TRANSACTION_CODECS.list.encode,
-      TRANSACTION_CODECS.list.decodeRequest,
-      TRANSACTION_CODECS.list.matches,
-    ),
-    getRrn: script('transactions.getRrn', ENDPOINTS.getRrn, encodeRrn, decodeRrnRequest),
-  };
-}

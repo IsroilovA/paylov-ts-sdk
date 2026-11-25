@@ -2,6 +2,7 @@
 
 import {
   asJsonObject,
+  asLiteral,
   asTiyin,
   asUnixDateTime,
   asUuid,
@@ -12,7 +13,7 @@ import {
 import type { InvalidWebhook, InvalidWebhookReason, WebhookEvent } from './types.js';
 
 /** A decoded body, before the receiver adds the credential pair that authenticated it. */
-export type DecodedWebhook = WebhookEvent | InvalidWebhook;
+type DecodedWebhook = WebhookEvent | InvalidWebhook;
 
 export function invalid(reason: InvalidWebhookReason): InvalidWebhook {
   return { kind: 'invalid', reason };
@@ -41,8 +42,11 @@ function parseJsonBody(body: unknown): unknown {
   return JSON.parse(JSON.stringify(body));
 }
 
+const asCancelledStatus = asLiteral('cancelled');
+
 function decodeCancel(value: unknown): DecodedWebhook {
   const params = readFields(value, 'params');
+  params('status', asCancelledStatus);
   return {
     kind: 'transaction.cancel',
     transactionId: params('transaction_id', asUuid),
@@ -54,9 +58,10 @@ function decodeCancel(value: unknown): DecodedWebhook {
 
 function decodeJsonRpc(envelope: Readonly<Record<string, unknown>>): DecodedWebhook {
   if (envelope['jsonrpc'] !== '2.0') return invalid('invalid_request');
-  const params = envelope['params'];
-  if (envelope['method'] === 'transaction.cancel') return decodeCancel(params);
-  return invalid('unknown_method');
+  if (envelope['method'] !== 'transaction.cancel') return invalid('unknown_method');
+  // `transaction.cancel` is a JSON-RPC notification: an `id` marks a request, not this event.
+  if (Object.hasOwn(envelope, 'id')) return invalid('invalid_request');
+  return decodeCancel(envelope['params']);
 }
 
 export function decodeWebhook(body: unknown): DecodedWebhook {

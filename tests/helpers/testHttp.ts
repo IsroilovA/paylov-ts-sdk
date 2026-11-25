@@ -9,7 +9,7 @@ import { createFakeFetch, type FakeResponseSpec } from './fakeFetch.js';
 
 export const BASE_URL = 'https://api.paylov.test';
 
-export interface RecordingLogger {
+interface RecordingLogger {
   readonly logger: PaylovLogger;
   readonly requests: PaylovLoggerRequestEvent[];
   readonly responses: PaylovLoggerResponseEvent[];
@@ -50,7 +50,7 @@ export interface ResourceHarness<R> {
  * and a recording logger. Pass `overrides` to replace any transport option.
  *
  * @example
- * const { resource, fetchImpl } = setupResource(createHoldsResource, [
+ * const { resource, fetchImpl } = setupResource((http) => createHoldsResource(http, () => NOW), [
  *   wireResponse('holds/get.hold.wire.json'),
  * ]);
  * await resource.get({ transactionId });

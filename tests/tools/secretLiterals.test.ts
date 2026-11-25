@@ -150,6 +150,12 @@ describe('secret scanner', () => {
     expect(secretProblems('page.md', `password: '${passphrase}'`)).toHaveLength(1);
   });
 
+  it('measures a credential in UTF-16 code units, so astral characters count twice', () => {
+    const astral = ['hunte', String.fromCodePoint(0x1d400, 0x1d401)].join('');
+    expect(json({ password: astral })).toHaveLength(1);
+    expect(json({ password: astral.slice(0, -2) })).toEqual([]);
+  });
+
   it('leaves short validation probes and validation messages under credential keys alone', () => {
     expect(code("const params = { token: '..' };")).toEqual([]);
     expect(code("const params = { token: 'a/b?c' };")).toEqual([]);

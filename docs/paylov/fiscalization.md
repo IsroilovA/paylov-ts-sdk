@@ -144,9 +144,9 @@ Request (the vendor card-payment example without the undocumented fields; see De
 }
 ```
 
-Success, D ([fixture](../../tests/fixtures/fiscalization/register.success.docs.json)); live the same
-shape, also without `error` (W c1629,
-[fixture](../../tests/fixtures/fiscalization/register.success.wire.json)):
+Success, D ([fixture](../../tests/fixtures/fiscalization/registerReceipt.success.docs.json)); live
+the same shape, also without `error` (W c1629,
+[fixture](../../tests/fixtures/fiscalization/registerReceipt.success.wire.json)):
 
 ```json
 {
@@ -168,18 +168,18 @@ shape, also without `error` (W c1629,
 | `ofd.receiptId`  | integer | Receipt ID.       |
 | `ofd.fiscalSign` | string  | Fiscal signature. |
 
-| Code                                        | Description                                                                                                                                                                                                                                                 | Grade                |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `validation_error`                          | `{}` gives `{"items": [...]}`; item errors use an index map `{"items": {"0": {"title": [...], ...}}}` ([fixture](../../tests/fixtures/fiscalization/register.nestedValidation.wire.json))                                                                   | W (c269, c270, c272) |
-| `permission_denied`                         | Fiscalization is not enabled for the merchant                                                                                                                                                                                                               | W (c271)             |
-| `receipt_not_available_for_operation`       | The transaction is not eligible for a fiscal receipt.                                                                                                                                                                                                       | D                    |
-| `field_required`                            | Required field missing (e.g. `items`).                                                                                                                                                                                                                      | D                    |
-| `ofd_check_already_generated`               | The transaction already has a fiscal receipt.                                                                                                                                                                                                               | D, W (c1702)         |
-| `transaction_not_found`                     | Unknown `transactionId`.                                                                                                                                                                                                                                    | W (c1602)            |
-| `ofd_commitent_or_subcommission_not_active` | An item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue; `data`: `itemIndex`, `tin`, `pinfl` ([fixture](../../tests/fixtures/fiscalization/register.commitentNotActive.docs.json), built from the catalogue entry). | D                    |
-| `invalid_amount`                            | The items' total does not match the transaction amount.                                                                                                                                                                                                     | D                    |
-| `ofd_error`                                 | OFD processing failed; `data.ofd_response` is the OFD's answer as a string, e.g. an item rejected by its package code ([fixture](../../tests/fixtures/fiscalization/register.ofdError.wire.json)).                                                          | D, W (c1611)         |
-| `fiscal_receipt_not_generated`              | The receipt was not generated; a cash sale on DEV, without `data`.                                                                                                                                                                                          | D, W (c1703)         |
+| Code                                        | Description                                                                                                                                                                                                                                                        | Grade                |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- |
+| `validation_error`                          | `{}` gives `{"items": [...]}`; item errors use an index map `{"items": {"0": {"title": [...], ...}}}` ([fixture](../../tests/fixtures/fiscalization/registerReceipt.nestedValidation.wire.json))                                                                   | W (c269, c270, c272) |
+| `permission_denied`                         | Fiscalization is not enabled for the merchant                                                                                                                                                                                                                      | W (c271)             |
+| `receipt_not_available_for_operation`       | The transaction is not eligible for a fiscal receipt.                                                                                                                                                                                                              | D                    |
+| `field_required`                            | Required field missing (e.g. `items`).                                                                                                                                                                                                                             | D                    |
+| `ofd_check_already_generated`               | The transaction already has a fiscal receipt.                                                                                                                                                                                                                      | D, W (c1702)         |
+| `transaction_not_found`                     | Unknown `transactionId`.                                                                                                                                                                                                                                           | W (c1602)            |
+| `ofd_commitent_or_subcommission_not_active` | An item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue; `data`: `itemIndex`, `tin`, `pinfl` ([fixture](../../tests/fixtures/fiscalization/registerReceipt.commitentNotActive.docs.json), built from the catalogue entry). | D                    |
+| `invalid_amount`                            | The items' total does not match the transaction amount.                                                                                                                                                                                                            | D                    |
+| `ofd_error`                                 | OFD processing failed; `data.ofd_response` is the OFD's answer as a string, e.g. an item rejected by its package code ([fixture](../../tests/fixtures/fiscalization/registerReceipt.ofdError.wire.json)).                                                          | D, W (c1611)         |
+| `fiscal_receipt_not_generated`              | The receipt was not generated; a cash sale on DEV, without `data`.                                                                                                                                                                                                 | D, W (c1703)         |
 
 ## Get fiscal receipt status
 

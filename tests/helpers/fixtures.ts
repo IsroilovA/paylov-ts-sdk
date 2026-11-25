@@ -9,7 +9,7 @@ const FIXTURES_ROOT = new URL('../fixtures/', import.meta.url);
  * A redacted live response: the capture number, the HTTP status, the response headers the SDK
  * reads, and the response body.
  */
-export interface WireFixture {
+interface WireFixture {
   readonly capture: string;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
@@ -23,7 +23,7 @@ const WIRE_KEYS: ReadonlySet<string> = new Set(['capture', 'status', 'headers', 
 /** The only response headers the SDK reads, so the only ones a `.wire.json` keeps. */
 const WIRE_HEADERS: ReadonlySet<string> = new Set(['retry-after']);
 /** Keys of a recording or a pasted capture, which a body-only fixture never has at its top. */
-const RECORDING_KEYS = ['capture', 'headers', 'body', 'request', 'response', 'provenance'];
+const RECORDING_KEYS = ['capture', 'headers', 'body', 'request', 'response'];
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -50,18 +50,12 @@ function hasRecordingKeys(fixture: unknown): boolean {
 
 /** What a fixture's provenance suffix requires of it that it lacks, if anything. */
 function formatProblem(relativePath: string, fixture: unknown): string | undefined {
-  const suffix = /\.(wire|docs|synthesized|bundle)\.json$/.exec(relativePath)?.[1];
-  if (suffix === undefined) return 'has no .wire, .docs, .bundle or .synthesized suffix';
+  const suffix = /\.(wire|docs|synthesized)\.json$/.exec(relativePath)?.[1];
+  if (suffix === undefined) return 'has no .wire, .docs or .synthesized suffix';
   if (suffix === 'wire') {
     return isWireFixture(fixture)
       ? undefined
       : 'must be exactly { capture: "NNN", status, headers?, body }, with only the headers the SDK reads';
-  }
-  if (suffix === 'bundle') {
-    const { provenance, ...values } = isPlainObject(fixture) ? fixture : {};
-    return isPlainObject(provenance) && !hasRecordingKeys(values)
-      ? undefined
-      : 'must hold a provenance record beside the replayed values';
   }
   return hasRecordingKeys(fixture) ? 'must hold the body only' : undefined;
 }
@@ -98,7 +92,7 @@ export function loadWire(relativePath: string): WireFixture {
  * A scripted fake-fetch answer replaying a `.wire.json` fixture.
  *
  * @example
- * const { resource } = setupResource(createGatewayResource, [wireResponse('gateway/status.ok.wire.json')]);
+ * const { resource } = setupResource(createGatewayResource, [wireResponse('gateway/getStatus.ok.wire.json')]);
  */
 export function wireResponse(
   relativePath: string,
@@ -109,12 +103,11 @@ export function wireResponse(
 }
 
 /**
- * A scripted fake-fetch answer whose body is a `.docs.json`, `.bundle.json` or `.synthesized.json`
- * fixture. Recordings must go through `wireResponse`, which also replays their status.
+ * A scripted fake-fetch answer whose body is a `.docs.json` or `.synthesized.json` fixture. Recordings must go through `wireResponse`, which also replays their status.
  *
  * @example
  * const { resource } = setupResource(createFiscalizationResource, [
- *   fixtureResponse('fiscalization/register.commitentNotActive.docs.json', { status: 400 }),
+ *   fixtureResponse('fiscalization/registerReceipt.commitentNotActive.docs.json', { status: 400 }),
  * ]);
  */
 export function fixtureResponse(
@@ -128,7 +121,7 @@ export function fixtureResponse(
 }
 
 /** Keys and array indexes from a fixture body's root down to the record a test patches. */
-export type BodyPath = readonly (string | number)[];
+type BodyPath = readonly (string | number)[];
 
 function replaceAt(
   value: unknown,

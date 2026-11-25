@@ -1,4 +1,4 @@
-import type { PaylovFakeSurface, Scripter } from '../core/fake.js';
+import type { FakeSpecTable } from '../core/fake.js';
 import { ENDPOINTS, type GatewayResource } from './resource.js';
 import type { Bank } from './types.js';
 
@@ -19,11 +19,15 @@ function decodeNoParams(): undefined {
   return undefined;
 }
 
-export function createGatewayFake(
-  script: Scripter<'gateway', GatewayResource>,
-): PaylovFakeSurface<GatewayResource> {
-  return {
-    getStatus: script('gateway.getStatus', ENDPOINTS.getStatus, encodeStatus, decodeNoParams),
-    listBanks: script('gateway.listBanks', ENDPOINTS.listBanks, encodeBanks, decodeNoParams),
-  };
-}
+export const GATEWAY_FAKES: FakeSpecTable<GatewayResource> = {
+  getStatus: {
+    endpoint: ENDPOINTS.getStatus,
+    encode: encodeStatus,
+    decodeRequest: decodeNoParams,
+  },
+  listBanks: {
+    endpoint: ENDPOINTS.listBanks,
+    encode: encodeBanks,
+    decodeRequest: decodeNoParams,
+  },
+};

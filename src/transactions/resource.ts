@@ -1,4 +1,5 @@
 import { readCall, send } from '../core/call.js';
+import { responseContext } from '../core/endpoint.js';
 import { malformedResponse, type PaylovProtocolError } from '../core/errors.js';
 import type { Params } from '../core/params.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
@@ -13,23 +14,33 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  getTransactions: { method: 'GET', route: '/merchant/getTransactions/', shape: 'envelope' },
+  getTransactions: {
+    method: 'GET',
+    route: '/merchant/getTransactions/',
+    shape: 'envelope',
+    effect: 'read',
+  },
   getRrn: {
     method: 'GET',
     route: '/merchant/getTransactions/rrn/{transactionId}/',
     shape: 'envelope',
+    effect: 'read',
   },
 } as const;
 
 /** The `paylov.transactions` namespace. */
 export interface TransactionsResource {
   /**
-   * Reads one transaction in any status: a receipt, PAN or hold payment. This is the
-   * read to reconcile with after an ambiguous failure of a money-moving call.
+   * Reads one of the merchant's transactions in any status, whatever created it: SDK payments and
+   * holds, and payments made elsewhere, such as through Paylov's hosted checkout. Moves no money.
+   * This is the read to reconcile with after an ambiguous `payments.pay`,
+   * `payments.confirmPanPayment` or `payments.refund`. An ambiguous `holds.create` leaves only its
+   * `externalId`, read with `holds.get`, as are a hold's capture and release; a split is read with
+   * `splits.get`, which carries the recipient shares.
    *
    * @throws {@link PaylovApiError} `transaction_not_found` when the gateway knows no such
    * transaction. Paylov answers that with an empty list, so the SDK synthesizes the error, with
-   * the answer's HTTP status; it is definitive, never unsettled. Right after an ambiguous call it
+   * the answer's HTTP status; it is definitive. Right after an ambiguous call it
    * is not proof that nothing was created: read again after a delay.
    *
    * @example
@@ -43,7 +54,8 @@ export interface TransactionsResource {
   get(params: GetTransactionParams, options?: PaylovCallOptions): Promise<Transaction>;
 
   /**
-   * Lists the merchant's **paid** transactions, newest payment first, one page at a time.
+   * Lists the merchant's **paid** transactions, newest payment first, one page at a time. Moves no
+   * money.
    *
    * Created, held, failed and refunded transactions are not listed, so a refunded
    * payment drops out: this is a settled-sales feed, not an audit log, and never a way to
@@ -61,11 +73,11 @@ export interface TransactionsResource {
 
   /**
    * Every transaction `transactions.list` reports for the range, fetched page by page as the
-   * loop consumes it. The same feed: **paid** transactions only, newest payment first, with
-   * `fromDate` and `toDate` as Tashkent (UTC+5) calendar days. Paging stops once the transactions
-   * seen reach the reported `total`, or at an empty page. A transaction pushed to a later page by a
-   * payment made while the loop runs is yielded once; a refund made meanwhile can move an unseen
-   * one to an earlier page and out of reach, so this is not a snapshot.
+   * loop consumes it. Moves no money. The same feed: **paid** transactions only, newest payment
+   * first, with `fromDate` and `toDate` as Tashkent (UTC+5) calendar days. Paging stops once the
+   * transactions seen reach the reported `total`, or at an empty page. A transaction pushed to a
+   * later page by a payment made while the loop runs is yielded once; a refund made meanwhile can
+   * move an unseen one to an earlier page and out of reach, so this is not a snapshot.
    *
    * Parameters are checked when it is called, each page is requested when the loop needs it, and
    * `signal` aborts the next request.
@@ -89,8 +101,8 @@ export interface TransactionsResource {
 
   /**
    * Reads the card network's retrieval reference number (RRN) of a paid transaction, for
-   * disputes and bank-side lookups. Known to work for `payments.pay` payments, also after a
-   * refund, and for holds, already before capture. PAN payments have none
+   * disputes and bank-side lookups. Moves no money. Known to work for `payments.pay` payments,
+   * also after a refund, and for holds, already before capture. PAN payments have none
    * (`transaction_not_available_for_payment`).
    *
    * @throws {@link PaylovApiError} `transaction_not_found`, `receipt_not_available_for_operation`
@@ -139,11 +151,7 @@ function readRange(input: Params): {
 }
 
 function stalledPage(): PaylovProtocolError {
-  const { method, route } = ENDPOINTS.getTransactions;
-  return malformedResponse(
-    { endpoint: `${method} ${route}`, httpStatus: 200 },
-    'result.transactions',
-  );
+  return malformedResponse(responseContext(ENDPOINTS.getTransactions, 200), 'result.transactions');
 }
 
 export function createTransactionsResource(http: HttpClient): TransactionsResource {

@@ -1,5 +1,5 @@
 import type { PaylovJsonObject } from '../core/types.js';
-import type { TransactionLookup, TransactionReference } from '../shared/transactions.js';
+import type { TransactionReference } from '../shared/transactions.js';
 
 /**
  * `held` (reserved), `captured`, `released` or `declined`. `held` means what it means in
@@ -30,11 +30,15 @@ export interface CreateHoldParams {
   /**
    * Your reference for this hold, unique per merchant; Paylov answers `validation_error` above
    * 64 characters. It is the key that finds the hold again with `holds.get({ externalId })` after
-   * an ambiguous failure. Every create that reaches Paylov uses it up, a declined one too: a new
-   * attempt after a decline or release needs a new `externalId`.
+   * an ambiguous failure. Store it before the call and replay an ambiguous create with the same
+   * value. Every create that reaches Paylov uses it up, a declined one too: only a new attempt
+   * after a confirmed decline, or after a release, takes a new `externalId`.
    */
   readonly externalId: string;
-  /** Merchant data sent with the hold. */
+  /**
+   * Merchant data sent with the hold. Plain JSON only: finite numbers, no `BigInt`, `Date`, class instance, function, symbol or
+   * cycle, at most 64 levels deep; `undefined` properties are dropped.
+   */
   readonly account?: PaylovJsonObject;
   /** An existing Paylov service (UUID); the gateway defaults to the merchant itself. */
   readonly serviceId?: string;
@@ -80,8 +84,12 @@ export interface ReleaseHoldParams {
   readonly transactionId: string;
 }
 
-/** Parameters for `holds.get`: exactly one of `transactionId` or `externalId`. */
-export type GetHoldParams = TransactionLookup;
+/** Parameters for `holds.get`: exactly one of the gateway `transactionId` or your `externalId`. */
+export type GetHoldParams =
+  // `?: undefined`, not `?: never`, so lookups built by spread still type-check under
+  // `exactOptionalPropertyTypes`.
+  | { readonly transactionId: string; readonly externalId?: undefined }
+  | { readonly externalId: string; readonly transactionId?: undefined };
 
 /** A hold as `holds.get` reports it. */
 export interface Hold {

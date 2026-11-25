@@ -13,7 +13,11 @@ try {
     transactionId,
     recipients: [
       { recipientId: platformRecipientId, amountTiyin: 150_000 },
-      { recipientId: sellerRecipientId, amountTiyin: 850_000, items: sellerItems },
+      {
+        recipientId: sellerRecipientId,
+        amountTiyin: 850_000,
+        items: sellerItems,
+      },
     ],
   });
 } catch (error) {
@@ -25,7 +29,9 @@ const split = await paylov.splits.get({ transactionId });
 - Splitting moves money to the recipients; amounts must add up to the transaction amount, and the
   transaction must be paid (`receipt_not_available_for_split` otherwise).
 - Read the split back with the paid transaction's id. `splits.get` throws `split_not_found` for a
-  transaction without a split and `transaction_not_found` for an unknown one.
+  transaction without a split and `transaction_not_found` for an unknown one. Right after an
+  ambiguous `splits.create`, `split_not_found` proves nothing: read again after a backoff before
+  splitting again.
 - Recipients are ids Paylov issues. Paylov's test environment accepted only the merchant's own id
   (the `serviceId` a hold reports); whether sub-merchant ids are recipients is undocumented.
 - `payments.refund` of the paid transaction refunds the split: every share reads `cancelled`.
@@ -37,19 +43,26 @@ const split = await paylov.splits.get({ transactionId });
 - Poll `splits.get`: `receipt` turns from `null` to the sale receipt seconds after the split, and to
   the refund receipt seconds after a refund.
 - A rejected item leaves `receipt` `null` and reports nothing. Resubmit corrected items with
-  `splits.resendReceipt`: it splits nothing, moves no money, and returns the OFD's previous error as
-  `lastOfdError`. `ofd_check_already_generated` means a receipt already exists. Paylov does not say
-  whether a resend while the first submission is still pending registers twice, so wait before
+  `splits.resendReceipt`: it splits nothing, moves no money, and returns the resubmission `status`.
+  Every recipient needs its `items`; a recipient without them is rejected locally as
+  `sdk_invalid_input`. `ofd_check_already_generated` means a receipt already exists. Paylov does not
+  say whether a resend while the first submission is still pending registers twice, so wait before
   resending.
 
 ```ts
 const split = await paylov.splits.get({ transactionId });
 if (split.receipt === null && Date.now() - splitAt.getTime() > 60_000) {
-  const { lastOfdError } = await paylov.splits.resendReceipt({
+  const { status } = await paylov.splits.resendReceipt({
     transactionId,
-    recipients: [{ recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedItems }],
+    recipients: [
+      {
+        recipientId: sellerRecipientId,
+        amountTiyin: 850_000,
+        items: correctedItems,
+      },
+    ],
   });
-  log.warn('split receipt resent', { lastOfdError });
+  log.warn('split receipt resent', { status });
 }
 ```
 
@@ -65,5 +78,8 @@ await shops.linkPaylov(shop.id, subMerchantId);
 ```
 
 - Paylov staff activate a new sub-merchant later.
-- No lookup exists: after an ambiguous failure, repeat with the same data and treat
-  `sub_merchant_already_created` as success.
+- No lookup exists: after an ambiguous failure, repeat with the same data.
+  `sub_merchant_already_created` then leaves the result unresolved: Paylov answers it when any of
+  `name`, `tin`, `pinfl` or `externalId` collides with one of your sub-merchants and returns no id,
+  so it does not prove the intended child exists. Confirm the child and its id with Paylov before
+  linking it.

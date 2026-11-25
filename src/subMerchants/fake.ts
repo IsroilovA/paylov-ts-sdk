@@ -1,9 +1,4 @@
-import {
-  optionalEntry,
-  type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
-} from '../core/fake.js';
+import { optionalEntry, type FakeRequest, type FakeSpecTable } from '../core/fake.js';
 import type { Params } from '../core/params.js';
 import { ENDPOINTS, type SubMerchantsResource } from './resource.js';
 import type {
@@ -57,15 +52,10 @@ function decodeCreateRequest({ body }: FakeRequest): CreateSubMerchantParams {
   };
 }
 
-export function createSubMerchantsFake(
-  script: Scripter<'subMerchants', SubMerchantsResource>,
-): PaylovFakeSurface<SubMerchantsResource> {
-  return {
-    create: script(
-      'subMerchants.create',
-      ENDPOINTS.create,
-      encodeSubMerchantCreated,
-      decodeCreateRequest,
-    ),
-  };
-}
+export const SUB_MERCHANT_FAKES: FakeSpecTable<SubMerchantsResource> = {
+  create: {
+    endpoint: ENDPOINTS.create,
+    encode: encodeSubMerchantCreated,
+    decodeRequest: decodeCreateRequest,
+  },
+};

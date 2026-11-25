@@ -23,7 +23,8 @@ jobs:
     # Publishes package.json's version once both check jobs pass on main, through npm trusted
     # publishing (no stored token; provenance included), then tags it and creates the GitHub
     # release from its CHANGELOG section. A version already on npm is not republished, so pushes
-    # that do not raise the version only fill in a missing tag or release.
+    # that do not raise the version only fill in a missing tag or release, at the commit npm
+    # recorded for that version (`gitHead`), never at the pushed commit.
     needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -45,13 +46,22 @@ jobs:
           name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
           node scripts/checkChangelog.mjs --notes "$RUNNER_TEMP/notes.md"
+          commit=$GITHUB_SHA
           if published=$(npm view "$name@$version" version 2> "$RUNNER_TEMP/view.err"); then
-            [ -n "$published" ] && echo "published=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$published" ]; then
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              commit=$(npm view "$name@$version" gitHead)
+              if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "npm records no commit for $version; the tag cannot be placed" >&2
+                exit 1
+              fi
+            fi
           elif ! grep -q E404 "$RUNNER_TEMP/view.err"; then
             cat "$RUNNER_TEMP/view.err" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - name: Publish to npm
         if: steps.package.outputs.published != 'true'
         # The check jobs above already ran `npm run check`; skip prepublishOnly and build once.
@@ -62,9 +72,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ steps.package.outputs.version }}
+          COMMIT: ${{ steps.package.outputs.commit }}
         run: |
+          # Checked alone: the default shell has no pipefail, so a failed lookup would read as no tag.
+          if ! refs=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}"); then
+            echo "cannot read $TAG from origin" >&2
+            exit 1
+          fi
+          # The last line is the peeled commit of an annotated tag, else the tag's own commit.
+          tagged=$(printf '%s\n' "$refs" | tail -n 1 | cut -f 1)
+          if [ -n "$tagged" ] && [ "$tagged" != "$COMMIT" ]; then
+            echo "$TAG points at $tagged, but the published commit is $COMMIT" >&2
+            exit 1
+          fi
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "$TAG already released"
           else
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --target "$COMMIT" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi

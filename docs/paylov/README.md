@@ -63,38 +63,38 @@ docs name the merchant/key allowlist only in error codes (D).
 100 tiyin = 1 SUM. Where a tiyin field exists it is exact; read it instead of the unit-currency
 field: a check of 100049 tiyin reads `amount_in_tiyin` 100049 and `amount` 1000.49 (W c1160, c1164).
 
-| Operation                       | Field                            | Wire unit                                                           | Grade                      |
-| ------------------------------- | -------------------------------- | ------------------------------------------------------------------- | -------------------------- |
-| `receipts/create`               | `amount`                         | SUM, integer, ≥ 1                                                   | W (c086, c087, c096)       |
-| `paymentWithoutRegistration/`   | `amount`                         | SUM, integer, ≥ 1                                                   | W (c166, c170, c177, c590) |
-| `getTransactions`               | `amount` / `amount_in_tiyin`     | SUM float / tiyin integer                                           | W (c087, c346)             |
-| Hold create                     | `amount`                         | SUM, integer, ≥ 10                                                  | W (c181, c187, c204)       |
-| Hold charge                     | `amount`                         | SUM, integer, 10 ≤ amount ≤ held amount                             | W (c188, c189, c194, c346) |
-| Hold status                     | `amount`                         | SUM, integer; the held amount, then the captured amount once `paid` | W (c184, c195)             |
-| Card objects                    | `balance`                        | tiyin                                                               | W (c027, c052), D          |
-| Split create and status         | `recipients[].amount` / `amount` | tiyin (en, ru example comment)                                      | D                          |
-| OFD register and split items    | `price`                          | tiyin                                                               | D                          |
-| OFD register and split items    | `discount`                       | tiyin (at most `price`, which is tiyin)                             | M 2026-11-15               |
-| `internalCheckoutCreate`        | `amount`                         | SUM, or tiyin with `amountInTiyin: true`                            | W (c347, c352)             |
-| Checkout link                   | `amount`                         | SUM, or minor units with `amount_in_tiyin=True`                     | D, L                       |
-| `transaction.check` / `perform` | `amount` / `amount_tiyin`        | Whole currency units / minor units                                  | D                          |
-| `transaction.cancel`            | `amount` / `amount_in_tiyin`     | Whole UZS / tiyin                                                   | D                          |
-| `merchant.deposit`              | `amount_in_tiyin`                | tiyin                                                               | D                          |
+| Operation                       | Field                            | Wire unit                                                           | Grade                            |
+| ------------------------------- | -------------------------------- | ------------------------------------------------------------------- | -------------------------------- |
+| `receipts/create`               | `amount`                         | SUM, integer, ≥ 1                                                   | W (c086, c087, c096)             |
+| `paymentWithoutRegistration/`   | `amount`                         | SUM, integer, ≥ 1                                                   | W (c166, c170, c177, c590)       |
+| `getTransactions`               | `amount` / `amount_in_tiyin`     | SUM float / tiyin integer                                           | W (c087, c346)                   |
+| Hold create                     | `amount`                         | SUM, integer, ≥ 10                                                  | W (c181, c187, c204)             |
+| Hold charge                     | `amount`                         | SUM, integer, 10 ≤ amount ≤ held amount                             | W (c188, c189, c194, c346)       |
+| Hold status                     | `amount`                         | SUM, integer; the held amount, then the captured amount once `paid` | W (c184, c195)                   |
+| Card objects                    | `balance`                        | tiyin                                                               | W (c027, c052), D                |
+| Split create and status         | `recipients[].amount` / `amount` | tiyin                                                               | W (c220, c1721, c1740, c1741), D |
+| OFD register and split items    | `price`                          | tiyin                                                               | D                                |
+| OFD register and split items    | `discount`                       | tiyin (at most `price`, which is tiyin)                             | M 2026-11-15                     |
+| `internalCheckoutCreate`        | `amount`                         | SUM, or tiyin with `amountInTiyin: true`                            | W (c347, c352)                   |
+| Checkout link                   | `amount`                         | SUM, or minor units with `amount_in_tiyin=True`                     | D, L                             |
+| `transaction.check` / `perform` | `amount` / `amount_tiyin`        | Whole currency units / minor units                                  | D                                |
+| `transaction.cancel`            | `amount` / `amount_in_tiyin`     | Whole UZS / tiyin                                                   | D                                |
+| `merchant.deposit`              | `amount_in_tiyin`                | tiyin                                                               | D                                |
 
 ## Timestamps by operation
 
 Tashkent is UTC+05:00 all year; Uzbekistan has no daylight saving time.
 
-| Field                                                        | Format and zone                         | Grade            |
-| ------------------------------------------------------------ | --------------------------------------- | ---------------- |
-| `getTransactions` `date`, `cancel_time`; cancel `cancelTime` | `YYYY-MM-DD HH:MM:SS`, Tashkent         | W (c087, c113)   |
-| Hold charge `payedAt`; hold status `payedAt`, `cancelTime`   | `YYYY-MM-DD HH:MM:SS`, UTC              | W (c194, c199)   |
-| Transaction `ofd[].date_time`                                | `YYYY-MM-DD HH:MM:SS`, UTC              | W (c1631, c1697) |
-| OFD receipt URL `c` parameter                                | `YYYYMMDDHHMMSS`, Tashkent              | W (c1629, c1689) |
-| Bind link `expiresAt`                                        | ISO 8601 with microseconds and `+05:00` | W (c082)         |
-| Callback `cancel_time`, `create_time`                        | Unix seconds                            | D                |
-| Split status `createdAt`                                     | `YYYY-MM-DD HH:MM:SS`, zone unstated    | D                |
-| OFD set-receipt `dateTime`                                   | `YYYYMMDDHHMMSS`                        | D                |
+| Field                                                        | Format and zone                         | Grade                   |
+| ------------------------------------------------------------ | --------------------------------------- | ----------------------- |
+| `getTransactions` `date`, `cancel_time`; cancel `cancelTime` | `YYYY-MM-DD HH:MM:SS`, Tashkent         | W (c087, c113)          |
+| Hold charge `payedAt`; hold status `payedAt`, `cancelTime`   | `YYYY-MM-DD HH:MM:SS`, UTC              | W (c194, c199)          |
+| Transaction `ofd[].date_time`                                | `YYYY-MM-DD HH:MM:SS`, UTC              | W (c1631, c1697)        |
+| OFD receipt URL `c` parameter                                | `YYYYMMDDHHMMSS`, Tashkent              | W (c1629, c1689)        |
+| Bind link `expiresAt`                                        | ISO 8601 with microseconds and `+05:00` | W (c082)                |
+| Callback `cancel_time`, `create_time`                        | Unix seconds                            | D                       |
+| Split status `createdAt`                                     | `YYYY-MM-DD HH:MM:SS`, Tashkent         | W (c1740, c1741, c1789) |
+| OFD set-receipt `dateTime`                                   | `YYYYMMDDHHMMSS`                        | D                       |
 
 ## Surface outside the SDK
 

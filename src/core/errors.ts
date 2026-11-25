@@ -5,7 +5,7 @@
  */
 
 import type { PaylovErrorCode, PaylovKnownErrorCode } from './errorCodes.js';
-import type { ResponseContext } from './types.js';
+import type { EndpointEffect, ResponseContext } from './types.js';
 
 /** Where a failure came from. */
 export type PaylovErrorKind = 'input' | 'closed' | 'api' | 'protocol' | 'connection';
@@ -46,7 +46,7 @@ export interface PaylovErrorDiagnostic {
   readonly path?: string | undefined;
   readonly timeoutMs?: number | undefined;
   readonly isSent?: boolean;
-  readonly isUnsettled?: boolean;
+  readonly isOutcomeUnknown?: boolean;
 }
 
 type DiagnosticDetails = Omit<PaylovErrorDiagnostic, 'name' | 'kind' | 'code' | 'message'>;
@@ -152,11 +152,8 @@ interface PaylovApiErrorInit {
   readonly endpoint: string;
   readonly fields?: readonly string[] | undefined;
   readonly retryAfterSeconds?: number | undefined;
-  /**
-   * A generic failure code from a call that can move money. Default `false`; HTTP 500 and above
-   * always count.
-   */
-  readonly isUnsettled?: boolean;
+  /** Default `false`. */
+  readonly isOutcomeUnknown?: boolean;
 }
 
 /**
@@ -182,13 +179,18 @@ export class PaylovApiError extends PaylovBaseError {
    */
   readonly fields: readonly string[] | undefined;
   /**
-   * Seconds until a retry can succeed, from 1 to 3600: for `rate_limit_exceeded`, from the
-   * `Retry-After` header (nothing retries a 429); for `card_is_blocked`,
-   * the rest of the card's block after repeated wrong one-time codes.
+   * Seconds until a retry can succeed, from 1 to 3600: for `rate_limit_exceeded` and any other
+   * HTTP 429, from the `Retry-After` header (nothing retries a 429); for `card_is_blocked`, the
+   * rest of the card's block after repeated wrong one-time codes, unless a 429's header sets it.
    */
   readonly retryAfterSeconds: number | undefined;
-  /** Whether the answer leaves the call's effect unknown; see {@link isPaylovOutcomeUnknown}. */
-  readonly isUnsettled: boolean;
+  /**
+   * Whether the requested operation may have executed although the call failed: HTTP 500 and
+   * above from an operation that writes, or a generic failure code (`processing_error`,
+   * `unknown_error`, `error_at_pay`) from one that moves money. Never for a read. Read it through
+   * {@link isPaylovOutcomeUnknown}.
+   */
+  readonly isOutcomeUnknown: boolean;
 
   constructor(init: PaylovApiErrorInit) {
     super(`Paylov returned ${init.code} (HTTP ${init.httpStatus}) for ${init.endpoint}`);
@@ -197,7 +199,7 @@ export class PaylovApiError extends PaylovBaseError {
     this.endpoint = init.endpoint;
     this.fields = init.fields;
     this.retryAfterSeconds = init.retryAfterSeconds;
-    this.isUnsettled = init.httpStatus >= 500 || init.isUnsettled === true;
+    this.isOutcomeUnknown = init.isOutcomeUnknown ?? false;
   }
 
   protected diagnosticDetails(): DiagnosticDetails {
@@ -206,7 +208,7 @@ export class PaylovApiError extends PaylovBaseError {
       endpoint: this.endpoint,
       fields: this.fields,
       retryAfterSeconds: this.retryAfterSeconds,
-      isUnsettled: this.isUnsettled,
+      isOutcomeUnknown: this.isOutcomeUnknown,
     };
   }
 }
@@ -216,11 +218,15 @@ interface PaylovProtocolErrorInit {
   readonly httpStatus: number;
   readonly endpoint: string;
   readonly path?: string | undefined;
+  readonly retryAfterSeconds?: number | undefined;
+  /** Default `false`. */
+  readonly isOutcomeUnknown?: boolean;
 }
 
 /**
- * The response did not match the endpoint's declared contract. After a POST the operation may
- * have executed: reconcile through the method's documented status read.
+ * The response did not match the endpoint's declared contract. When the requested operation
+ * writes, it may have executed (`isOutcomeUnknown`): reconcile through the method's documented
+ * status read.
  *
  * @example
  * catch (error) {
@@ -236,6 +242,16 @@ export class PaylovProtocolError extends PaylovBaseError {
   readonly endpoint: string;
   /** The decoded location that failed, e.g. `result.card.status`; never its value. */
   readonly path: string | undefined;
+  /**
+   * For an HTTP 429 without a usable error body: seconds from 1 to 3600 from its `Retry-After`
+   * header, which is read whatever the body holds. Nothing retries a 429.
+   */
+  readonly retryAfterSeconds: number | undefined;
+  /**
+   * Whether the requested operation may have executed: true when it writes, never for a read.
+   * Read it through {@link isPaylovOutcomeUnknown}.
+   */
+  readonly isOutcomeUnknown: boolean;
 
   constructor(init: PaylovProtocolErrorInit) {
     super(
@@ -248,10 +264,18 @@ export class PaylovProtocolError extends PaylovBaseError {
     this.httpStatus = init.httpStatus;
     this.endpoint = init.endpoint;
     this.path = init.path;
+    this.retryAfterSeconds = init.retryAfterSeconds;
+    this.isOutcomeUnknown = init.isOutcomeUnknown ?? false;
   }
 
   protected diagnosticDetails(): DiagnosticDetails {
-    return { httpStatus: this.httpStatus, endpoint: this.endpoint, path: this.path };
+    return {
+      httpStatus: this.httpStatus,
+      endpoint: this.endpoint,
+      path: this.path,
+      retryAfterSeconds: this.retryAfterSeconds,
+      isOutcomeUnknown: this.isOutcomeUnknown,
+    };
   }
 }
 
@@ -260,6 +284,8 @@ interface PaylovConnectionErrorInit {
   readonly endpoint: string;
   readonly isSent: boolean;
   readonly timeoutMs?: number | undefined;
+  /** Default `false`. */
+  readonly isOutcomeUnknown?: boolean;
 }
 
 const CONNECTION_MESSAGES: Readonly<Record<PaylovConnectionErrorCode, string>> = {
@@ -271,7 +297,8 @@ const CONNECTION_MESSAGES: Readonly<Record<PaylovConnectionErrorCode, string>> =
 /**
  * No usable response: DNS, TCP or TLS failure, a reset, the SDK timeout, or the caller's abort.
  * The underlying error is discarded: an injected transport can embed URLs, headers, bodies and
- * credentials anywhere in it. Once `isSent`, the operation of a POST may have executed.
+ * credentials anywhere in it. Whether the requested operation may have executed is
+ * `isOutcomeUnknown`.
  *
  * @example
  * catch (error) {
@@ -293,6 +320,13 @@ export class PaylovConnectionError extends PaylovBaseError {
   readonly isSent: boolean;
   /** For `sdk_timeout` only: the per-attempt deadline that expired. */
   readonly timeoutMs: number | undefined;
+  /**
+   * Whether the requested operation may have executed: true when it writes and the failed
+   * attempt reached the transport. False for a read, and when the failure stopped the operation
+   * before any attempt that could execute it, even with `isSent` (a failed token grant, or an
+   * abort after a rejected token). Read it through {@link isPaylovOutcomeUnknown}.
+   */
+  readonly isOutcomeUnknown: boolean;
 
   constructor(init: PaylovConnectionErrorInit) {
     const message = init.isSent
@@ -303,16 +337,22 @@ export class PaylovConnectionError extends PaylovBaseError {
     this.endpoint = init.endpoint;
     this.isSent = init.isSent;
     this.timeoutMs = init.timeoutMs;
+    this.isOutcomeUnknown = init.isOutcomeUnknown ?? false;
   }
 
   protected diagnosticDetails(): DiagnosticDetails {
-    return { endpoint: this.endpoint, isSent: this.isSent, timeoutMs: this.timeoutMs };
+    return {
+      endpoint: this.endpoint,
+      isSent: this.isSent,
+      timeoutMs: this.timeoutMs,
+      isOutcomeUnknown: this.isOutcomeUnknown,
+    };
   }
 }
 
 /**
  * Anything this SDK throws. Narrow with {@link isPaylovError}, check
- * {@link isPaylovOutcomeUnknown} (a gateway 5xx counts too), then switch on `kind` and `code`.
+ * {@link isPaylovOutcomeUnknown}, then switch on `kind` and `code`.
  *
  * @example
  * catch (error) {
@@ -366,30 +406,134 @@ export function clientClosedError(): PaylovClientClosedError {
   return new PaylovClientClosedError();
 }
 
+/**
+ * Generic failure codes that name no reason, so a money endpoint answering one may still have
+ * acted.
+ */
+const GENERIC_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'processing_error',
+  'unknown_error',
+  'error_at_pay',
+]);
+
+function isUnknownGatewayOutcome(context: ResponseContext, code: string): boolean {
+  if (context.effect === 'read') return false;
+  return (
+    context.httpStatus >= 500 || (context.effect === 'money' && GENERIC_FAILURE_CODES.has(code))
+  );
+}
+
+/** A gateway error `code` from a response, with the error facts decoded beside the code. */
+export function gatewayError(
+  context: ResponseContext,
+  code: string,
+  details: Pick<PaylovApiErrorInit, 'fields' | 'retryAfterSeconds'>,
+): PaylovApiError {
+  return new PaylovApiError({
+    code,
+    endpoint: context.endpoint,
+    httpStatus: context.httpStatus,
+    ...details,
+    isOutcomeUnknown: isUnknownGatewayOutcome(context, code),
+  });
+}
+
+function protocolError(
+  context: ResponseContext,
+  details: Pick<PaylovProtocolErrorInit, 'code' | 'path' | 'retryAfterSeconds'>,
+): PaylovProtocolError {
+  return new PaylovProtocolError({
+    endpoint: context.endpoint,
+    httpStatus: context.httpStatus,
+    ...details,
+    isOutcomeUnknown: context.effect !== 'read',
+  });
+}
+
 /** `sdk_malformed_response` for a 2xx body that does not match its documented shape. */
 export function malformedResponse(context: ResponseContext, path?: string): PaylovProtocolError {
-  return new PaylovProtocolError({ code: 'sdk_malformed_response', ...context, path });
+  return protocolError(context, { code: 'sdk_malformed_response', path });
+}
+
+/**
+ * `sdk_unexpected_status` for a non-2xx without a usable error body, with the delay a 429's
+ * `Retry-After` header asks for.
+ */
+export function unexpectedStatus(
+  context: ResponseContext,
+  retryAfterSeconds?: number,
+): PaylovProtocolError {
+  return protocolError(context, { code: 'sdk_unexpected_status', retryAfterSeconds });
 }
 
 /**
  * The gateway's not-found `code` for a success body that reports a miss without an error, such as
- * an empty lookup list. Definitive, never unsettled.
+ * an empty lookup list. Definitive, never an unknown outcome.
  */
 export function synthesizedMiss(
   context: ResponseContext,
   code: PaylovKnownErrorCode,
 ): PaylovApiError {
-  return new PaylovApiError({ code, ...context });
+  return new PaylovApiError({
+    code,
+    endpoint: context.endpoint,
+    httpStatus: context.httpStatus,
+  });
 }
 
-/** `sdk_unexpected_status` for a non-2xx without a usable error body. */
-export function unexpectedStatus(context: ResponseContext): PaylovProtocolError {
-  return new PaylovProtocolError({ code: 'sdk_unexpected_status', ...context });
+/** A connection failure of an attempt that reached fetch. */
+export function attemptFailure(
+  code: PaylovConnectionErrorCode,
+  endpoint: string,
+  effect: EndpointEffect,
+  timeoutMs?: number,
+): PaylovConnectionError {
+  return new PaylovConnectionError({
+    code,
+    endpoint,
+    isSent: true,
+    timeoutMs,
+    isOutcomeUnknown: effect !== 'read',
+  });
 }
 
-/** `sdk_aborted` for the caller's abort; `isSent` once an attempt of the call reached fetch. */
+/**
+ * `sdk_aborted` outside an attempt: before its fetch, or during a retry backoff. `isSent` once an
+ * earlier attempt of the call reached fetch; that attempt was a rejected token or a retried read,
+ * so the outcome stays known.
+ */
 export function abortedError(endpoint: string, isSent: boolean): PaylovConnectionError {
   return new PaylovConnectionError({ code: 'sdk_aborted', endpoint, isSent });
+}
+
+/**
+ * `error` as one caller sees it when it stopped the call before the call's own operation reached
+ * the gateway, such as a failed token grant: a new error with the same code, endpoint and
+ * transport facts and a known outcome. A grant's error is shared by every waiter and by the
+ * password latch and cool-down, so each caller gets its own copy, never the shared object.
+ */
+export function beforeOperation(error: unknown): unknown {
+  if (error instanceof PaylovApiError) {
+    const { code, httpStatus, endpoint, fields, retryAfterSeconds } = error;
+    const copiedFields = fields === undefined ? undefined : [...fields];
+    return new PaylovApiError({
+      code,
+      httpStatus,
+      endpoint,
+      fields: copiedFields,
+      retryAfterSeconds,
+    });
+  }
+  if (error instanceof PaylovProtocolError) {
+    const { code, httpStatus, endpoint, path, retryAfterSeconds } = error;
+    return new PaylovProtocolError({ code, httpStatus, endpoint, path, retryAfterSeconds });
+  }
+  if (error instanceof PaylovConnectionError) {
+    const { code, endpoint, isSent, timeoutMs } = error;
+    return new PaylovConnectionError({ code, endpoint, isSent, timeoutMs });
+  }
+  if (error instanceof PaylovClientClosedError) return clientClosedError();
+  return error;
 }
 
 /**
@@ -406,23 +550,15 @@ export function isPaylovError(error: unknown): error is PaylovError {
 }
 
 /**
- * Generic failure codes that name no reason, so a money-moving endpoint answering one may still
- * have acted.
- */
-export const UNSETTLED_FAILURE_CODES: ReadonlySet<string> = new Set([
-  'processing_error',
-  'unknown_error',
-  'error_at_pay',
-]);
-
-/**
- * True when the operation may have executed although the call failed: a protocol error, a
- * connection error once a request was sent, or a gateway error with `isUnsettled`. That is HTTP
- * status 500 or above, or a generic failure code (`processing_error`, `unknown_error`,
- * `error_at_pay`) from a method that can charge, reserve, capture, release, refund or split funds.
- * Reconcile such a call through the method's documented status read before repeating it. False
- * for input and closed-client errors, an abort before anything was sent, other gateway errors
- * (specific declines such as `insufficient_funds` included), and anything the SDK did not throw.
+ * True when the requested operation may have executed although the call failed: the error's
+ * `isOutcomeUnknown`. That holds for a protocol error, HTTP status 500 or above, or a connection
+ * failure once a request was sent, from a method that writes (creates, confirms, registers,
+ * deletes or moves something), and also for a generic failure code (`processing_error`,
+ * `unknown_error`, `error_at_pay`) from a method that charges, reserves, captures, releases,
+ * refunds or splits funds. Reconcile such a call through the method's documented status read
+ * before repeating it. False for any failure of a read, input and closed-client errors, a failure
+ * before the operation was sent (such as a failed token grant), other gateway errors (specific
+ * declines such as `insufficient_funds` included), and anything the SDK did not throw.
  *
  * @example
  * catch (error) {
@@ -432,9 +568,7 @@ export const UNSETTLED_FAILURE_CODES: ReadonlySet<string> = new Set([
  */
 export function isPaylovOutcomeUnknown(error: unknown): boolean {
   if (!isPaylovError(error)) return false;
-  if (error.kind === 'api') return error.isUnsettled;
-  if (error.kind === 'connection') return error.isSent;
-  return error.kind === 'protocol';
+  return error.kind !== 'input' && error.kind !== 'closed' && error.isOutcomeUnknown;
 }
 
 /**

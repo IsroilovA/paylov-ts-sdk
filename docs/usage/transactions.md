@@ -1,7 +1,12 @@
 # Transactions
 
-`transactions.get` is the reconciliation read for every payment kind: saved card, PAN and hold.
-`transactions.list` is a settled-sales feed.
+`transactions.get` reads any of the merchant's transactions, whatever created it: SDK payments and
+holds, and payments made elsewhere, such as through Paylov's hosted checkout. It is the
+reconciliation read after an ambiguous `payments.pay`, `payments.confirmPanPayment` or
+`payments.refund`; an ambiguous `holds.create` is read with `holds.get({ externalId })`, a hold's
+capture or release with `holds.get`, and a split with `splits.get`
+([recovery](errors.md#recovery-after-an-ambiguous-failure)). `transactions.list` is a settled-sales
+feed.
 
 ## Reconcile one payment
 
@@ -39,9 +44,10 @@ if (state.kind === 'refunded') await orders.markRefunded(orderId, state.refunded
 else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
 ```
 
-- `refunded` needs a non-hold transaction reading `refunded` with `cancelledAt`; `not_refunded`
-  needs `paid` with no `cancelledAt`. Everything else is `unknown`: other statuses, and a hold
-  reading `refunded`, which may be a release rather than a refund.
+- `refunded` needs a sale (`isHold` false) reading `refunded` with `cancelledAt`; `not_refunded`
+  needs `paid` with no `cancelledAt`, a captured hold included. Everything else is `unknown`: other
+  statuses, and every hold reading `refunded`, which reads the same after a release as after a
+  refund. Confirm the refund of a captured hold in the Paylov business panel.
 - `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
   before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
 

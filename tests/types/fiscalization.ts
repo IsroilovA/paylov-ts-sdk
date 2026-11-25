@@ -18,8 +18,12 @@ const transactionId = '5eed0000-0000-4000-8000-000000000001';
 
 const cardParams: RegisterFiscalReceiptParams = { transactionId, items: [item] };
 const card: Promise<FiscalReceiptRegistered> = client.fiscalization.registerReceipt(cardParams);
-// @ts-expect-error only card payments are fiscalized; there is no cash sale
-const cash: RegisterFiscalReceiptParams = { externalId: 'cash-0001', items: [item] };
+const cash: RegisterFiscalReceiptParams = {
+  // @ts-expect-error only card payments are fiscalized; there is no cash sale
+  externalId: 'cash-0001',
+  phoneNumber: '+998888888888',
+  items: [item],
+};
 // @ts-expect-error a receipt needs its card payment
 const withoutPayment: RegisterFiscalReceiptParams = { items: [item] };
 void [card, cash, withoutPayment];

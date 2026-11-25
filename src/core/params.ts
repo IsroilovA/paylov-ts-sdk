@@ -19,7 +19,11 @@ type ListsEvery<T, L extends readonly T[]> = [Exclude<T, L[number]>] extends [ne
  * drift: a missing or foreign member fails to compile.
  *
  * @example
- * const DECISIONS = everyLiteral<WebhookDecisionWord>()(['accept', 'maintenance']);
+ * const ACTIVITY_TYPES = everyLiteral<FiscalActivityType>()([
+ *   'individual_entrepreneur',
+ *   'self_employed',
+ *   'high_income',
+ * ]);
  */
 export function everyLiteral<T extends string | number>(): <const L extends readonly T[]>(
   values: L & ListsEvery<T, L>,
@@ -32,56 +36,10 @@ interface IntegerRange {
   readonly max: number;
 }
 
-/** One method's parameters. Every getter validates the value and returns it. */
-export interface Params {
-  /** A non-blank string. */
-  string(key: string): string;
-  optionalString(key: string): string | undefined;
-  integer(key: string): number;
-  optionalInteger(key: string, range?: IntegerRange): number | undefined;
-  optionalBoolean(key: string): boolean | undefined;
-  /** A `Date` with a valid time. */
-  date(key: string): Date;
-  literal<const T extends string | number>(key: string, values: readonly T[]): T;
-  optionalLiteral<const T extends string | number>(
-    key: string,
-    values: readonly T[],
-  ): T | undefined;
-  /** An absolute `http(s)` URL. */
-  url(key: string): string;
-  optionalUrl(key: string): string | undefined;
-  /**
-   * A bare `https` origin, returned normalized. Credentials, a query or a fragment are checked on
-   * the text as given, before normalization.
-   */
-  httpsOrigin(key: string): string;
-  optionalHttpsOrigin(key: string): string | undefined;
-  /** A JSON snapshot of that field only. */
-  json(key: string): PaylovJsonObject;
-  optionalJson(key: string): PaylovJsonObject | undefined;
-  /** A record of strings whose every key and value matches `pattern`. */
-  stringRecord(key: string, pattern: RegExp): Readonly<Record<string, string>>;
-  array<T>(key: string, item: (params: Params, index: number) => T): readonly T[];
-  optionalArray<T>(
-    key: string,
-    item: (params: Params, index: number) => T,
-  ): readonly T[] | undefined;
-  object<T>(key: string, read: (params: Params) => T): T;
-  optionalObject<T>(key: string, read: (params: Params) => T): T | undefined;
-  /** Exactly one of `keys` is present (not `undefined`); returns it. */
-  exclusive<const K extends string>(keys: readonly K[]): K;
-  /** A tiyin amount; failures are `sdk_invalid_amount`. */
-  tiyin(key: string): number;
-  optionalTiyin(key: string): number | undefined;
-  /** A tiyin amount for an endpoint that takes whole SUM; returns the SUM to send. */
-  tiyinAsWholeSum(key: string): number;
-  /** The value as given, for rules that live with the caller (functions). */
-  raw(key: string): unknown;
-}
-
 type ParamsErrorCode = 'sdk_invalid_input' | 'sdk_config_error';
 
-class ParamsReader implements Params {
+/** One method's parameters. Every getter validates the value and returns it. */
+export class Params {
   readonly #record: Readonly<Record<string, unknown>>;
   readonly #context: string;
   readonly #code: ParamsErrorCode;
@@ -100,6 +58,7 @@ class ParamsReader implements Params {
     this.#path = path;
   }
 
+  /** A non-blank string. */
   string(key: string): string {
     return this.#checkString(key, this.#required(key));
   }
@@ -123,6 +82,7 @@ class ParamsReader implements Params {
     return value === undefined ? undefined : this.#checkBoolean(key, value);
   }
 
+  /** A `Date` with a valid time. */
   date(key: string): Date {
     const value = this.#required(key);
     if (!(value instanceof Date)) throw this.#error(key, 'type', 'must be a Date');
@@ -134,32 +94,15 @@ class ParamsReader implements Params {
     return this.#checkLiteral(key, this.#required(key), values);
   }
 
-  optionalLiteral<const T extends string | number>(
-    key: string,
-    values: readonly T[],
-  ): T | undefined {
-    const value = this.#read(key);
-    return value === undefined ? undefined : this.#checkLiteral(key, value, values);
-  }
-
-  url(key: string): string {
-    return this.#checkUrl(key, this.#required(key));
-  }
-
-  optionalUrl(key: string): string | undefined {
-    const value = this.#read(key);
-    return value === undefined ? undefined : this.#checkUrl(key, value);
-  }
-
+  /**
+   * A bare `https` origin, returned normalized. Credentials, a query or a fragment are checked on
+   * the text as given, before normalization.
+   */
   httpsOrigin(key: string): string {
     return this.#checkHttpsOrigin(key, this.#required(key));
   }
 
-  optionalHttpsOrigin(key: string): string | undefined {
-    const value = this.#read(key);
-    return value === undefined ? undefined : this.#checkHttpsOrigin(key, value);
-  }
-
+  /** A JSON snapshot of that field only. */
   json(key: string): PaylovJsonObject {
     return this.#checkJson(key, this.#required(key));
   }
@@ -167,20 +110,6 @@ class ParamsReader implements Params {
   optionalJson(key: string): PaylovJsonObject | undefined {
     const value = this.#read(key);
     return value === undefined ? undefined : this.#checkJson(key, value);
-  }
-
-  stringRecord(key: string, pattern: RegExp): Readonly<Record<string, string>> {
-    const value = this.#required(key);
-    if (!isRecord(value)) throw this.#error(key, 'type', 'must be an object');
-    const checked: [string, string][] = [];
-    for (const [name, entry] of Object.entries(value)) {
-      if (typeof entry !== 'string') throw this.#error(key, 'type', 'values must be strings');
-      if (!(pattern.test(name) && pattern.test(entry))) {
-        throw this.#error(key, 'format', 'has a key or value that is not allowed');
-      }
-      checked.push([name, entry]);
-    }
-    return Object.fromEntries(checked);
   }
 
   array<T>(key: string, item: (params: Params, index: number) => T): readonly T[] {
@@ -195,8 +124,18 @@ class ParamsReader implements Params {
     return value === undefined ? undefined : this.#checkArray(key, value, item);
   }
 
-  object<T>(key: string, read: (params: Params) => T): T {
-    return read(this.#child(key, this.#required(key)));
+  /**
+   * The object `key` holds, read once, for a result the SDK returned earlier. Decide from this
+   * value only, narrowing each field read from it, never from the params again: a getter can
+   * answer differently on a second read.
+   */
+  record(key: string): Readonly<Record<string, unknown>> {
+    return this.#checkRecord(key, this.#required(key));
+  }
+
+  optionalRecord(key: string): Readonly<Record<string, unknown>> | undefined {
+    const value = this.#read(key);
+    return value === undefined ? undefined : this.#checkRecord(key, value);
   }
 
   optionalObject<T>(key: string, read: (params: Params) => T): T | undefined {
@@ -204,6 +143,7 @@ class ParamsReader implements Params {
     return value === undefined ? undefined : read(this.#child(key, value));
   }
 
+  /** Exactly one of `keys` is present (not `undefined`); returns it. */
   exclusive<const K extends string>(keys: readonly K[]): K {
     const present = keys.filter((key) => this.#read(key) !== undefined);
     const [only] = present;
@@ -219,6 +159,7 @@ class ParamsReader implements Params {
     return only;
   }
 
+  /** A tiyin amount; failures are `sdk_invalid_amount`. */
   tiyin(key: string): number {
     const field = this.#field(key);
     return readTiyin(this.#read(key), field, `${this.#context}: ${field}`);
@@ -228,6 +169,7 @@ class ParamsReader implements Params {
     return this.#read(key) === undefined ? undefined : this.tiyin(key);
   }
 
+  /** A tiyin amount for an endpoint that takes whole SUM; returns the SUM to send. */
   tiyinAsWholeSum(key: string): number {
     const sum = tiyinToWireSum(this.tiyin(key));
     if (sum === undefined) {
@@ -241,6 +183,7 @@ class ParamsReader implements Params {
     return sum;
   }
 
+  /** The value as given, for rules that live with the caller (functions). */
   raw(key: string): unknown {
     return this.#read(key);
   }
@@ -267,6 +210,11 @@ class ParamsReader implements Params {
   #required(key: string): unknown {
     const value = this.#read(key);
     if (value === undefined) throw this.#error(key, 'required', 'is required');
+    return value;
+  }
+
+  #checkRecord(key: string, value: unknown): Readonly<Record<string, unknown>> {
+    if (!isRecord(value)) throw this.#error(key, 'type', 'must be an object');
     return value;
   }
 
@@ -303,15 +251,6 @@ class ParamsReader implements Params {
     return match;
   }
 
-  #checkUrl(key: string, value: unknown): string {
-    const text = this.#checkString(key, value);
-    const protocol = URL.parse(text)?.protocol;
-    if (protocol !== 'http:' && protocol !== 'https:') {
-      throw this.#error(key, 'format', 'must be an absolute http(s) URL');
-    }
-    return text;
-  }
-
   #checkHttpsOrigin(key: string, value: unknown): string {
     const text = this.#checkString(key, value).trim();
     const url = URL.parse(text);
@@ -326,17 +265,17 @@ class ParamsReader implements Params {
     return url.origin;
   }
 
-  /** Serializer exceptions are discarded: a cycle or a BigInt says nothing the caller needs. */
+  /** Copied value by value, never serialized, so nothing the caller passed changes silently. */
   #checkJson(key: string, value: unknown): PaylovJsonObject {
     if (!isRecord(value)) throw this.#error(key, 'type', 'must be a JSON object');
-    let snapshot: unknown;
-    try {
-      snapshot = JSON.parse(JSON.stringify(value));
-    } catch {
-      throw this.#error(key, 'type', 'must be JSON-serializable');
+    const json = toJsonObject(value);
+    if (json === undefined) {
+      throw this.#error(
+        key,
+        'type',
+        'must hold only plain objects, arrays, strings, finite numbers, booleans and null',
+      );
     }
-    const json = isRecord(snapshot) ? toJsonObject(snapshot) : undefined;
-    if (json === undefined) throw this.#error(key, 'type', 'must be a JSON object');
     return json;
   }
 
@@ -355,7 +294,7 @@ class ParamsReader implements Params {
 
   #child(key: string, value: unknown): Params {
     if (!isRecord(value)) throw this.#error(key, 'type', 'must be an object');
-    return new ParamsReader(value, this.#context, this.#code, this.#field(key));
+    return new Params(value, this.#context, this.#code, this.#field(key));
   }
 }
 
@@ -364,7 +303,7 @@ function readObject(value: unknown, context: string, code: ParamsErrorCode): Par
     const message = `${context} expects an object`;
     throw new PaylovInputError({ code, message, field: undefined, rule: 'type' });
   }
-  return new ParamsReader(value, context, code, '');
+  return new Params(value, context, code, '');
 }
 
 /** Method parameters; failures are `sdk_invalid_input` (`sdk_invalid_amount` for amounts). */

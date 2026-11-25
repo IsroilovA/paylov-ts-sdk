@@ -7,7 +7,7 @@ import {
   readParams,
   type Params,
 } from '../../src/core/params.js';
-import { expectInputError, expectNoSecretLeak } from '../helpers/asserts.js';
+import { capture, expectInputError, expectNoSecretLeak } from '../helpers/asserts.js';
 
 const METHOD = 'holds.create';
 const SECRET = 'EXAMPLE-PARAM-SECRET-NOT-A-REAL-VALUE';
@@ -119,8 +119,6 @@ describe('numbers, booleans and literals', () => {
 
   it('literal accepts a closed set and lists it in the message', async () => {
     expect(params({ gender: 'male' }).literal('gender', ['male', 'female'])).toBe('male');
-    expect(params({ currency: 840 }).optionalLiteral('currency', [860, 840])).toBe(840);
-    expect(params({}).optionalLiteral('currency', [860, 840])).toBeUndefined();
     const error = await expectInputError(
       () => params({ currency: '860' }).literal('currency', [860, 840]),
       { field: 'currency', rule: 'format' },
@@ -139,26 +137,6 @@ describe('numbers, booleans and literals', () => {
   });
 });
 
-describe('URLs', () => {
-  it('url requires an absolute http(s) URL, or https only', async () => {
-    expect(params({ returnUrl: 'http://shop.example/r' }).url('returnUrl')).toBe(
-      'http://shop.example/r',
-    );
-    await expectInputError(() => params({ returnUrl: 'ftp://shop.example/' }).url('returnUrl'), {
-      field: 'returnUrl',
-      rule: 'format',
-    });
-    await expectInputError(() => params({ returnUrl: '/relative' }).url('returnUrl'), {
-      field: 'returnUrl',
-      rule: 'format',
-    });
-    expect(params({}).optionalUrl('returnUrl')).toBeUndefined();
-    expect(params({ returnUrl: 'https://a.example/' }).optionalUrl('returnUrl')).toBe(
-      'https://a.example/',
-    );
-  });
-});
-
 describe('structured values', () => {
   it('json takes an independent JSON snapshot of that field only', () => {
     const account = { order_id: 'A-1', nested: { list: [1, 'x', null] }, dropped: undefined };
@@ -171,13 +149,15 @@ describe('structured values', () => {
   it('json rejects non-objects and values JSON cannot carry, without their content', async () => {
     const cyclic: Record<string, unknown> = { pan: SECRET };
     cyclic['self'] = cyclic;
-    const throwing = Object.defineProperty({}, 'x', {
-      enumerable: true,
-      get(): never {
-        throw new Error(SECRET);
-      },
-    });
-    for (const account of [[1], 'x', cyclic, throwing, { amount: 1n }, { toJSON: () => 'x' }]) {
+    for (const account of [
+      [1],
+      'x',
+      cyclic,
+      { amount: 1n },
+      { order: Number.NaN },
+      { at: new Date(0) },
+      { toJSON: () => 'x' },
+    ]) {
       const error = await expectInputError(() => params({ account }).json('account'), {
         field: 'account',
         rule: 'type',
@@ -190,29 +170,15 @@ describe('structured values', () => {
     });
   });
 
-  it('stringRecord checks entries, keys and values', async () => {
-    const pattern = /^[A-Za-z0-9_-]+$/;
-    expect(params({ account: { order_id: 'A-1' } }).stringRecord('account', pattern)).toEqual({
-      order_id: 'A-1',
+  it('json lets a caller getter exception propagate unchanged', () => {
+    const thrown = new Error(SECRET);
+    const account = Object.defineProperty({}, 'order', {
+      enumerable: true,
+      get(): never {
+        throw thrown;
+      },
     });
-    expect(params({ account: {} }).stringRecord('account', pattern)).toEqual({});
-    await expectInputError(
-      () => params({ account: { 'Bad Key': 'A' } }).stringRecord('account', pattern),
-      { field: 'account', rule: 'format' },
-    );
-    await expectInputError(
-      () => params({ account: { order_id: 1 } }).stringRecord('account', pattern),
-      { field: 'account', rule: 'type' },
-    );
-    const secretValue = await expectInputError(
-      () => params({ account: { order_id: `${SECRET} ` } }).stringRecord('account', pattern),
-      { field: 'account', rule: 'format' },
-    );
-    expectNoSecretLeak(secretValue, [SECRET]);
-    await expectInputError(() => params({ account: [] }).stringRecord('account', pattern), {
-      field: 'account',
-      rule: 'type',
-    });
+    expect(capture(() => params({ account }).json('account'))).toBe(thrown);
   });
 
   it('array reads items through nested params with indexed field paths', async () => {
@@ -243,10 +209,12 @@ describe('structured values', () => {
     expect(params({ items: [{ title: 'c' }] }).optionalArray('items', readTitle)).toEqual(['c']);
   });
 
-  it('object and optionalObject read nested params', async () => {
-    expect(params({ organization: { name: 'Org' } }).object('organization', readName)).toBe('Org');
+  it('optionalObject reads nested params', async () => {
+    expect(params({ organization: { name: 'Org' } }).optionalObject('organization', readName)).toBe(
+      'Org',
+    );
     await expectInputError(
-      () => params({ organization: { name: '' } }).object('organization', readName),
+      () => params({ organization: { name: '' } }).optionalObject('organization', readName),
       { field: 'organization.name', rule: 'required' },
     );
     await expectInputError(
@@ -254,6 +222,28 @@ describe('structured values', () => {
       { field: 'organization', rule: 'type' },
     );
     expect(params({}).optionalObject('organization', readName)).toBeUndefined();
+  });
+
+  it('record returns the own object it checked, and optionalRecord accepts an absent key', async () => {
+    const hold = { status: 'held' };
+    expect(params({ hold }).record('hold')).toBe(hold);
+    expect(params({ hold }).optionalRecord('hold')).toBe(hold);
+    const inherited: unknown = Object.create({ hold });
+    expect(readParams(inherited, METHOD).optionalRecord('hold')).toBeUndefined();
+    for (const value of [{}, inherited]) {
+      await expectInputError(() => readParams(value, METHOD).record('hold'), {
+        field: 'hold',
+        rule: 'required',
+      });
+    }
+    await expectInputError(() => params({ hold: [] }).record('hold'), {
+      field: 'hold',
+      rule: 'type',
+    });
+    await expectInputError(() => params({ hold: [] }).optionalRecord('hold'), {
+      field: 'hold',
+      rule: 'type',
+    });
   });
 
   it('exclusive requires exactly one present key', async () => {

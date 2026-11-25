@@ -13,29 +13,30 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  create: { method: 'POST', route: '/merchant/receipts/create/', shape: 'envelope' },
-  pay: {
+  create: {
     method: 'POST',
-    route: '/merchant/receipts/pay/',
+    route: '/merchant/receipts/create/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'write',
   },
+  pay: { method: 'POST', route: '/merchant/receipts/pay/', shape: 'envelope', effect: 'money' },
   refund: {
     method: 'POST',
     route: '/merchant/payment/cancel/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'money',
   },
   startPanPayment: {
     method: 'POST',
     route: '/merchant/paymentWithoutRegistration/',
     shape: 'envelope',
+    effect: 'write',
   },
   confirmPanPayment: {
     method: 'POST',
     route: '/merchant/confirmPayment/',
     shape: 'envelope',
-    movesMoney: true,
+    effect: 'money',
   },
 } as const;
 
@@ -45,8 +46,8 @@ export interface PaymentsResource {
    * Creates an unpaid payment transaction for a saved card. **No money moves**; charge it with
    * {@link PaymentsResource.pay}.
    *
-   * Each call creates a new transaction, and an unpaid one is never charged, so after any
-   * failure just call again.
+   * Recovery: each call creates a new transaction, and an unpaid one is never charged, so after
+   * any failure call again.
    *
    * @throws {@link PaylovApiError} `field_not_valid` (an amount outside the gateway's range),
    * `validation_error`.
@@ -95,15 +96,18 @@ export interface PaymentsResource {
    * environment refused PAN payments and captured holds. If a refund is refused, refund from the
    * Paylov business panel or through Paylov support, and confirm with `paylov.transactions.get`.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `paylov.transactions.get`: a refunded
-   * transaction reads status `refunded` with `cancelledAt`. A repeated refund fails with
-   * `transaction_not_available_for_cancel`.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `paylov.transactions.get` and pass the
+   * result to `readRefundState`; never refund again on an `unknown` state. For a sale, `refunded`
+   * means the refund took effect and `not_refunded` that it had not at the time of the read. A
+   * captured hold (`isHold` true) still reading `paid` is `not_refunded` at the time of the read;
+   * one reading `refunded` is `unknown`, because a released hold reads the same: confirm it in the
+   * Paylov business panel. A repeated refund fails with `transaction_not_available_for_cancel`.
    *
    * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded or
-   * never paid; Paylov's test environment also answers it for a PAN payment), `processing_error` (an unknown outcome; Paylov's test
-   * environment answers it for a captured hold and the transaction then still reads `paid`: refund
-   * through the Paylov business panel, not by repeating the call), `transaction_not_found`,
-   * `permission_denied`.
+   * never paid; Paylov's test environment also answers it for a PAN payment), `processing_error`
+   * (an unknown outcome; Paylov's test environment answers it for a captured hold and the
+   * transaction then still reads `paid`: refund through the Paylov business panel, not by
+   * repeating the call), `transaction_not_found`, `permission_denied`.
    *
    * @example
    * const { refundedAt } = await paylov.payments.refund({ transactionId });

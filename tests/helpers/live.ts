@@ -21,7 +21,7 @@ import { env, readSandboxConfig, SANDBOX_HOST } from '../../scripts/sandboxConfi
 
 export { env } from '../../scripts/sandboxConfig.mjs';
 
-export interface LiveConfig {
+interface LiveConfig {
   /** Bare origin of the sandbox gateway. */
   readonly baseUrl: string;
   readonly consumerKey: string;
@@ -166,7 +166,7 @@ function refusalFields(error: PaylovApiError): Record<string, string | number> {
   };
 }
 
-export type Settled<T> =
+type Settled<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: PaylovApiError };
 
@@ -183,6 +183,42 @@ export async function settle<T>(label: string, promise: Promise<T>): Promise<Set
     if (!isPaylovApiError(error)) throw error;
     observe(label, { ok: false, ...refusalFields(error) });
     return { ok: false, error };
+  }
+}
+
+interface CleanupStep {
+  readonly label: string;
+  readonly step: () => Promise<unknown>;
+  /** Refusal codes meaning the resource is already gone. */
+  readonly goneCodes: readonly string[];
+}
+
+/**
+ * Sandbox state a lane must remove, registered as soon as the gateway returns its id. `run`
+ * attempts every step, newest first, so holds are released before the card that holds them is
+ * deleted, then fails naming each step that did not complete; a refusal counts as done only with
+ * one of the step's `goneCodes`.
+ */
+export class LiveCleanup {
+  readonly #steps: CleanupStep[] = [];
+
+  add(label: string, step: () => Promise<unknown>, ...goneCodes: string[]): void {
+    this.#steps.push({ label, step, goneCodes });
+  }
+
+  async run(): Promise<void> {
+    const failures: string[] = [];
+    for (const { label, step, goneCodes } of this.#steps.splice(0).toReversed()) {
+      try {
+        const outcome = await settle(label, step());
+        if (!outcome.ok && !goneCodes.includes(outcome.error.code)) {
+          failures.push(`${label} ${outcome.error.code}`);
+        }
+      } catch {
+        failures.push(`${label} failed`);
+      }
+    }
+    if (failures.length > 0) throw new Error(`live cleanup: ${failures.join(', ')}`);
   }
 }
 

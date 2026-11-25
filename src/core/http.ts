@@ -2,26 +2,34 @@
 
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { envelopeErrorCode, normalizeResponse, type ResponseEndpoint } from './envelope.js';
+import { decodePayload, type DecodedPayload, type Decoder } from './decoding.js';
+import { endpointName, responseContext } from './endpoint.js';
+import { normalizeResponse, type NormalizedFailure } from './envelope.js';
+import type { PaylovErrorCode } from './errorCodes.js';
 import {
   abortedError,
+  attemptFailure,
+  beforeOperation,
   clientClosedError,
   invalidInput,
-  PaylovConnectionError,
+  isPaylovApiError,
   type PaylovClientClosedError,
+  type PaylovConnectionError,
 } from './errors.js';
 import { raceAbort, untilAborted, type ClientLifecycle } from './lifecycle.js';
 import type {
   AuthorizationContext,
   AuthProvider,
   Endpoint,
+  EndpointEffect,
   FetchLike,
   HttpClient,
-  HttpResponse,
   PaylovHttpMethod,
   PaylovLogger,
   PaylovTransportConfig,
   RequestOptions,
+  ResponseContext,
+  ResponseShape,
 } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -82,11 +90,6 @@ function logAttempt(
     };
     callHookSafely(() => logger.onResponse?.(response));
   };
-}
-
-/** The static identity logs and errors carry, e.g. `"GET /merchant/userCard/getCard/{cardId}/"`. */
-export function endpointName(endpoint: Pick<Endpoint, 'method' | 'route'>): string {
-  return `${endpoint.method} ${endpoint.route}`;
 }
 
 /** Rejects a lone surrogate before `encodeURIComponent` throws an unwrapped native error. */
@@ -169,38 +172,76 @@ interface Received {
   readonly body: unknown;
 }
 
-/** A received exchange with the envelope code it logged and the credentials it carried. */
-interface ReceivedAttempt extends Received {
-  readonly errorCode: string | undefined;
+/** What a received response answers the call: the decoded value, or the error it settles with. */
+type Answer<T> = DecodedPayload<T> | NormalizedFailure;
+
+/** A received exchange read against its endpoint, with the credentials it carried. */
+interface ReceivedAttempt<T> {
+  readonly kind: 'received';
+  readonly context: ResponseContext;
+  readonly answer: Answer<T>;
   readonly authorization: AuthorizationContext | undefined;
 }
 
 type Exchange = Received | Failed;
-type Attempt = ReceivedAttempt | Failed;
+type Attempt<T> = ReceivedAttempt<T> | Failed;
+
+/** Where the endpoint's decoder starts, as decode failures report it. */
+function decodeRoot(shape: ResponseShape): string {
+  return shape === 'envelope' ? 'result' : 'body';
+}
+
+/**
+ * A received response read through the endpoint's decoder, and the code its response event
+ * reports. A miss decoded from a success body is a successful exchange, so its event has no code.
+ */
+function readAnswer<T>(
+  endpoint: Endpoint,
+  context: ResponseContext,
+  body: unknown,
+  retryAfter: string | null,
+  decode: Decoder<T>,
+): { readonly answer: Answer<T>; readonly errorCode: PaylovErrorCode | undefined } {
+  const normalized = normalizeResponse(body, context, endpoint.shape, retryAfter);
+  if (normalized.kind === 'failure')
+    return { answer: normalized, errorCode: normalized.error.code };
+  const answer = decodePayload(normalized.payload, context, decodeRoot(endpoint.shape), decode);
+  return { answer, errorCode: answer.kind === 'malformed' ? answer.error.code : undefined };
+}
 
 /** Whether a GET may retry: a connection failure other than an abort, or a transient status. */
-function isTransientFailure(outcome: Attempt): boolean {
+function isTransientFailure(outcome: Attempt<unknown>): boolean {
   return outcome.kind === 'failed'
     ? outcome.failure.code !== 'sdk_aborted'
-    : isRetryableStatus(outcome.response.status);
+    : isRetryableStatus(outcome.context.httpStatus);
 }
 
 /**
  * Only the gateway's own authentication rejection is replayed. Bearer authentication rejects
  * before any handler runs: a `hold/create` refused with 401 left no transaction
- * (docs/architecture.md), so the rejected request did not execute. A bare 401 (a proxy) proves
- * nothing about the token.
+ * (docs/architecture.md), so the rejected request did not execute. Only the documented envelope
+ * proves that: a bare 401 (a proxy) or an envelope without `result: null` normalizes to a protocol
+ * error and is never replayed.
  * The token transport has no AuthProvider.
  */
-function isTokenRejection(
-  outcome: Attempt,
-): outcome is ReceivedAttempt & { readonly authorization: AuthorizationContext } {
+function isTokenRejection<T>(
+  outcome: Attempt<T>,
+): outcome is ReceivedAttempt<T> & { readonly authorization: AuthorizationContext } {
   return (
     outcome.kind === 'received' &&
-    outcome.response.status === 401 &&
-    outcome.errorCode === 'permission_denied' &&
+    outcome.context.httpStatus === 401 &&
+    outcome.answer.kind === 'failure' &&
+    isPaylovApiError(outcome.answer.error, 'permission_denied') &&
     outcome.authorization !== undefined
   );
+}
+
+/** The call's answer from its final attempt: the decoded value, or the attempt's error. */
+function settle<T>(outcome: Attempt<T>): T {
+  if (outcome.kind === 'failed') throw outcome.failure;
+  const { answer } = outcome;
+  if (answer.kind === 'success') return answer.value;
+  throw answer.error;
 }
 
 /** Everything about a request that stays the same across its attempts. */
@@ -208,7 +249,7 @@ interface PreparedRequest {
   readonly method: PaylovHttpMethod;
   /** The static identity, from {@link endpointName}. */
   readonly endpoint: string;
-  readonly declared: ResponseEndpoint;
+  readonly effect: EndpointEffect;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string | undefined;
@@ -224,7 +265,7 @@ function prepareRequest(
   return {
     method: endpoint.method,
     endpoint: endpointName(endpoint),
-    declared: endpoint,
+    effect: endpoint.effect,
     url: buildUrl(origin, endpoint.route, options),
     headers: requestHeaders(options.headers, body !== undefined),
     body,
@@ -240,6 +281,22 @@ function refusalAfterHook(
 ): PaylovClientClosedError | PaylovConnectionError | undefined {
   if (lifecycle?.closed === true) return clientClosedError();
   return signal?.aborted === true ? aborted() : undefined;
+}
+
+/**
+ * The credentials of one attempt. A failed grant stopped the call before its operation was sent, so
+ * the grant's error reaches the caller with a known outcome.
+ */
+async function authorizeAttempt(
+  auth: AuthProvider,
+  signal: AbortSignal | undefined,
+  aborted: () => PaylovConnectionError,
+): Promise<AuthorizationContext> {
+  try {
+    return await untilAborted(auth.authorize(), signal, aborted);
+  } catch (error) {
+    throw beforeOperation(error);
+  }
 }
 
 export function createHttpClient(config: HttpClientConfig): HttpClient {
@@ -260,28 +317,20 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
    * One fetch and its body read under one deadline, so a gateway that sends headers and then
    * stalls cannot hang the call. Every failure becomes a connection error without a cause.
    */
-  async function exchange(
-    url: string,
-    init: RequestInit,
-    endpoint: string,
-    callerSignal: AbortSignal | undefined,
-  ): Promise<Exchange> {
+  async function exchange(prepared: PreparedRequest, init: RequestInit): Promise<Exchange> {
+    const callerSignal = prepared.signal;
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = callerSignal === undefined ? timeout : AbortSignal.any([timeout, callerSignal]);
     const failed = (): Failed => {
       const code = failureCode(callerSignal, timeout);
-      const failure = new PaylovConnectionError({
-        code,
-        endpoint,
-        isSent: true,
-        timeoutMs: code === 'sdk_timeout' ? timeoutMs : undefined,
-      });
-      return { kind: 'failed', failure };
+      const deadline = code === 'sdk_timeout' ? timeoutMs : undefined;
+      const { endpoint, effect } = prepared;
+      return { kind: 'failed', failure: attemptFailure(code, endpoint, effect, deadline) };
     };
 
     let response: Response;
     try {
-      response = await raceAbort(fetchImpl(url, { ...init, signal }), signal);
+      response = await raceAbort(fetchImpl(prepared.url, { ...init, signal }), signal);
     } catch {
       return failed();
     }
@@ -301,22 +350,27 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
   }
 
   /**
-   * One authorized, logged attempt. Refusals before the fetch throw; fetch failures return.
-   * `isSent` tells whether an earlier attempt of the call reached fetch.
+   * One authorized, logged attempt. Refusals before the fetch throw with a known outcome, since an
+   * earlier attempt was a rejected token or a retried read; fetch failures return. `isSent` tells
+   * whether an earlier attempt of the call reached fetch. The response event is emitted once the
+   * endpoint's decoder has read the response, so it reports a 2xx that broke the endpoint's
+   * contract.
    */
-  async function sendAttempt(
+  async function sendAttempt<T>(
+    endpoint: Endpoint,
     prepared: PreparedRequest,
     attempt: number,
     isSent: boolean,
-  ): Promise<Attempt> {
-    const { method, endpoint, signal } = prepared;
-    const aborted = (): PaylovConnectionError => abortedError(endpoint, isSent);
+    decode: Decoder<T>,
+  ): Promise<Attempt<T>> {
+    const { method, signal } = prepared;
+    const aborted = (): PaylovConnectionError => abortedError(prepared.endpoint, isSent);
     if (signal?.aborted === true) throw aborted();
     const authorization =
-      auth === undefined ? undefined : await untilAborted(auth.authorize(), signal, aborted);
+      auth === undefined ? undefined : await authorizeAttempt(auth, signal, aborted);
     lifecycle?.assertOpen();
 
-    const closeAttempt = logAttempt(logger, method, endpoint, attempt);
+    const closeAttempt = logAttempt(logger, method, prepared.endpoint, attempt);
     const refusal = refusalAfterHook(lifecycle, signal, aborted);
     if (refusal !== undefined) {
       closeAttempt(0, refusal.code);
@@ -333,17 +387,24 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
       headers,
       ...(prepared.body !== undefined ? { body: prepared.body } : {}),
     };
-    const outcome = await exchange(prepared.url, init, endpoint, signal);
+    const outcome = await exchange(prepared, init);
     if (outcome.kind === 'failed') {
       closeAttempt(0, outcome.failure.code);
       return outcome;
     }
-    const errorCode = envelopeErrorCode(outcome.body);
-    closeAttempt(outcome.response.status, errorCode);
-    return { ...outcome, errorCode, authorization };
+    const { response, body } = outcome;
+    const context = responseContext(endpoint, response.status);
+    const retryAfter = response.headers.get('retry-after');
+    const { answer, errorCode } = readAnswer(endpoint, context, body, retryAfter, decode);
+    closeAttempt(response.status, errorCode);
+    return { kind: 'received', context, answer, authorization };
   }
 
-  async function request(endpoint: Endpoint, options: RequestOptions = {}): Promise<HttpResponse> {
+  async function request<T>(
+    endpoint: Endpoint,
+    options: RequestOptions,
+    decode: Decoder<T>,
+  ): Promise<T> {
     const prepared = prepareRequest(origin, endpoint, options);
     const { signal } = prepared;
     const abortedAfterSend = (): PaylovConnectionError => abortedError(prepared.endpoint, true);
@@ -355,7 +416,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
     let isSent = false;
 
     for (let attempt = 1; ; attempt += 1) {
-      const outcome = await sendAttempt(prepared, attempt, isSent);
+      const outcome = await sendAttempt(endpoint, prepared, attempt, isSent, decode);
       isSent = true;
       if (!replayed && isTokenRejection(outcome)) {
         replayed = true;
@@ -367,13 +428,7 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
         await untilAborted(sleep(backoffMs(retriesUsed), signal), signal, abortedAfterSend);
         continue;
       }
-      if (outcome.kind === 'failed') throw outcome.failure;
-
-      const { response } = outcome;
-      const context = { endpoint: prepared.endpoint, httpStatus: response.status };
-      const retryAfter = response.headers.get('retry-after');
-      const payload = normalizeResponse(outcome.body, context, prepared.declared, retryAfter);
-      return { payload, context };
+      return settle(outcome);
     }
   }
 

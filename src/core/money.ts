@@ -6,7 +6,7 @@ import { isNonNegativeSafeInteger } from './numbers.js';
 const DECIMAL_SUM = /^(\d+)(?:\.(\d{1,2}))?$/;
 
 /** Every public amount and every wire minor-unit amount is a non-negative safe integer. */
-const isTiyin: (value: unknown) => value is number = isNonNegativeSafeInteger;
+export const isTiyin: (value: unknown) => value is number = isNonNegativeSafeInteger;
 
 /**
  * Validates a caller amount. `label` prefixes the message (a method context); messages never

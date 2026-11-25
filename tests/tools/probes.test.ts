@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -404,7 +404,9 @@ describe('probe redaction', () => {
 
 describe('capture storage', () => {
   it('accepts only the ignored captures directory inside the repository, refusing symlinks', async () => {
-    expect(await captureDirectory(undefined)).toBe(await realpath(repositoryCaptures));
+    expect(await captureDirectory()).toBe(await realpath(directory));
+    vi.stubEnv('PAYLOV_CAPTURE_DIR', undefined);
+    expect(await captureDirectory()).toBe(await realpath(repositoryCaptures));
     expect(await captureDirectory(repositoryCaptures)).toBe(await realpath(repositoryCaptures));
     await expect(captureDirectory(join(repositoryCaptures, 'nested'))).rejects.toThrow('outside');
     await expect(captureDirectory(repositoryRoot)).rejects.toThrow('outside');
@@ -487,6 +489,60 @@ describe('raw probe lifecycle', () => {
     for (const value of [canary, cardPan, accessToken, refreshToken])
       expect(JSON.stringify(recorded)).not.toContain(value);
   });
+
+  it('records a multiword unlisted password as redacted and keeps validation messages', async () => {
+    const passphrase = 'EXAMPLE wrong NOT a real PASSWORD';
+    const messages = { password: ['This field may not be blank.'] };
+    fake([
+      { status: 400, body: { result: null, error: { code: 'validation_error', data: messages } } },
+    ]);
+    const probe = await openProbe({ label: 'passphrase' });
+    await probe.rest('POST', '/merchant/oauth2/token/', {
+      auth: 'basic',
+      body: { grant_type: 'password', username: canary, password: passphrase },
+    });
+    await probe.close();
+    const [recorded] = await captures();
+    expect(recorded).toMatchObject({
+      request: { body: { username: '<credential>', password: unlistedCredential } },
+      response: { body: { error: { data: messages } } },
+    });
+    expect(JSON.stringify(recorded)).not.toContain(passphrase);
+  });
+
+  it('redacts credentials listed in a request and keeps only validation messages', async () => {
+    const listed = ['unlisted', 'probe', 'token', 'canary'].join('-');
+    const messages = { token: ['This field is required.'] };
+    fake([
+      { status: 400, body: { result: null, error: { code: 'validation_error', data: messages } } },
+    ]);
+    const probe = await openProbe({ label: 'tokenList' });
+    await probe.rest('POST', '/merchant/oauth2/revoke/', {
+      auth: 'basic',
+      body: { token: [listed] },
+    });
+    await probe.close();
+    const [recorded] = await captures();
+    expect(recorded).toMatchObject({
+      request: { body: { token: ['<token>'] } },
+      response: { body: { error: { data: messages } } },
+    });
+    expect(JSON.stringify(recorded)).not.toContain(listed);
+  });
+
+  it.each(['set-cookie', 'Authorization', 'x-auth-token'])(
+    'refuses to keep the credential-bearing header %s before sending',
+    async (header) => {
+      const fetchImpl = fake([]);
+      const probe = await openProbe({ label: 'keepCookie' });
+      await expect(
+        probe.rest('GET', '/merchant/bankList/', { auth: 'none', keepHeaders: [header] }),
+      ).rejects.toThrow('keepHeaders refused');
+      expect(fetchImpl.calls).toHaveLength(0);
+      expect(await captures()).toEqual([]);
+      await probe.close();
+    },
+  );
 
   it('supersedes the shared grant and sends a chosen bearer token without recording it', async () => {
     const newAccess = 'EXAMPLE-NEW-ACCESS-NOT-A-REAL-TOKEN';
@@ -617,6 +673,62 @@ describe('raw probe lifecycle', () => {
       url: 'https://dev.gw.paylov.uz/merchant/userCard/deleteUserCard/?userCardId=EXAMPLE-CARD-NOT-A-REAL-ID',
     });
   });
+
+  it.each<[string, FakeResponseSpec, FakeResponseSpec]>([
+    [
+      'plain-text 200s',
+      { rawBody: 'OK', headers: { 'content-type': 'text/plain' } },
+      { rawBody: 'OK', headers: { 'content-type': 'text/plain' } },
+    ],
+    [
+      'envelopes without the acknowledgement',
+      {
+        body: {
+          result: { transactionId: 'EXAMPLE-OTHER-NOT-A-REAL-ID', status: 'cancelled' },
+          error: null,
+        },
+      },
+      { body: { result: false, error: null } },
+    ],
+    [
+      'acknowledgements beside an error',
+      {
+        body: {
+          result: { transactionId: 'EXAMPLE-HOLD-NOT-A-REAL-ID', status: 'cancelled' },
+          error: { code: 'canary' },
+        },
+      },
+      { body: { result: true } },
+    ],
+  ])('rejects cleanup answered with %s', async (_case, release, deletion) => {
+    fake([{ body: { access_token: accessToken } }, release, deletion]);
+    await expect(
+      withProbe('cleanupAck', (probe) => {
+        probe.track.card('EXAMPLE-CARD-NOT-A-REAL-ID');
+        probe.track.hold('EXAMPLE-HOLD-NOT-A-REAL-ID');
+        return Promise.resolve();
+      }),
+    ).rejects.toThrow('probe cleanup: hold unacknowledged, card unacknowledged');
+  });
+
+  it('accepts the recorded release and deletion acknowledgements', async () => {
+    fake([
+      { body: { access_token: accessToken } },
+      {
+        body: {
+          result: { transactionId: 'EXAMPLE-HOLD-NOT-A-REAL-ID', status: 'cancelled' },
+          error: null,
+        },
+      },
+      { body: { result: true, error: null } },
+    ]);
+    const probed = withProbe('cleanupAck', (probe) => {
+      probe.track.card('EXAMPLE-CARD-NOT-A-REAL-ID');
+      probe.track.hold('EXAMPLE-HOLD-NOT-A-REAL-ID');
+      return Promise.resolve('done');
+    });
+    await expect(probed).resolves.toBe('done');
+  });
 });
 
 describe('capture scanner', () => {
@@ -656,7 +768,7 @@ describe('capture scanner', () => {
       .replace(jwt, '<token>');
     expect(fixed.fixes).toEqual(new Map([[name, expected]]));
     expect(scanCaptureSources(new Map([[name, expected]]), redactor, false)).toEqual({
-      lines: ['files=0; hits=0'],
+      lines: ['examined=1; flagged=0; hits=0'],
       fixes: new Map(),
       status: 0,
     });
@@ -668,6 +780,39 @@ describe('capture scanner', () => {
     });
   });
 
+  it('fixes every copy of a value found in a personal-data field and preserves surrounding bytes', () => {
+    const unlisted = '+998 88 888 88 88';
+    const name = '001_copy.json';
+    const source = `{"note":  "call ${unlisted} today",\n "phoneNumber": "${unlisted}" }\n`;
+    const fixed = scanCaptureSources(new Map([[name, source]]), loadRedactor(), true);
+    const expected = source.replaceAll(unlisted, '<phone not on the secret list>');
+    expect(fixed.fixes).toEqual(new Map([[name, expected]]));
+    expect(fixed.lines[0]).toBe(`${name}: phone=2 fixed`);
+    expect(scanCaptureSources(new Map([[name, expected]]), loadRedactor(), false).status).toBe(0);
+  });
+
+  it('flags listed credentials outside validation messages and keeps the messages', () => {
+    const listed = ['unlisted', 'probe', 'token', 'canary'].join('-');
+    const messages = { token: ['This field is required.'] };
+    const sources = new Map([
+      ['001_request.json', JSON.stringify({ request: { body: { token: [listed] } } })],
+      ['002_success.json', JSON.stringify({ response: { body: { result: { token: [listed] } } } })],
+      [
+        '003_validation.json',
+        JSON.stringify({
+          response: { body: { error: { code: 'validation_error', data: messages } } },
+        }),
+      ],
+    ]);
+    const { lines, status } = scanCaptureSources(sources, loadRedactor(), false);
+    expect(lines).toEqual([
+      '001_request.json: token=1',
+      '002_success.json: token=1',
+      'examined=3; flagged=2; token=2',
+    ]);
+    expect(status).toBe(1);
+  });
+
   it('reports a capture it cannot parse without quoting it and scans the rest', () => {
     const sources = new Map([
       ['001_broken.json', `{"pan": "${cardPan}"`],
@@ -677,7 +822,7 @@ describe('capture scanner', () => {
     expect(lines).toEqual([
       '001_broken.json: capture is not valid JSON',
       '002_leak.json: PAN=1',
-      'files=1; PAN=1',
+      'examined=2; flagged=1; PAN=1',
     ]);
     expect(status).toBe(2);
   });
@@ -686,16 +831,37 @@ describe('capture scanner', () => {
     await writeFile(join(directory, '001_leak.json'), JSON.stringify({ message: cardPan }));
     await writeFile(join(directory, '002_broken.json'), `{"pan": "${cardPan}"`);
     await writeFile(join(directory, 'notes.txt'), cardPan);
-    const result = spawnSync(
-      process.execPath,
-      [join(repositoryRoot, 'scripts/probes/scanCaptures.mjs'), directory],
-      { encoding: 'utf8', timeout: 10_000 },
-    );
-    expect(result.error).toBeUndefined();
+    const result = runScan([directory]);
     expect(result.stdout).toBe(
-      '001_leak.json: PAN=1\n002_broken.json: capture is not valid JSON\nfiles=1; PAN=1\n',
+      '001_leak.json: PAN=1\n002_broken.json: capture is not valid JSON\nexamined=2; flagged=1; PAN=1\n',
     );
     expect(result.stderr).toBe('');
     expect(result.status).toBe(2);
   });
+
+  it('audits PAYLOV_CAPTURE_DIR by default, as the probes write there', async () => {
+    await writeFile(join(directory, '001_leak.json'), JSON.stringify({ message: cardPan }));
+    const result = runScan([]);
+    expect(result.stdout).toBe('001_leak.json: PAN=1\nexamined=1; flagged=1; PAN=1\n');
+    expect(result.status).toBe(1);
+  });
+
+  it('fails on a missing directory without creating it', async () => {
+    const missing = join(directory, 'misspelled');
+    const result = runScan([missing]);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('capture scan failed: capture directory does not exist\n');
+    expect(result.status).toBe(2);
+    expect(await readdir(directory)).toEqual([]);
+  });
 });
+
+function runScan(args: string[]): SpawnSyncReturns<string> {
+  const result = spawnSync(
+    process.execPath,
+    [join(repositoryRoot, 'scripts/probes/scanCaptures.mjs'), ...args],
+    { encoding: 'utf8', timeout: 10_000 },
+  );
+  expect(result.error).toBeUndefined();
+  return result;
+}

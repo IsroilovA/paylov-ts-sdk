@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ENDPOINTS as CARD_ENDPOINTS } from '../../src/cards/resource.js';
 import { ENDPOINTS as AUTH_ENDPOINTS } from '../../src/core/auth.js';
 import { normalizeResponse } from '../../src/core/envelope.js';
-import type { Endpoint } from '../../src/core/types.js';
+import type { Endpoint, EndpointEffect, ResponseContext } from '../../src/core/types.js';
 import { ENDPOINTS as FISCALIZATION_ENDPOINTS } from '../../src/fiscalization/resource.js';
 import { ENDPOINTS as GATEWAY_ENDPOINTS } from '../../src/gateway/resource.js';
 import { ENDPOINTS as HOLD_ENDPOINTS } from '../../src/holds/resource.js';
@@ -14,16 +14,22 @@ import { ENDPOINTS as SUB_MERCHANT_ENDPOINTS } from '../../src/subMerchants/reso
 import { ENDPOINTS as TRANSACTION_ENDPOINTS } from '../../src/transactions/resource.js';
 import {
   PaylovApiError,
+  PaylovClientClosedError,
   PaylovConnectionError,
   PaylovProtocolError,
   abortedError,
+  attemptFailure,
+  beforeOperation,
   clientClosedError,
   invalidInput,
   isPaylovApiError,
   isPaylovError,
   isPaylovOutcomeUnknown,
+  malformedResponse,
+  synthesizedMiss,
+  unexpectedStatus,
 } from '../../src/core/errors.js';
-import { capture } from '../helpers/asserts.js';
+import { recordOf } from '../helpers/asserts.js';
 
 const ENDPOINT = 'POST /merchant/receipts/create/';
 
@@ -105,16 +111,16 @@ describe('toJSON', () => {
       httpStatus: 400,
       endpoint: ENDPOINT,
       fields: ['items.0.title'],
-      isUnsettled: false,
+      isOutcomeUnknown: false,
     });
     expect(
       new PaylovApiError({
         code: 'processing_error',
         httpStatus: 400,
         endpoint: ENDPOINT,
-        isUnsettled: true,
+        isOutcomeUnknown: true,
       }).toJSON(),
-    ).toMatchObject({ isUnsettled: true });
+    ).toMatchObject({ isOutcomeUnknown: true });
     expect(
       new PaylovApiError({
         code: 'rate_limit_exceeded',
@@ -152,6 +158,7 @@ describe('toJSON', () => {
       message: 'Paylov request was aborted by the caller',
       endpoint: ENDPOINT,
       isSent: true,
+      isOutcomeUnknown: false,
     });
     expect(
       new PaylovConnectionError({
@@ -170,65 +177,157 @@ describe('toJSON', () => {
 });
 
 describe('isPaylovOutcomeUnknown', () => {
-  it('is true where a POST may have executed, false where it cannot have', () => {
-    const api = (httpStatus: number): PaylovApiError =>
-      new PaylovApiError({ code: 'server_error', httpStatus, endpoint: ENDPOINT });
+  it('reads isOutcomeUnknown, which a caller-built error defaults to false', () => {
     const unknownOutcomes = [
-      new PaylovConnectionError({
-        code: 'sdk_timeout',
+      new PaylovApiError({
+        code: 'x',
+        httpStatus: 400,
         endpoint: ENDPOINT,
-        isSent: true,
-        timeoutMs: 5,
+        isOutcomeUnknown: true,
       }),
-      abortedError(ENDPOINT, true),
       new PaylovProtocolError({
         code: 'sdk_malformed_response',
         httpStatus: 200,
         endpoint: ENDPOINT,
+        isOutcomeUnknown: true,
       }),
-      api(500),
-      api(503),
+      new PaylovConnectionError({
+        code: 'sdk_timeout',
+        endpoint: ENDPOINT,
+        isSent: true,
+        isOutcomeUnknown: true,
+      }),
     ];
     const knownOutcomes = [
       invalidInput('m', 'f', 'type'),
       clientClosedError(),
-      abortedError(ENDPOINT, false),
-      api(400),
-      api(429),
-      api(499),
+      new PaylovApiError({ code: 'server_error', httpStatus: 500, endpoint: ENDPOINT }),
+      new PaylovProtocolError({
+        code: 'sdk_unexpected_status',
+        httpStatus: 502,
+        endpoint: ENDPOINT,
+      }),
+      new PaylovConnectionError({ code: 'sdk_network_error', endpoint: ENDPOINT, isSent: true }),
     ];
     expect(unknownOutcomes.map(isPaylovOutcomeUnknown)).toEqual(unknownOutcomes.map(() => true));
     expect(knownOutcomes.map(isPaylovOutcomeUnknown)).toEqual(knownOutcomes.map(() => false));
     expect(isPaylovOutcomeUnknown(new Error('not from the SDK'))).toBe(false);
+    expect(isPaylovOutcomeUnknown({ kind: 'api', isOutcomeUnknown: true })).toBe(false);
   });
 });
 
-function apiErrorOf(code: string, isUnsettled: boolean): PaylovApiError {
-  return new PaylovApiError({ code, httpStatus: 400, endpoint: ENDPOINT, isUnsettled });
+function contextOf(effect: EndpointEffect, httpStatus: number): ResponseContext {
+  return { endpoint: ENDPOINT, httpStatus, effect };
 }
 
-describe('isPaylovOutcomeUnknown for a 4xx gateway error', () => {
-  it('reads the error as unknown exactly when the endpoint left it unsettled', () => {
-    expect(isPaylovOutcomeUnknown(apiErrorOf('processing_error', true))).toBe(true);
-    expect(isPaylovOutcomeUnknown(apiErrorOf('processing_error', false))).toBe(false);
-  });
+function gatewayAnswer(effect: EndpointEffect, httpStatus: number, code: string): unknown {
+  const body = { result: null, error: { code, message: 'declined' } };
+  const normalized = normalizeResponse(body, contextOf(effect, httpStatus), 'envelope', null);
+  return normalized.kind === 'failure' ? normalized.error : normalized.payload;
+}
 
-  it('counts HTTP 500 and above as unsettled for any code', () => {
-    const error = new PaylovApiError({ code: 'server_error', httpStatus: 502, endpoint: ENDPOINT });
-    expect(error.isUnsettled).toBe(true);
-    expect(isPaylovOutcomeUnknown(error)).toBe(true);
-  });
+describe('outcome of a failed operation by its effect', () => {
+  const EFFECTS: readonly EndpointEffect[] = ['read', 'write', 'money'];
+  const failures: Readonly<Record<string, (effect: EndpointEffect) => unknown>> = {
+    'HTTP 500': (effect) => gatewayAnswer(effect, 500, 'server_error'),
+    'HTTP 503 without an error body': (effect) => unexpectedStatus(contextOf(effect, 503)),
+    'a malformed success': (effect) => malformedResponse(contextOf(effect, 200), 'result'),
+    'a connection failure once sent': (effect) =>
+      attemptFailure('sdk_network_error', ENDPOINT, effect),
+    'an abort in flight': (effect) => attemptFailure('sdk_aborted', ENDPOINT, effect),
+    'a generic failure code': (effect) => gatewayAnswer(effect, 400, 'processing_error'),
+    'a specific decline': (effect) => gatewayAnswer(effect, 400, 'insufficient_funds'),
+    'a decoded miss': (effect) => synthesizedMiss(contextOf(effect, 200), 'card_not_found'),
+    'an abort before fetch': () => abortedError(ENDPOINT, true),
+  };
 
-  it('defaults isUnsettled to false for an error built without it', () => {
-    const error = new PaylovApiError({
-      code: 'processing_error',
-      httpStatus: 400,
-      endpoint: ENDPOINT,
+  it('is never unknown for a read, unknown for a write after a 5xx, protocol or sent failure, and also after a generic code for money', () => {
+    const unknownEffects = Object.fromEntries(
+      Object.entries(failures).map(([failure, build]) => [
+        failure,
+        EFFECTS.filter((effect) => isPaylovOutcomeUnknown(build(effect))),
+      ]),
+    );
+    expect(unknownEffects).toEqual({
+      'HTTP 500': ['write', 'money'],
+      'HTTP 503 without an error body': ['write', 'money'],
+      'a malformed success': ['write', 'money'],
+      'a connection failure once sent': ['write', 'money'],
+      'an abort in flight': ['write', 'money'],
+      'a generic failure code': ['money'],
+      'a specific decline': [],
+      'a decoded miss': [],
+      'an abort before fetch': [],
     });
-    expect(error.isUnsettled).toBe(false);
-    expect(isPaylovOutcomeUnknown(error)).toBe(false);
+  });
+
+  // docs/architecture.md names the generic codes that leave a money operation ambiguous.
+  it.each(['processing_error', 'unknown_error', 'error_at_pay'])(
+    'reads %s as unknown from a money endpoint only',
+    (code) => {
+      expect(
+        EFFECTS.filter((effect) => isPaylovOutcomeUnknown(gatewayAnswer(effect, 400, code))),
+      ).toEqual(['money']);
+    },
+  );
+});
+
+describe('beforeOperation', () => {
+  it('copies an unknown-outcome grant failure as a known one, leaving the shared error intact', () => {
+    const shared = [
+      gatewayErrorOf(503),
+      new PaylovProtocolError({
+        code: 'sdk_unexpected_status',
+        httpStatus: 503,
+        endpoint: TOKEN_ENDPOINT,
+        isOutcomeUnknown: true,
+      }),
+      attemptFailure('sdk_timeout', TOKEN_ENDPOINT, 'write', 50),
+    ];
+    for (const error of shared) {
+      const seen = beforeOperation(error);
+      expect(seen).not.toBe(error);
+      expect(seen).toBeInstanceOf(error.constructor);
+      expect(isPaylovOutcomeUnknown(seen)).toBe(false);
+      expect(isPaylovOutcomeUnknown(error)).toBe(true);
+      expect(isPaylovError(seen) ? seen.toJSON() : seen).toEqual({
+        ...error.toJSON(),
+        isOutcomeUnknown: false,
+      });
+    }
+  });
+
+  it('copies a known grant failure too, its fields included, and passes foreign errors through', () => {
+    const rejected = new PaylovApiError({
+      code: 'validation_error',
+      httpStatus: 400,
+      endpoint: TOKEN_ENDPOINT,
+      fields: ['username'],
+    });
+    const seen = beforeOperation(rejected);
+    expect(seen).toBeInstanceOf(PaylovApiError);
+    expect(seen).not.toBe(rejected);
+    expect(recordOf(seen)['fields']).not.toBe(rejected.fields);
+    expect(isPaylovError(seen) ? seen.toJSON() : seen).toEqual(rejected.toJSON());
+    const closed = clientClosedError();
+    expect(beforeOperation(closed)).not.toBe(closed);
+    expect(beforeOperation(closed)).toBeInstanceOf(PaylovClientClosedError);
+    const foreign = new Error('not from the SDK');
+    expect(beforeOperation(foreign)).toBe(foreign);
   });
 });
+
+const TOKEN_ENDPOINT = 'POST /merchant/oauth2/token/';
+
+function gatewayErrorOf(httpStatus: number): PaylovApiError {
+  return new PaylovApiError({
+    code: 'server_error',
+    httpStatus,
+    endpoint: TOKEN_ENDPOINT,
+    retryAfterSeconds: 5,
+    isOutcomeUnknown: true,
+  });
+}
 
 describe('isPaylovApiError', () => {
   const error: unknown = new PaylovApiError({
@@ -247,8 +346,8 @@ describe('isPaylovApiError', () => {
   });
 });
 
-describe('unsettled codes', () => {
-  it('leave exactly the money-moving operations unknown', () => {
+describe('endpoint effects', () => {
+  it('declare money only where funds move and read only where nothing changes', () => {
     const tables: Readonly<Record<string, Readonly<Record<string, Endpoint>>>> = {
       cards: CARD_ENDPOINTS,
       fiscalization: FISCALIZATION_ENDPOINTS,
@@ -261,32 +360,34 @@ describe('unsettled codes', () => {
       onboarding: ONBOARDING_ENDPOINTS,
       auth: AUTH_ENDPOINTS,
     };
-    const generic = ['processing_error', 'unknown_error', 'error_at_pay'];
-    const specific = ['insufficient_funds', 'hold_time_expired', 'transaction_already_payed'];
-    const unsettledCodesOf = (endpoint: Endpoint): string[] =>
-      [...generic, ...specific].filter((code) => {
-        const body = { result: null, error: { code, message: 'declined' } };
-        const error = capture(() =>
-          normalizeResponse(body, { endpoint: ENDPOINT, httpStatus: 400 }, endpoint, null),
-        );
-        return error instanceof PaylovApiError && error.isUnsettled;
-      });
-    const declared = Object.fromEntries(
-      Object.entries(tables).flatMap(([feature, table]) =>
-        Object.entries(table).flatMap(([name, endpoint]) => {
-          const codes = unsettledCodesOf(endpoint);
-          return codes.length === 0 ? [] : [[`${feature}.${name}`, codes]];
-        }),
-      ),
-    );
-    expect(declared).toEqual({
-      'holds.capture': generic,
-      'holds.create': generic,
-      'holds.release': generic,
-      'payments.confirmPanPayment': generic,
-      'payments.pay': generic,
-      'payments.refund': generic,
-      'splits.splitPayment': generic,
-    });
+    const byEffect: Record<EndpointEffect, string[]> = { read: [], write: [], money: [] };
+    for (const [feature, table] of Object.entries(tables)) {
+      for (const [name, endpoint] of Object.entries(table)) {
+        byEffect[endpoint.effect].push(`${feature}.${name}`);
+      }
+    }
+    expect(byEffect.money.toSorted()).toEqual([
+      'holds.capture',
+      'holds.create',
+      'holds.release',
+      'payments.confirmPanPayment',
+      'payments.pay',
+      'payments.refund',
+      'splits.create',
+    ]);
+    expect(byEffect.read.toSorted()).toEqual([
+      'cards.checkPhone',
+      'cards.get',
+      'cards.list',
+      'fiscalization.checkActivityType',
+      'fiscalization.getReceipt',
+      'gateway.getStatus',
+      'gateway.listBanks',
+      'holds.get',
+      'onboarding.checkToken',
+      'splits.get',
+      'transactions.getRrn',
+      'transactions.getTransactions',
+    ]);
   });
 });

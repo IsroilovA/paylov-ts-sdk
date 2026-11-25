@@ -24,44 +24,55 @@ export const ENDPOINTS = {
     method: 'POST',
     route: '/merchant/userCard/createUserCard/',
     shape: 'envelope',
+    effect: 'write',
   },
   confirmPanBinding: {
     method: 'POST',
     route: '/merchant/userCard/confirmUserCardCreate/',
     shape: 'envelope',
+    effect: 'write',
   },
-  get: { method: 'GET', route: '/merchant/userCard/getCard/{cardId}/', shape: 'envelope' },
+  get: {
+    method: 'GET',
+    route: '/merchant/userCard/getCard/{cardId}/',
+    shape: 'envelope',
+    effect: 'read',
+  },
   list: {
     method: 'GET',
     route: '/merchant/userCard/getAllUserCards/',
     shape: 'envelope',
+    effect: 'read',
   },
   delete: {
     method: 'DELETE',
     route: '/merchant/userCard/deleteUserCard/',
     shape: 'envelope',
+    effect: 'write',
   },
   checkPhone: {
     method: 'POST',
     route: '/merchant/userCard/checkPhoneMatch/',
     shape: 'envelope',
+    effect: 'read',
   },
 } as const;
 
 /** The `paylov.cards` namespace. Nothing here moves money. */
 export interface CardsResource {
   /**
-   * PCI scope: takes a full card number server-side; the SDK keeps it out of logger events and
-   * errors.
+   * PCI scope: takes a full card number server-side; the SDK keeps it and the expiry out of
+   * logger events and errors.
    *
    * Registers a card for a user and makes its processing center (Uzcard or Humo) send an OTP to
    * the phone linked to the card; pass the returned `cardId` and the code to
    * {@link CardsResource.confirmPanBinding}. Without SMS notifications on the card no OTP
    * arrives. While the last OTP is still valid, starting again for the same user and card fails
    * with `otp_code_already_sent`; after it expires, a new start sends a new OTP for the same
-   * `cardId`.
+   * `cardId`. Moves no money.
    *
-   * Recovery: when the outcome is unknown, start again; an unconfirmed card is never charged.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, start again; an unconfirmed card is never
+   * charged.
    *
    * @throws {@link PaylovApiError} `card_not_found` (unknown or unsupported card number),
    * `card_not_match` (wrong expiry), `phone_not_match`, `card_exists` (already bound to this
@@ -87,11 +98,10 @@ export interface CardsResource {
    * leaves the OTP usable, so the cardholder can retry. On Paylov's test environment an OTP lasts
    * about 90 seconds, and the fourth wrong OTP blocks the card for about five minutes, for
    * bindings and payments alike: `card_is_blocked`, with the rest of the block in
-   * `retryAfterSeconds`. Stop prompting before that.
+   * `retryAfterSeconds`. Stop prompting before that. Moves no money.
    *
-   * Recovery: when the outcome is unknown (`isPaylovOutcomeUnknown`), read
-   * `cards.get({ cardId })`. A repeated confirm answering `card_is_already_activated` means the
-   * card is already confirmed.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `cards.get({ cardId })`. A repeated
+   * confirm answering `card_is_already_activated` means the card is already confirmed.
    *
    * @throws {@link PaylovApiError} `invalid_otp`, `otp_expired`, `card_is_blocked`, `try_new_otp`,
    * `too_many_attempts`, `pinfl_not_match`, `card_is_already_activated`, `card_not_found`.
@@ -106,7 +116,8 @@ export interface CardsResource {
   confirmPanBinding(params: ConfirmPanBindingParams, options?: PaylovCallOptions): Promise<Card>;
 
   /**
-   * Reads one card with its balance and status refreshed from the processing center.
+   * Reads one card with its balance and status refreshed from the processing center. Moves no
+   * money.
    *
    * @throws {@link PaylovApiError} `card_not_found` (unknown or deleted),
    * `card_not_found_in_processing_center`, `card_is_blocked`,
@@ -120,7 +131,7 @@ export interface CardsResource {
 
   /**
    * Lists a merchant user's bound cards; an unknown user has none. One malformed card fails the
-   * whole call.
+   * whole call. Moves no money.
    *
    * @example
    * const cards = await paylov.cards.list({ userId: 'user-42' });
@@ -129,8 +140,8 @@ export interface CardsResource {
   list(params: ListCardsParams, options?: PaylovCallOptions): Promise<readonly Card[]>;
 
   /**
-   * Unbinds a card. A repeated delete answers `card_not_found`, which means the card is already
-   * gone. `cards.list` and `cards.get` can still return it for a short time.
+   * Unbinds a card. Moves no money. A repeated delete answers `card_not_found`, which means the
+   * card is already gone. `cards.list` and `cards.get` can still return it for a short time.
    *
    * @throws {@link PaylovApiError} `card_not_found`.
    *
@@ -141,6 +152,7 @@ export interface CardsResource {
 
   /**
    * Answers whether a phone number is the one linked to a card, as Paylov's `match` reports it.
+   * Moves no money.
    *
    * @throws {@link PaylovApiError} `card_not_found`, `permission_denied` (the check is not enabled
    * for the merchant), `phone_not_match`: Paylov documents a mismatch as `false`, yet the

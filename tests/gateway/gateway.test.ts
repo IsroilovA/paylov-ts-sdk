@@ -16,8 +16,8 @@ const STATUS_URL = `${BASE_URL}/merchant/status/`;
 const BANK_LIST_URL = `${BASE_URL}/merchant/bankList/`;
 const TOKEN_URL = `${BASE_URL}/merchant/oauth2/token/`;
 
-const STATUS_OK = wireResponse('gateway/status.ok.wire.json');
-const BANK_LIST = wireResponse('gateway/bankList.success.wire.json');
+const STATUS_OK = wireResponse('gateway/getStatus.ok.wire.json');
+const BANK_LIST = wireResponse('gateway/listBanks.success.wire.json');
 const LOGIN = wireResponse('auth/token.passwordSuccess.wire.json');
 
 const CONSUMER_KEY = 'EXAMPLE-CONSUMER-KEY-NOT-A-REAL-CREDENTIAL';
@@ -68,7 +68,9 @@ describe('gateway.getStatus', () => {
   });
 
   it('surfaces a gateway error code', async () => {
-    const { resource } = setupGateway([wireResponse('gateway/status.methodNotAllowed.wire.json')]);
+    const { resource } = setupGateway([
+      wireResponse('gateway/getStatus.methodNotAllowed.wire.json'),
+    ]);
     const error = await expectApiError(resource.getStatus(), {
       code: 'method_not_allowed',
       httpStatus: 405,
@@ -91,7 +93,7 @@ describe('gateway.listBanks', () => {
   });
 
   it('keeps an official name when Paylov has one', async () => {
-    const body = loadFixture('gateway/bankList.officialName.synthesized.json');
+    const body = loadFixture('gateway/listBanks.officialName.synthesized.json');
     const { resource } = setupGateway([{ body }]);
     await expect(resource.listBanks()).resolves.toStrictEqual([
       { bankId: '38', name: 'EXAMPLE-BANK', officialName: 'EXAMPLE-BANK-OFFICIAL-NAME' },

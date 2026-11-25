@@ -77,8 +77,9 @@ export interface StartPanBindingParams {
   /** The merchant's own user id the card will be bound to. */
   readonly userId: string;
   /**
-   * Full card number. PCI scope; never logged and never placed in errors by the SDK. Paylov
-   * answers `validation_error` below 16 characters and `card_not_found` for an unknown card.
+   * Full card number. PCI scope: the SDK keeps it out of logger events and errors; never log or
+   * store it. Paylov answers `validation_error` below 16 characters and `card_not_found` for an
+   * unknown card.
    */
   readonly cardNumber: string;
   /** Card expiry as `YYMM`, year first; Paylov answers `validation_error` otherwise. */

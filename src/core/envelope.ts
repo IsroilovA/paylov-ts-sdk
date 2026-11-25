@@ -4,18 +4,30 @@
  * Success depends on the shape the endpoint declares; the SDK never guesses it.
  */
 
-import { decodeErrorDetails } from './errorDetails.js';
+import { decodeErrorDetails, decodeRetryAfterHeader } from './errorDetails.js';
 import {
+  gatewayError,
   malformedResponse,
-  PaylovApiError,
   unexpectedStatus,
+  type PaylovApiError,
   type PaylovProtocolError,
-  UNSETTLED_FAILURE_CODES,
 } from './errors.js';
 import { isRecord } from './decoding.js';
-import type { Endpoint, ResponseContext, ResponseShape } from './types.js';
+import type { ResponseContext, ResponseShape } from './types.js';
 
 const WIRE_ERROR_CODE = /^[a-z][a-z0-9_]{0,127}$/;
+const RATE_LIMITED = 429;
+
+/** A response that answers its call with an error. */
+export interface NormalizedFailure {
+  readonly kind: 'failure';
+  readonly error: PaylovApiError | PaylovProtocolError;
+}
+
+/** A response read against its endpoint's contract. */
+export type NormalizedResponse =
+  | { readonly kind: 'success'; readonly payload: unknown }
+  | NormalizedFailure;
 
 /** Error codes are identifiers, never arbitrary response text. */
 export function isWireErrorCode(value: unknown): value is string {
@@ -26,78 +38,80 @@ function isSuccessStatus(httpStatus: number): boolean {
   return httpStatus >= 200 && httpStatus < 300;
 }
 
-/** The validated `error.code` a body carries, for logger events and the 401 replay rule. */
-export function envelopeErrorCode(body: unknown): string | undefined {
-  const error = isRecord(body) ? body['error'] : undefined;
-  const code = isRecord(error) ? error['code'] : undefined;
-  return isWireErrorCode(code) ? code : undefined;
+function success(payload: unknown): NormalizedResponse {
+  return { kind: 'success', payload };
+}
+
+function failure(error: PaylovApiError | PaylovProtocolError): NormalizedResponse {
+  return { kind: 'failure', error };
+}
+
+/** The `Retry-After` delay of a 429 whose body is not a decodable error envelope. */
+function rateLimitDelay(context: ResponseContext, retryAfter: string | null): number | undefined {
+  return context.httpStatus === RATE_LIMITED ? decodeRetryAfterHeader(retryAfter) : undefined;
 }
 
 /** A body that is neither a declared success nor a decodable error. */
-function unusableBody(context: ResponseContext): PaylovProtocolError {
+function unusableBody(context: ResponseContext, retryAfter: string | null): PaylovProtocolError {
   return isSuccessStatus(context.httpStatus)
     ? malformedResponse(context)
-    : unexpectedStatus(context);
+    : unexpectedStatus(context, rateLimitDelay(context, retryAfter));
 }
-
-function isUnsettledCode(code: string, endpoint: ResponseEndpoint): boolean {
-  return endpoint.movesMoney === true && UNSETTLED_FAILURE_CODES.has(code);
-}
-
-function apiError(
-  code: string,
-  error: Readonly<Record<string, unknown>>,
-  context: ResponseContext,
-  endpoint: ResponseEndpoint,
-  retryAfter: string | null,
-): PaylovApiError {
-  return new PaylovApiError({
-    code,
-    ...context,
-    isUnsettled: isUnsettledCode(code, endpoint),
-    ...decodeErrorDetails(code, error, retryAfter),
-  });
-}
-
-function unwrapResult(body: Readonly<Record<string, unknown>>, context: ResponseContext): unknown {
-  const result = body['result'];
-  // `result` may be a primitive such as `true`; only null or absent is malformed.
-  if (result === null || result === undefined) throw malformedResponse(context, 'result');
-  return result;
-}
-
-function successPayload(body: unknown, context: ResponseContext, shape: ResponseShape): unknown {
-  if (shape === 'array') {
-    if (!Array.isArray(body)) throw malformedResponse(context);
-    return body;
-  }
-  if (!isRecord(body)) throw malformedResponse(context);
-  if (shape === 'flat') return body;
-  return unwrapResult(body, context);
-}
-
-/** What the normalizer needs of the declared endpoint. */
-export type ResponseEndpoint = Pick<Endpoint, 'shape' | 'movesMoney'>;
 
 /**
- * Returns the success payload as `unknown` for the owning decoder, or throws: `PaylovApiError`
- * for a decodable `error`, `PaylovProtocolError` for anything else. `retryAfter` is the
- * response's `Retry-After` header.
+ * The error a body with a non-null `error` reports. Only the documented envelope, with an explicit
+ * `result: null`, is a gateway answer: a contradicting or missing `result` proves nothing about
+ * whether the request executed, so it is a protocol error.
+ */
+function envelopeError(
+  body: Readonly<Record<string, unknown>>,
+  context: ResponseContext,
+  retryAfter: string | null,
+): PaylovApiError | PaylovProtocolError {
+  const error = body['error'];
+  const code = isRecord(error) ? error['code'] : undefined;
+  if (body['result'] !== null || !isRecord(error) || !isWireErrorCode(code)) {
+    return unusableBody(context, retryAfter);
+  }
+  return gatewayError(
+    context,
+    code,
+    decodeErrorDetails(code, error, context.httpStatus, retryAfter),
+  );
+}
+
+function successPayload(
+  body: unknown,
+  context: ResponseContext,
+  shape: ResponseShape,
+): NormalizedResponse {
+  if (shape === 'array')
+    return Array.isArray(body) ? success(body) : failure(malformedResponse(context));
+  if (!isRecord(body)) return failure(malformedResponse(context));
+  if (shape === 'flat') return success(body);
+  const result = body['result'];
+  // `result` may be a primitive such as `true`; only null or absent is malformed.
+  return result === null || result === undefined
+    ? failure(malformedResponse(context, 'result'))
+    : success(result);
+}
+
+/**
+ * The success payload as `unknown` for the owning decoder, or the failure: `PaylovApiError` for a
+ * decodable error envelope, `PaylovProtocolError` for anything else. `shape` is the endpoint's
+ * declared success shape and `retryAfter` the response's `Retry-After` header.
  */
 export function normalizeResponse(
   body: unknown,
   context: ResponseContext,
-  endpoint: ResponseEndpoint,
+  shape: ResponseShape,
   retryAfter: string | null,
-): unknown {
+): NormalizedResponse {
   // Branch on `error` being non-null, never on key presence or on the status alone: 404 carries
   // `card_not_found`, and some successes omit `error`.
-  const error = isRecord(body) ? body['error'] : undefined;
-  if (error !== null && error !== undefined) {
-    const code = isRecord(error) ? error['code'] : undefined;
-    if (!isRecord(error) || !isWireErrorCode(code)) throw unusableBody(context);
-    throw apiError(code, error, context, endpoint, retryAfter);
+  if (isRecord(body) && body['error'] !== null && body['error'] !== undefined) {
+    return failure(envelopeError(body, context, retryAfter));
   }
-  if (!isSuccessStatus(context.httpStatus)) throw unexpectedStatus(context);
-  return successPayload(body, context, endpoint.shape);
+  if (!isSuccessStatus(context.httpStatus)) return failure(unusableBody(context, retryAfter));
+  return successPayload(body, context, shape);
 }

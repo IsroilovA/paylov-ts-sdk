@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { createTransactionsResource } from '../../src/transactions/resource.js';
 import { readRefundState } from '../../src/transactions/state.js';
 import type { Transaction } from '../../src/transactions/types.js';
 import { expectInputError } from '../helpers/asserts.js';
+import { wireResponse } from '../helpers/fixtures.js';
+import { setupResource } from '../helpers/testHttp.js';
 
 // Expectations come from docs/paylov/transactions.md: a refunded sale reads `cancel` with its
 // `cancel_time`, while `refunded` was seen only on an expired hold's release.
@@ -24,6 +27,8 @@ const PAID_SALE: Transaction = {
   fiscalReceipts: [],
 };
 
+const INHERITED: unknown = Object.create({ transaction: PAID_SALE });
+
 describe('readRefundState', () => {
   it('reads a refunded sale with its refund time', () => {
     const refunded: Transaction = { ...PAID_SALE, status: 'refunded', cancelledAt: CANCELLED_AT };
@@ -38,6 +43,30 @@ describe('readRefundState', () => {
     expect(readRefundState({ transaction: { ...PAID_SALE, isHold: true } })).toEqual({
       kind: 'not_refunded',
     });
+  });
+
+  it('never reads a dismissed hold, which reads refunded, as a refund', async () => {
+    const { resource } = setupResource(createTransactionsResource, [
+      wireResponse('transactions/get.dismissedHold.wire.json'),
+    ]);
+    const transaction = await resource.get({
+      transactionId: '5eed0000-0000-4000-8000-000000000011',
+    });
+
+    expect(readRefundState({ transaction })).toEqual({ kind: 'unknown' });
+  });
+
+  it('decides from the one read of the transaction it validated', () => {
+    let reads = 0;
+    const params = {
+      get transaction(): Transaction | null {
+        reads += 1;
+        return reads === 1 ? PAID_SALE : null;
+      },
+    };
+    // @ts-expect-error malformed JavaScript input
+    expect(readRefundState(params)).toEqual({ kind: 'not_refunded' });
+    expect(reads).toBe(1);
   });
 
   it.each<[string, Transaction]>([
@@ -58,16 +87,17 @@ describe('readRefundState', () => {
   });
 
   it.each([
-    ['missing params', undefined, undefined],
-    ['a missing transaction', {}, 'transaction'],
-    ['a null transaction', { transaction: null }, 'transaction'],
-    ['a string transaction', { transaction: 'paid' }, 'transaction'],
-  ] as const)('rejects %s', async (_case, params, field) => {
+    ['missing params', undefined, undefined, 'type'],
+    ['a missing transaction', {}, 'transaction', 'required'],
+    ['an inherited transaction', INHERITED, 'transaction', 'required'],
+    ['a null transaction', { transaction: null }, 'transaction', 'type'],
+    ['a string transaction', { transaction: 'paid' }, 'transaction', 'type'],
+  ] as const)('rejects %s', async (_case, params, field, rule) => {
     // @ts-expect-error malformed JavaScript input
     await expectInputError(() => readRefundState(params), {
       code: 'sdk_invalid_input',
       field,
-      rule: 'type',
+      rule,
     });
   });
 });

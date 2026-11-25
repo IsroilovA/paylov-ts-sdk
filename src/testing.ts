@@ -3,11 +3,7 @@
  * application tests. Never import it from production code.
  */
 
-export {
-  PaylovFakeGateway,
-  type PaylovFakeCall,
-  type PaylovFakeGatewayOptions,
-} from './testing/gateway.js';
+export { PaylovFakeGateway, type PaylovFakeGatewayOptions } from './testing/gateway.js';
 export type {
   PaylovFakeGrant,
   PaylovFakeTokenEndpoint,

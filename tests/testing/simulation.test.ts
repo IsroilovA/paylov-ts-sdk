@@ -7,6 +7,7 @@ import { readHoldState } from '../../src/holds/state.js';
 import { PaylovFakeGateway } from '../../src/testing/gateway.js';
 import { readRefundState } from '../../src/transactions/state.js';
 import { captureAsync, expectApiError } from '../helpers/asserts.js';
+import { recordingLogger } from '../helpers/testHttp.js';
 
 // Every simulated transition comes from docs/paylov/payments.md, holds.md and transactions.md;
 // the capture ids are cited in src/testing/simulation.ts.
@@ -32,6 +33,16 @@ const INACTIVE_CARD: Card = {
   isActive: false,
   processingStatus: 'blocked',
 };
+const EMPTY_CARD: Card = {
+  ...CARD,
+  cardId: '00000000-0000-4000-8000-0000000000c3',
+  balanceTiyin: 0,
+};
+const RICH_CARD: Card = {
+  ...CARD,
+  cardId: '00000000-0000-4000-8000-0000000000c4',
+  balanceTiyin: 20_000_000_000_000,
+};
 const UNKNOWN_ID = '00000000-0000-4000-8000-0000000000ff';
 const SERVICE_ID = '00000000-0000-4000-8000-0000000000e1';
 const PAY = { cardId: CARD.cardId, userId: CARD.userId };
@@ -49,11 +60,17 @@ function simulated() {
   let now = START;
   const fake = new PaylovFakeGateway({ simulate: true, now: () => now });
   fake.addCard(CARD);
-  const paylov = new PaylovClient(fake.clientConfig);
+  const { logger, responses } = recordingLogger();
+  const paylov = new PaylovClient({ ...fake.clientConfig, logger });
   const advance = (minutes: number): void => {
     now = new Date(now.getTime() + minutes * 60_000);
   };
-  return { fake, paylov, advance, now: () => now };
+  return { fake, paylov, responses, advance, now: () => now };
+}
+
+async function sell({ paylov }: Simulated, amountTiyin: number) {
+  const { transactionId } = await paylov.payments.create({ amountTiyin });
+  return paylov.payments.pay({ transactionId, ...PAY });
 }
 
 describe('the simulated gateway: sales', () => {
@@ -288,6 +305,91 @@ describe('the simulated gateway: holds', () => {
   });
 });
 
+describe('the simulated gateway: card funds', () => {
+  const FULL = { ...HOLD, amountTiyin: CARD.balanceTiyin };
+  const NEXT = { ...HOLD, externalId: 'booking-2', amountTiyin: 6_000_000 };
+
+  it('gives a dismissed hold back to the card for the next hold', async () => {
+    const { fake, paylov } = simulated();
+    const created = await paylov.holds.create(FULL);
+    await paylov.holds.release(created);
+
+    const next = await paylov.holds.create(NEXT);
+    expect(await paylov.holds.get(next)).toMatchObject({ status: 'held', amountTiyin: 6_000_000 });
+    fake.assertDone();
+  });
+
+  it.each([
+    [
+      'a hold that only a partial capture’s remainder would cover',
+      async ({ paylov }: Simulated) => {
+        const created = await paylov.holds.create(FULL);
+        await paylov.holds.capture({ ...created, amountTiyin: 4_000_000 });
+        return paylov.holds.create(NEXT);
+      },
+      'holds.create',
+    ],
+    [
+      'a pay that only a refund would cover',
+      async (simulation: Simulated) => {
+        const { transactionId } = await sell(simulation, CARD.balanceTiyin);
+        await simulation.paylov.payments.refund({ transactionId });
+        return sell(simulation, 6_000_000);
+      },
+      'payments.pay',
+    ],
+    [
+      'a hold that only a hold released by hold_time_expired would cover',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...FULL, durationMinutes: 1 });
+        advance(2);
+        await captureAsync(paylov.holds.capture({ ...created, amountTiyin: 1_000 }));
+        return paylov.holds.create(NEXT);
+      },
+      'holds.create',
+    ],
+    [
+      'a hold that only a hold dismissed after it expired would cover',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...FULL, durationMinutes: 1 });
+        advance(2);
+        await paylov.holds.release(created);
+        return paylov.holds.create(NEXT);
+      },
+      'holds.create',
+    ],
+  ])(
+    'answers %s as unsimulated: when those funds return is unobserved',
+    async (_case, run, method) => {
+      const simulation = simulated();
+
+      await expectApiError(run(simulation), { code: 'fake_unsimulated', httpStatus: 501 });
+      expect(() => {
+        simulation.fake.assertDone();
+      }).toThrow(
+        `unsimulated ${method}: ${method} that only refunded, uncaptured or expired-hold funds would cover`,
+      );
+    },
+  );
+
+  it('still answers what the funds certainly left cover', async () => {
+    const simulation = simulated();
+    const { paylov } = simulation;
+    const created = await paylov.holds.create({ ...HOLD, amountTiyin: 5_000_000 });
+    await paylov.holds.capture({ ...created, amountTiyin: 4_000_000 });
+    const sale = await sell(simulation, 2_000_000);
+    await paylov.payments.refund(sale);
+
+    // 10 000 000 less 4 000 000 captured, 1 000 000 uncaptured and 2 000 000 refunded.
+    const next = await sell(simulation, 3_000_000);
+    expect(await paylov.transactions.get(next)).toMatchObject({
+      status: 'paid',
+      amountTiyin: 3_000_000,
+    });
+    simulation.fake.assertDone();
+  });
+});
+
 describe('the simulated gateway: transaction list', () => {
   it('lists paid rows only, newest first, 20 to a page, by Tashkent day', async () => {
     const { fake, paylov, advance } = simulated();
@@ -325,6 +427,22 @@ describe('the simulated gateway: transaction list', () => {
 });
 
 describe('the simulated gateway: evidenced refusals', () => {
+  it('answers an unknown transaction as the gateway does: an empty list at HTTP 200', async () => {
+    const { fake, paylov, responses } = simulated();
+
+    const miss = await expectApiError(paylov.transactions.get({ transactionId: UNKNOWN_ID }), {
+      code: 'transaction_not_found',
+      httpStatus: 200,
+    });
+    expect(isPaylovOutcomeUnknown(miss)).toBe(false);
+    expect(responses.at(-1)).toMatchObject({
+      endpoint: 'GET /merchant/getTransactions/',
+      httpStatus: 200,
+    });
+    expect(responses.at(-1)?.errorCode).toBeUndefined();
+    fake.assertDone();
+  });
+
   it.each([
     [
       'a pay of an unknown transaction',
@@ -384,9 +502,7 @@ describe('the simulated gateway: scripted overrides and limits', () => {
 
     await paylov.payments.pay({ transactionId, ...PAY });
     expect(await paylov.transactions.get({ transactionId })).toMatchObject({ status: 'paid' });
-    expect(
-      fake.calls.map((call) => call.method).filter((method) => method === 'payments.pay'),
-    ).toHaveLength(3);
+    expect(fake.payments.pay.requests).toHaveLength(3);
     fake.assertDone();
   });
 
@@ -395,7 +511,7 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     fake.transactions.get.fail('transaction_not_found', {}, { persist: true });
     const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
 
-    const miss = { code: 'transaction_not_found' } as const;
+    const miss = { code: 'transaction_not_found', httpStatus: 200 } as const;
     await expectApiError(paylov.transactions.get({ transactionId }), miss);
     await expectApiError(paylov.transactions.get({ transactionId }), miss);
     fake.assertDone();
@@ -499,6 +615,105 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'payments.pay',
     ],
     [
+      'a pay the card balance does not cover',
+      async ({ fake, paylov }: Simulated) => {
+        fake.addCard(EMPTY_CARD);
+        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+        return paylov.payments.pay({ transactionId, ...PAY, cardId: EMPTY_CARD.cardId });
+      },
+      'payments.pay',
+    ],
+    [
+      'a pay the balance left after earlier charges does not cover',
+      async ({ paylov }: Simulated) => {
+        const pay = async (amountTiyin: number) => {
+          const { transactionId } = await paylov.payments.create({ amountTiyin });
+          return paylov.payments.pay({ transactionId, ...PAY });
+        };
+        await pay(CARD.balanceTiyin - 100_000);
+        return pay(100_100);
+      },
+      'payments.pay',
+    ],
+    [
+      'a hold the card balance does not cover',
+      async ({ fake, paylov }: Simulated) => {
+        fake.addCard(EMPTY_CARD);
+        return paylov.holds.create({ ...HOLD, cardId: EMPTY_CARD.cardId });
+      },
+      'holds.create',
+    ],
+    [
+      'a hold above 1 000 000 000 SUM',
+      async ({ fake, paylov }: Simulated) => {
+        fake.addCard(RICH_CARD);
+        return paylov.holds.create({
+          ...HOLD,
+          cardId: RICH_CARD.cardId,
+          amountTiyin: 5_000_000_000_000,
+        });
+      },
+      'holds.create',
+    ],
+    [
+      'a card read after a charge',
+      async ({ paylov }: Simulated) => {
+        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+        await paylov.payments.pay({ transactionId, ...PAY });
+        return paylov.cards.get({ cardId: CARD.cardId });
+      },
+      'cards.get',
+    ],
+    [
+      'a card read after a dismissed hold',
+      async ({ paylov }: Simulated) => {
+        await paylov.holds.release(await paylov.holds.create(HOLD));
+        return paylov.cards.get({ cardId: CARD.cardId });
+      },
+      'cards.get',
+    ],
+    [
+      'a card list after a hold',
+      async ({ paylov }: Simulated) => {
+        await paylov.holds.create(HOLD);
+        return paylov.cards.list({ userId: CARD.userId });
+      },
+      'cards.list',
+    ],
+    [
+      'a refund 11 days after the payment',
+      async ({ paylov, advance }: Simulated) => {
+        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+        await paylov.payments.pay({ transactionId, ...PAY });
+        advance(11 * 24 * 60);
+        return paylov.payments.refund({ transactionId });
+      },
+      'payments.refund',
+    ],
+    [
+      'a refund on the Tashkent day after the payment',
+      async ({ paylov, advance }: Simulated) => {
+        // 18:59 UTC is 23:59 in Tashkent; two minutes later is the next Tashkent day.
+        advance(8 * 60 + 59);
+        const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+        await paylov.payments.pay({ transactionId, ...PAY });
+        advance(2);
+        return paylov.payments.refund({ transactionId });
+      },
+      'payments.refund',
+    ],
+    [
+      'a list of rows paid in the same second',
+      async ({ paylov }: Simulated) => {
+        for (let index = 0; index < 2; index += 1) {
+          const { transactionId } = await paylov.payments.create({ amountTiyin: 1_000 });
+          await paylov.payments.pay({ transactionId, ...PAY });
+        }
+        return paylov.transactions.list();
+      },
+      'transactions.list',
+    ],
+    [
       'a hold with a serviceId',
       async ({ paylov }: Simulated) => paylov.holds.create({ ...HOLD, serviceId: SERVICE_ID }),
       'holds.create',
@@ -567,6 +782,24 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     }).toThrow(`unsimulated ${method}:`);
   });
 
+  it('reports an answer the simulation cannot encode as unsimulated, not as unreadable', async () => {
+    const { fake, paylov, advance } = simulated();
+    // A five-digit year is a valid Date but no wire timestamp.
+    advance((Date.parse('+010000-01-01T00:00:00Z') - START.getTime()) / 60_000);
+    const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
+
+    await expectApiError(paylov.transactions.get({ transactionId }), {
+      code: 'fake_unsimulated',
+      httpStatus: 501,
+    });
+    expect(fake.transactions.get.requests).toEqual([{ transactionId }]);
+    expect(() => {
+      fake.assertDone();
+    }).toThrow(
+      'PaylovFakeGateway: unsimulated transactions.get: the simulation or its encoder threw',
+    );
+  });
+
   it('leaves methods outside the simulation scripted', async () => {
     const { fake, paylov } = simulated();
     await expectApiError(paylov.transactions.getRrn({ transactionId: CARD.cardId }), {
@@ -619,6 +852,7 @@ describe('the fake token endpoint', () => {
 
     await expectApiError(paylov.transactions.get({ transactionId: ID }), {
       code: 'transaction_not_found',
+      httpStatus: 200,
     });
     expect(fake.token.requests).toEqual(['password', 'refresh_token', 'password']);
     fake.assertDone();

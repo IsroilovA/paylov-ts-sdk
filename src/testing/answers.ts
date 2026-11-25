@@ -3,7 +3,12 @@
 import { isWireErrorCode } from '../core/envelope.js';
 import type { PaylovErrorCode } from '../core/errorCodes.js';
 import { decodeErrorDetails } from '../core/errorDetails.js';
-import { encodeErrorDetails, FakeRefusal, type PaylovFakeFailure } from '../core/fake.js';
+import {
+  encodeErrorDetails,
+  FakeRefusal,
+  type FakeMethodSpec,
+  type PaylovFakeFailure,
+} from '../core/fake.js';
 import { isRetryableStatus } from '../core/http.js';
 import type { Endpoint } from '../core/types.js';
 
@@ -50,9 +55,7 @@ export function respond(
 
 /** The success answer for `payload`, or the error a `FakeRefusal` names. */
 export function replyAnswer(endpoint: Endpoint, payload: unknown): Answer {
-  if (payload instanceof FakeRefusal) {
-    return respond(400, errorBody({ code: payload.code, message: payload.code }));
-  }
+  if (payload instanceof FakeRefusal) return failureAnswer(payload.code, {});
   return respond(200, endpoint.shape === 'envelope' ? { result: payload, error: null } : payload);
 }
 
@@ -82,8 +85,8 @@ export function failureAnswer(code: PaylovErrorCode, failure: PaylovFakeFailure)
   if (!Number.isInteger(httpStatus) || httpStatus < 400 || httpStatus > 599) {
     throw new TypeError('httpStatus must be an integer from 400 to 599');
   }
-  const { error, retryAfter } = encodeErrorDetails(code, failure);
-  const reported = decodeErrorDetails(code, error, retryAfter);
+  const { error, retryAfter } = encodeErrorDetails(code, httpStatus, failure);
+  const reported = decodeErrorDetails(code, error, httpStatus, retryAfter);
   const isReportable =
     (fields === undefined || sameFields(fields, reported.fields)) &&
     (retryAfterSeconds === undefined || retryAfterSeconds === reported.retryAfterSeconds);
@@ -93,6 +96,24 @@ export function failureAnswer(code: PaylovErrorCode, failure: PaylovFakeFailure)
     );
   }
   return respond(httpStatus, errorBody(error), retryAfter);
+}
+
+/**
+ * How `spec`'s method reports `code`: its success-body miss for the code it reads as a miss, else
+ * a gateway error. A success-body miss carries no failure details.
+ */
+export function methodFailureAnswer(
+  spec: Pick<FakeMethodSpec<never, unknown>, 'endpoint' | 'miss'>,
+  code: PaylovErrorCode,
+  failure: PaylovFakeFailure,
+): Answer {
+  const { miss } = spec;
+  if (miss?.code !== code) return failureAnswer(code, failure);
+  const { httpStatus, fields, retryAfterSeconds } = failure;
+  if (httpStatus !== undefined || fields !== undefined || retryAfterSeconds !== undefined) {
+    throw new TypeError(`the gateway reports ${code} here as an HTTP 200 answer without details`);
+  }
+  return replyAnswer(spec.endpoint, miss.payload);
 }
 
 export async function respondWith(

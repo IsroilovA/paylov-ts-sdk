@@ -1,3 +1,10 @@
+import {
+  createServer,
+  request as sendHttpRequest,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
+
 import { describe, expect, it } from 'vitest';
 
 import type { PaylovInputRule } from '../../src/core/errors.js';
@@ -18,6 +25,7 @@ const PASSWORD = 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL';
 const AUTHORIZATION = basicAuthHeader(LOGIN, PASSWORD);
 const WRONG_AUTHORIZATION = basicAuthHeader(LOGIN, 'wrong-password');
 const CANCEL = loadFixture<Fixture>('webhooks/transactionCancel.notification.docs.json');
+const CHECK = loadFixture<Fixture>('webhooks/transactionCheck.request.docs.json');
 
 const receiver = new PaylovWebhookReceiver({ credentials: [{ login: LOGIN, password: PASSWORD }] });
 
@@ -96,6 +104,19 @@ describe('PaylovWebhookReceiver authentication', () => {
     }
   });
 
+  it('rejects two differently cased Authorization keys in either order', () => {
+    for (const headers of [
+      { Authorization: AUTHORIZATION, authorization: WRONG_AUTHORIZATION },
+      { authorization: WRONG_AUTHORIZATION, Authorization: AUTHORIZATION },
+      { authorization: AUTHORIZATION, AUTHORIZATION: AUTHORIZATION },
+    ]) {
+      expect(receiver.receive({ ...post(CANCEL), headers })).toEqual({
+        kind: 'invalid',
+        reason: 'unauthorized',
+      });
+    }
+  });
+
   it('accepts case-insensitive header names, scheme names, and single-value arrays', () => {
     const token = AUTHORIZATION.slice('Basic '.length);
     expect(
@@ -107,6 +128,34 @@ describe('PaylovWebhookReceiver authentication', () => {
     expect(
       receiver.receive({ ...post(CANCEL), headers: { Authorization: [AUTHORIZATION] } }).kind,
     ).toBe('transaction.cancel');
+  });
+
+  it('rejects a repeated Authorization header read through Node headersDistinct', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no TCP address');
+    /** What `receive` answers for a Node request carrying these Authorization headers. */
+    const answer = async (authorization: readonly string[]): Promise<string> => {
+      const received = new Promise<IncomingMessage>((resolve) => {
+        server.once('request', (req: IncomingMessage, res: ServerResponse) => {
+          res.end();
+          resolve(req);
+        });
+      });
+      const sent = sendHttpRequest({ port: address.port, host: '127.0.0.1', method: 'POST' });
+      sent.setHeader('authorization', authorization);
+      sent.end();
+      const req = await received;
+      await new Promise((resolve) => sent.on('response', resolve));
+      return receiver.receive({ ...post(CANCEL), headers: req.headersDistinct }).kind;
+    };
+    try {
+      expect(await answer([AUTHORIZATION, WRONG_AUTHORIZATION])).toBe('invalid');
+      expect(await answer([AUTHORIZATION])).toBe('transaction.cancel');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it('reads Fetch Headers and accepts an undefined method as unsupported', () => {
@@ -144,6 +193,18 @@ describe('PaylovWebhookReceiver invalid input', () => {
       [post({ ...CANCEL, jsonrpc: '1.0' }), 'invalid_request'],
       [post({ ...CANCEL, method: 'merchant.withdrawal' }), 'unknown_method'],
       [post({ ...CANCEL, method: 'merchant.deposit' }), 'unknown_method'],
+      [post(CHECK), 'unknown_method'],
+      [
+        post({
+          ...CHECK,
+          method: 'transaction.perform',
+          params: {
+            transaction_id: '9bd1a92b-5cce-47c8-a2df-99a20836ab9e',
+            ...recordOf(CHECK['params']),
+          },
+        }),
+        'unknown_method',
+      ],
       [
         post(withParams(CANCEL, { amount_tiyin: 150000, amount_in_tiyin: undefined })),
         'invalid_params',
@@ -156,6 +217,10 @@ describe('PaylovWebhookReceiver invalid input', () => {
       [post(withParams(CANCEL, { amount_in_tiyin: '150000' })), 'invalid_params'],
       [post(withParams(CANCEL, { cancel_time: 1767162243.5 })), 'invalid_params'],
       [post(withParams(CANCEL, { cancel_time: -1 })), 'invalid_params'],
+      [post(withParams(CANCEL, { status: 'payed' })), 'invalid_params'],
+      [post(withParams(CANCEL, { status: undefined })), 'invalid_params'],
+      [post({ ...CANCEL, id: 1 }), 'invalid_request'],
+      [post({ ...CANCEL, id: null }), 'invalid_request'],
     ];
     for (const [input, reason] of cases) {
       expect(receiver.receive(input)).toEqual({ kind: 'invalid', reason });

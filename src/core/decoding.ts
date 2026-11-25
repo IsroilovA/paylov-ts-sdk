@@ -5,11 +5,16 @@
  */
 
 import type { PaylovKnownErrorCode } from './errorCodes.js';
-import { malformedResponse, synthesizedMiss } from './errors.js';
+import {
+  malformedResponse,
+  synthesizedMiss,
+  type PaylovApiError,
+  type PaylovProtocolError,
+} from './errors.js';
 import { wireSumToTiyin } from './money.js';
 import { isNonNegativeSafeInteger } from './numbers.js';
 import { fromUnixSeconds, parseTashkentDateTime, parseUtcDateTime } from './time.js';
-import type { HttpResponse, PaylovJsonObject, PaylovJsonValue } from './types.js';
+import type { PaylovJsonObject, PaylovJsonValue, ResponseContext } from './types.js';
 
 export type Decoder<T> = (value: unknown, path: string) => T;
 
@@ -37,22 +42,40 @@ export class DecodedMiss extends Error {
 }
 
 /**
+ * A decoded payload, or the public error its decoder's failure became: `malformed` for a
+ * {@link DecodeFailure}, `miss` for a {@link DecodedMiss}.
+ */
+export type DecodedPayload<T> =
+  | { readonly kind: 'success'; readonly value: T }
+  | { readonly kind: 'malformed'; readonly error: PaylovProtocolError }
+  | { readonly kind: 'miss'; readonly error: PaylovApiError };
+
+/**
  * Decodes a response payload from `root` (`result` or `body`); a failure becomes
  * `sdk_malformed_response` at its path, with the response's endpoint and status, and a
  * {@link DecodedMiss} a `PaylovApiError` with its code.
  */
-export function decodePayload<T>(response: HttpResponse, root: string, decode: Decoder<T>): T {
+export function decodePayload<T>(
+  payload: unknown,
+  context: ResponseContext,
+  root: string,
+  decode: Decoder<T>,
+): DecodedPayload<T> {
   try {
-    return decode(response.payload, root);
+    return { kind: 'success', value: decode(payload, root) };
   } catch (error) {
-    if (error instanceof DecodeFailure) throw malformedResponse(response.context, error.path);
-    if (error instanceof DecodedMiss) throw synthesizedMiss(response.context, error.code);
+    if (error instanceof DecodeFailure) {
+      return { kind: 'malformed', error: malformedResponse(context, error.path) };
+    }
+    if (error instanceof DecodedMiss) {
+      return { kind: 'miss', error: synthesizedMiss(context, error.code) };
+    }
     throw error;
   }
 }
 
 /** Decodes one field of a record, reporting failures at `<path>.<key>`. */
-export type FieldReader = <T>(key: string, decode: Decoder<T>) => T;
+type FieldReader = <T>(key: string, decode: Decoder<T>) => T;
 
 /** A canonical UUID in either case. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -73,31 +96,45 @@ function isUuid(value: unknown): value is string {
 }
 
 /**
- * Copies a parsed JSON tree into typed JSON values; `undefined` when it holds anything else or
- * nests deeper than 64 levels.
+ * An object with no prototype or an `Object.prototype` of any realm (one whose own prototype is
+ * `null`), as JSON produces; never a class instance such as a `Date`.
  */
-export function toJsonValue(value: unknown, depth = 0): PaylovJsonValue | undefined {
+function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  if (!isRecord(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === null || Object.getPrototypeOf(prototype) === null;
+}
+
+/**
+ * Copies a JSON tree into typed JSON values; `undefined` when it holds anything else (a non-finite
+ * number, a BigInt, a function, a class instance such as a `Date`, an `undefined` array entry) or
+ * nests deeper than 64 levels, which also stops a cycle. Copying never serializes, so what is
+ * checked is what is sent, and caller getter or proxy exceptions propagate unchanged.
+ */
+function toJsonValue(value: unknown, depth = 0): PaylovJsonValue | undefined {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (depth >= MAX_JSON_DEPTH) return undefined;
   if (Array.isArray(value)) {
+    // By index, as JSON does: a custom iterator never decides what is sent.
+    const entries = Array.from({ length: value.length }, (_unused, index): unknown => value[index]);
     const items: PaylovJsonValue[] = [];
-    for (const item of value) {
-      const json = toJsonValue(item, depth + 1);
+    for (const entry of entries) {
+      const json = toJsonValue(entry, depth + 1);
       if (json === undefined) return undefined;
       items.push(json);
     }
     return items;
   }
-  return isRecord(value) ? toJsonObject(value, depth) : undefined;
+  return toJsonObject(value, depth);
 }
 
-export function toJsonObject(
-  value: Readonly<Record<string, unknown>>,
-  depth = 0,
-): PaylovJsonObject | undefined {
+/** {@link toJsonValue} for an object; an `undefined` property is omitted, as JSON omits it. */
+export function toJsonObject(value: unknown, depth = 0): PaylovJsonObject | undefined {
+  if (!isPlainRecord(value)) return undefined;
   const entries: [string, PaylovJsonValue][] = [];
   for (const [key, child] of Object.entries(value)) {
+    if (child === undefined) continue;
     const json = toJsonValue(child, depth + 1);
     if (json === undefined) return undefined;
     entries.push([key, json]);
@@ -105,7 +142,7 @@ export function toJsonObject(
   return Object.fromEntries(entries);
 }
 
-export function asRecord(value: unknown, path: string): Readonly<Record<string, unknown>> {
+function asRecord(value: unknown, path: string): Readonly<Record<string, unknown>> {
   if (!isRecord(value)) throw new DecodeFailure(path);
   return value;
 }

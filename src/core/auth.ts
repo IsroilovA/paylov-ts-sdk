@@ -4,21 +4,22 @@
  */
 
 import {
+  asLiteral,
   asNonEmptyString,
   asNonNegativeInteger,
   DecodeFailure,
-  decodePayload,
+  fieldOf,
   readFields,
   type Decoder,
 } from './decoding.js';
 import { abortedError, isPaylovApiError, PaylovApiError, PaylovProtocolError } from './errors.js';
-import { endpointName } from './http.js';
+import { endpointName } from './endpoint.js';
 import { untilAborted, type ClientLifecycle } from './lifecycle.js';
-import type { AuthorizationContext, AuthProvider, HttpClient, HttpResponse } from './types.js';
+import type { AuthorizationContext, AuthProvider, HttpClient } from './types.js';
 
 export const ENDPOINTS = {
-  token: { method: 'POST', route: '/merchant/oauth2/token/', shape: 'flat' },
-  revoke: { method: 'POST', route: '/merchant/oauth2/revoke/', shape: 'flat' },
+  token: { method: 'POST', route: '/merchant/oauth2/token/', shape: 'flat', effect: 'write' },
+  revoke: { method: 'POST', route: '/merchant/oauth2/revoke/', shape: 'flat', effect: 'write' },
 } as const;
 const REVOKE_ENDPOINT = endpointName(ENDPOINTS.revoke);
 const REFRESH_MARGIN_MS = 60_000;
@@ -54,6 +55,19 @@ function abandonedClose(): Error {
   return abortedError(REVOKE_ENDPOINT, false);
 }
 
+/** A token-endpoint 429, enveloped or not: temporary, whatever code it carries. */
+function isRateLimited(error: unknown): error is PaylovApiError | PaylovProtocolError {
+  return (
+    (error instanceof PaylovApiError || error instanceof PaylovProtocolError) &&
+    error.httpStatus === 429
+  );
+}
+
+/** The gateway's verdict on a grant's credentials; a 429 is a rate limit, never a verdict. */
+function isRejectedGrant(error: unknown): error is PaylovApiError {
+  return isPaylovApiError(error, 'invalid_grant') && !isRateLimited(error);
+}
+
 function basicAuthHeader(consumerKey: string, consumerSecret: string): string {
   return `Basic ${Buffer.from(`${consumerKey}:${consumerSecret}`, 'utf8').toString('base64')}`;
 }
@@ -72,10 +86,13 @@ function deadlineFrom(issuedAt: number): Decoder<number> {
   };
 }
 
-/** Failures name the field, never its value: the same body holds the tokens. */
-function decodeTokenSet(issuedAt: number): Decoder<TokenSet> {
-  const asDeadline = deadlineFrom(issuedAt);
+/**
+ * Lifetimes count from when the response is decoded. Failures name the field, never its value:
+ * the same body holds the tokens.
+ */
+function decodeTokenSet(now: () => number): Decoder<TokenSet> {
   return (value, path) => {
+    const asDeadline = deadlineFrom(now());
     const field = readFields(value, path);
     field('token_type', asNonEmptyString);
     return {
@@ -87,17 +104,21 @@ function decodeTokenSet(issuedAt: number): Decoder<TokenSet> {
   };
 }
 
+/** The recorded acknowledgement `{"status": "success"}`; anything else logs as malformed. */
+const decodeRevoked: Decoder<'success'> = fieldOf('status', asLiteral('success'));
+
 /**
  * Lazy, process-local, single-flight credential manager. It refreshes 60 s before expiry and
  * adopts each new pair at once, because a refresh rotates the refresh token.
  *
+ * - A token-endpoint HTTP 429 starts a cool-down, whatever its body holds, `invalid_grant`
+ *   included; until it ends `authorize()` rethrows it without I/O. It takes precedence over both
+ *   rules below.
  * - A refresh rejected with `invalid_grant` falls back to one password grant. Nothing else does:
  *   `invalid_client`, a 429 or a connection failure would fail the password grant too, and
  *   failed password attempts lock the merchant account.
  * - An enveloped `invalid_grant` on the password grant is latched: every later `authorize()`
  *   rethrows it without I/O. A bare 401/403 (a proxy) is not a credential verdict and does not.
- * - A token-endpoint HTTP 429 starts a cool-down, decoded envelope or not; until it ends
- *   `authorize()` rethrows it without I/O.
  */
 export class TokenManager implements AuthProvider {
   readonly #config: TokenManagerConfig;
@@ -173,7 +194,7 @@ export class TokenManager implements AuthProvider {
           refresh_token: tokens.refreshToken,
         });
       } catch (error) {
-        if (!isPaylovApiError(error, 'invalid_grant')) throw error;
+        if (!isRejectedGrant(error)) throw error;
         this.#tokens = undefined;
       }
     }
@@ -185,7 +206,7 @@ export class TokenManager implements AuthProvider {
         password: this.#config.password,
       });
     } catch (error) {
-      if (isPaylovApiError(error, 'invalid_grant')) {
+      if (isRejectedGrant(error)) {
         this.#rejectedPassword = error;
         this.#tokens = undefined;
       }
@@ -195,20 +216,17 @@ export class TokenManager implements AuthProvider {
 
   async #requestTokens(body: Readonly<Record<string, string>>): Promise<AuthorizationContext> {
     const { http, consumerKey, consumerSecret } = this.#config;
-    let response: HttpResponse;
+    let tokens: TokenSet;
     try {
-      response = await http.request(ENDPOINTS.token, {
-        headers: { authorization: basicAuthHeader(consumerKey, consumerSecret) },
-        body,
-      });
+      tokens = await http.request(
+        ENDPOINTS.token,
+        { headers: { authorization: basicAuthHeader(consumerKey, consumerSecret) }, body },
+        decodeTokenSet(this.#now),
+      );
     } catch (error) {
-      const isRateLimited =
-        (error instanceof PaylovApiError || error instanceof PaylovProtocolError) &&
-        error.httpStatus === 429;
-      if (isRateLimited) this.#startCoolDown(error);
+      if (isRateLimited(error)) this.#startCoolDown(error);
       throw error;
     }
-    const tokens = decodePayload(response, 'body', decodeTokenSet(this.#now()));
     // Held even after a close, so the revocation targets the newest token; never handed out.
     this.#tokens = tokens;
     this.#generation += 1;
@@ -217,8 +235,7 @@ export class TokenManager implements AuthProvider {
   }
 
   #startCoolDown(error: PaylovApiError | PaylovProtocolError): void {
-    const retryAfterSeconds = error instanceof PaylovApiError ? error.retryAfterSeconds : undefined;
-    const seconds = retryAfterSeconds ?? DEFAULT_COOL_DOWN_SECONDS;
+    const seconds = error.retryAfterSeconds ?? DEFAULT_COOL_DOWN_SECONDS;
     this.#coolDown = { until: this.#now() + seconds * 1000, error };
   }
 
@@ -229,10 +246,10 @@ export class TokenManager implements AuthProvider {
     this.#tokens = undefined;
     if (accessToken === undefined) return;
     // Revoke is sent without `Authorization`, the only form that succeeded on every DEV day. A
-    // failed revocation leaves the token valid until it expires, and the caller nothing to do;
-    // its answer is not read.
+    // failed or unacknowledged revocation leaves the token valid until it expires, and the caller
+    // nothing to do: only its response event reports it.
     await this.#config.http
-      .request(ENDPOINTS.revoke, { body: { token: accessToken } })
+      .request(ENDPOINTS.revoke, { body: { token: accessToken } }, decodeRevoked)
       .catch(ignore);
   }
 

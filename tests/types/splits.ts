@@ -14,6 +14,7 @@ import {
   type SplitShare,
   type TransactionReference,
 } from '../../src/index.js';
+import type { IsEqual } from './exact.js';
 
 declare const client: PaylovClient;
 declare const items: readonly FiscalReceiptItem[];
@@ -35,8 +36,9 @@ const resendParams = {
 void client.splits.resendReceipt(resendParams).then((resent: SplitReceiptResent) => {
   const status: SplitReceiptStatus = resent.status;
   const unknownStatus: SplitReceiptStatus = 'queued';
-  const lastOfdError: string = resent.lastOfdError;
-  void [status, unknownStatus, lastOfdError];
+  void [status, unknownStatus];
+  // @ts-expect-error the OFD's raw diagnostic text is not exposed
+  void resent.lastOfdError;
 });
 // @ts-expect-error a resend carries every recipient's items
 void client.splits.resendReceipt({ transactionId, recipients: [recipient] });
@@ -50,6 +52,6 @@ void split.then((found) => {
   const receipt: FiscalReceipt | null = found.receipt;
   void [createdAt, status, unknownStatus, receipt];
 });
-// @ts-expect-error a missing split throws split_not_found, so get never returns null
-const missing: Promise<null> = client.splits.get({ transactionId });
-void missing;
+// A missing split throws split_not_found, so get resolves exactly a split, never null.
+const getResolvesSplit: IsEqual<Awaited<ReturnType<PaylovClient['splits']['get']>>, Split> = true;
+void getResolvesSplit;

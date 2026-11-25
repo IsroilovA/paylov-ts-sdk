@@ -6,8 +6,8 @@ reserve at booking, capture after the visit, release on cancellation.
 ## Flow
 
 ```ts
-// Store the externalId, the held amount and the time before the call. Every create that reaches
-// Paylov uses its externalId up, a declined one too, so each attempt needs a new one.
+// Store the externalId, the held amount and the time before the call. Replay an ambiguous create
+// with the same externalId; only a new attempt after a confirmed decline gets a new one.
 const externalId = `booking-${crypto.randomUUID()}`; // at most 64 characters, unique per merchant
 await bookings.saveHoldIntent(booking.id, {
   externalId,
@@ -38,10 +38,11 @@ if (booking.visited) {
 
 ## Rules
 
-- **One `externalId` per attempt.** A declined `create` still leaves a record: `holds.get` reads it
-  `declined` and `transactions.get` reads it `failed`, and creating again with the same `externalId`
-  answers `external_id_already_exists`. After a decline, store a new `externalId` before the next
-  `create`.
+- **One `externalId` per attempt.** Replaying an ambiguous `create` is the same attempt: send the
+  stored `externalId` again, never a new one, or the replay can reserve the money twice. A declined
+  `create` still leaves a record: `holds.get` reads it `declined` and `transactions.get` reads it
+  `failed`, and creating again with the same `externalId` answers `external_id_already_exists`. Only
+  after `readHoldState` confirms that decline, store a new `externalId` before the next `create`.
 - **Capture once, in full unless you mean to give up the rest.** A partial capture ends the hold:
   the remainder can be neither captured nor released through the API. Paylov does not document what
   happens to it; the SDK assumes Paylov and the card's bank release it to the cardholder, on their
@@ -49,9 +50,11 @@ if (booking.visited) {
 - **Keep the held amount yourself.** `holds.get` reports the captured amount after capture.
 - **Release before capture; refund after.** After a capture only `payments.refund` (full) remains,
   which Paylov states works for captured holds; its test environment refused them with
-  `processing_error`. The SDK reports that as an unknown outcome; a `transactions.get` that still
-  reads `paid` means the refusal held. The fallback is the Paylov business panel or Paylov support.
-  Capture only the final amount so refunds stay rare.
+  `processing_error`. The SDK reports that as an unknown outcome. Pass the `transactions.get` read
+  to `readRefundState`: a captured hold still reading `paid` is `not_refunded` at the time of the
+  read, so the refusal held; a hold reading `refunded` is `unknown`, because a release reads the
+  same, so confirm that refund in the Paylov business panel. The fallback is the business panel or
+  Paylov support. Capture only the final amount so refunds stay rare.
 - **Track the deadline yourself.** An expired hold can still read `held`; capture then fails with
   `hold_time_expired`, and release has been seen both to fail and to succeed. Stop capturing a hold
   at `clientCaptureDeadline`, and release every hold you will not capture, also after it expires.
@@ -90,10 +93,11 @@ const state = readHoldState({
 
 ## Recovery
 
-After an ambiguous `create`, run this from a delayed job: `holds.get` throws `transaction_not_found`
-for an unknown hold, and right after the call that proves nothing. The create may have run even when
-the call was aborted. A record found counts as the hold only when `readHoldState` reads it as a
-hold; `declined`, which needs the transaction read too, means the create ran and was refused.
+After an ambiguous `create`, run this from a delayed job with backoff: `holds.get` throws
+`transaction_not_found` for an unknown hold, and right after the call that proves nothing. The
+create may have run even when the call was aborted, so a replay always reuses the stored
+`externalId`. A record found counts as the hold only when `readHoldState` reads it as a hold;
+`declined`, which needs the transaction read too, means the create ran and was refused.
 
 ```ts
 import {
@@ -115,7 +119,7 @@ export async function reconcileHold(
     found = await paylov.holds.get({ externalId: holdParams.externalId });
   } catch (error) {
     if (!isPaylovApiError(error, 'transaction_not_found')) throw error;
-    return createAgain(bookingId, holdParams); // still unknown after the delay
+    return createAgain(bookingId, holdParams); // still unknown after the backoff
   }
   // Paylov documents the transaction's `failed`, not the hold's: a decline needs both reads.
   const transaction =

@@ -5,7 +5,6 @@ import {
   asJsonObject,
   asLiteral,
   asMaskedPan,
-  asRecord,
   asString,
   asTashkentDateTime,
   asTiyinFromSum,
@@ -19,15 +18,21 @@ import {
   nullable,
   nullish,
   readFields,
-  toJsonValue,
+  toJsonObject,
   type Decoder,
 } from '../../src/core/decoding.js';
 import { expectMalformed, expectNoSecretLeak } from '../helpers/asserts.js';
 
-const CONTEXT = { endpoint: 'GET /merchant/userCard/getCard/{cardId}/', httpStatus: 200 };
+const CONTEXT = {
+  endpoint: 'GET /merchant/userCard/getCard/{cardId}/',
+  httpStatus: 200,
+  effect: 'read',
+} as const;
 
 function decode<T>(decoder: Decoder<T>, value: unknown): T {
-  return decodePayload({ payload: value, context: CONTEXT }, 'result', decoder);
+  const decoded = decodePayload(value, CONTEXT, 'result', decoder);
+  if (decoded.kind === 'success') return decoded.value;
+  throw decoded.error;
 }
 
 /** `levels` containers around a leaf, alternating objects and arrays. */
@@ -54,25 +59,32 @@ describe('predicates', () => {
     await expectMalformed(() => decode(asUuid, 42), 'result');
   });
 
-  it('toJsonValue copies JSON trees and rejects non-JSON values', () => {
+  it('toJsonObject copies JSON trees and rejects non-JSON values', () => {
     const inner = { b: 2 };
     const list: unknown[] = [1, 'x', true, null, inner];
     const tree = { a: list };
-    const copy = toJsonValue(tree);
+    const copy = toJsonObject(tree);
     expect(copy).toEqual({ a: [1, 'x', true, null, { b: 2 }] });
     inner.b = 3;
     list.push('added');
     tree.a = [];
     expect(copy).toEqual({ a: [1, 'x', true, null, { b: 2 }] });
-    for (const value of [undefined, Number.NaN, () => 1, { a: [Symbol('x')] }, { a: 1n }]) {
-      expect(toJsonValue(value)).toBeUndefined();
+    const values = [Number.NaN, Infinity, () => 1, [Symbol('x')], [undefined], 1n, new Date(0)];
+    for (const value of values) {
+      expect(toJsonObject({ value })).toBeUndefined();
     }
+    expect(toJsonObject(new Date(0))).toBeUndefined();
   });
 
-  it('toJsonValue rejects nesting deeper than 64 levels instead of overflowing the stack', () => {
-    expect(toJsonValue(nested(64))).toEqual(nested(64));
-    expect(toJsonValue(nested(65))).toBeUndefined();
-    expect(toJsonValue(nested(20_000))).toBeUndefined();
+  it('toJsonObject omits undefined properties and accepts prototype-free objects', () => {
+    const bare: Record<string, unknown> = Object.assign(Object.create(null) as object, { b: 1 });
+    expect(toJsonObject({ a: undefined, bare })).toEqual({ bare: { b: 1 } });
+  });
+
+  it('toJsonObject rejects nesting deeper than 64 levels instead of overflowing the stack', () => {
+    expect(toJsonObject({ value: nested(63) })).toEqual({ value: nested(63) });
+    expect(toJsonObject({ value: nested(64) })).toBeUndefined();
+    expect(toJsonObject({ value: nested(20_000) })).toBeUndefined();
   });
 });
 
@@ -84,7 +96,11 @@ describe('field decoding', () => {
       () => decode(fieldOf('card', fieldOf('owner', asString)), value),
       'result.card.owner',
     );
-    expect({ endpoint: error.endpoint, httpStatus: error.httpStatus }).toEqual(CONTEXT);
+    expect(error).toMatchObject({
+      endpoint: CONTEXT.endpoint,
+      httpStatus: CONTEXT.httpStatus,
+      isOutcomeUnknown: false,
+    });
     expectNoSecretLeak(error, [secret]);
   });
 
@@ -96,8 +112,8 @@ describe('field decoding', () => {
     expect(() => decode(fieldOf('card', broken), { card: 1 })).toThrow(bug);
   });
 
-  it('asRecord and readFields reject non-records', async () => {
-    await expectMalformed(() => decode(asRecord, []), 'result');
+  it('readFields and asJsonObject reject non-records', async () => {
+    await expectMalformed(() => decode(asJsonObject, []), 'result');
     await expectMalformed(() => decode((value, path) => readFields(value, path), null), 'result');
   });
 

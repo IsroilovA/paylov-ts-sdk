@@ -6,7 +6,6 @@ import {
   hasSensitiveShape,
   hasSyntheticDigits,
   isCardRecord,
-  isCredentialLiteral,
   type SensitiveKind,
 } from '../../scripts/sensitiveData.mjs';
 
@@ -71,7 +70,7 @@ describe('value shapes', () => {
     ['OTP', ['1234', '12345678'], ['123', 'ok']],
     ['PINFL', ['3120-3875-2100-24'], ['3120387521002', '3120 3875 2100 2']],
     ['phone', ['+998 93 471 52 86'], ['+9989*****00', '12345678']],
-    ['token', ['abcdefgh'], ['abcdefg', 'This field is required.']],
+    ['token', ['abcdefgh', 'Bearer abcdefghijklmnop', 'hunter2 hunter2'], ['abcdefg', 'a/b c']],
     ['name', ['Синтетик Шахс'], ['', '42']],
     ['passport', ['AB7654321'], ['', '--']],
     ['account', ['20208000765432'], ['2020 800x']],
@@ -80,15 +79,6 @@ describe('value shapes', () => {
   ])('recognizes real-shaped %s values', (kind, real, other) => {
     for (const value of real) expect(hasSensitiveShape(kind, value), value).toBe(true);
     for (const value of other) expect(hasSensitiveShape(kind, value), value).toBe(false);
-  });
-
-  it('reads credential literals of eight or more characters, spaces included', () => {
-    for (const value of ['abcdefgh', 'Bearer abcdefghijklmnop', 'hunter2 hunter2']) {
-      expect(isCredentialLiteral(value), value).toBe(true);
-    }
-    for (const value of ['abcdefg', '..', 'a/b c']) {
-      expect(isCredentialLiteral(value), value).toBe(false);
-    }
   });
 
   it('accepts seven repeated digits or the ascending 123456789 as synthetic', () => {

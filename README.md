@@ -32,7 +32,7 @@ Paylov issues the API credentials and allowlists the networks that may call the 
 ## Quickstart
 
 ```ts
-import { PaylovClient } from '@isroilov_an/paylov';
+import { PaylovClient, isPaylovApiError } from '@isroilov_an/paylov';
 
 const paylov = new PaylovClient({
   baseUrl: 'https://dev.gw.paylov.uz',
@@ -42,10 +42,16 @@ const paylov = new PaylovClient({
   password: paylovPassword,
 });
 
-const transaction = await paylov.transactions.get({ transactionId });
-if (transaction?.status === 'paid') await orders.markPaid(orderId);
-
-await paylov.close();
+try {
+  const transaction = await paylov.transactions.get({ transactionId });
+  if (transaction.status === 'paid') await orders.markPaid(orderId);
+} catch (error) {
+  // Unknown to the gateway so far; right after an ambiguous call, read again later.
+  if (!isPaylovApiError(error, 'transaction_not_found')) throw error;
+  await jobs.reconcileLater(orderId);
+} finally {
+  await paylov.close();
+}
 ```
 
 `baseUrl` is the bare gateway origin: `https://dev.gw.paylov.uz` for development,

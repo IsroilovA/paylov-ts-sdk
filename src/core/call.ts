@@ -3,7 +3,7 @@
  * and decode.
  */
 
-import { decodePayload, type Decoder } from './decoding.js';
+import type { Decoder } from './decoding.js';
 import { readCallSignal, readParams, type Params } from './params.js';
 import type { Endpoint, HttpClient, RequestOptions } from './types.js';
 
@@ -45,8 +45,7 @@ export type EndpointRequest<E extends Endpoint> = Pick<
 
 /**
  * Sends one request to `endpoint` and decodes its payload. Logs and errors carry the route
- * template, never the identifiers. Decode failures are reported under `result` for the enveloped
- * shapes and under `body` for the others.
+ * template, never the identifiers.
  *
  * @example
  * return send(http, ENDPOINTS.get, { path: { cardId }, signal }, decodeFetchedCard);
@@ -57,6 +56,5 @@ export async function send<E extends Endpoint, T>(
   request: EndpointRequest<E>,
   decode: Decoder<T>,
 ): Promise<T> {
-  const response = await http.request(endpoint, request);
-  return decodePayload(response, endpoint.shape === 'envelope' ? 'result' : 'body', decode);
+  return await http.request(endpoint, request, decode);
 }

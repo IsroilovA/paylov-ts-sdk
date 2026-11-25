@@ -41,7 +41,9 @@ function setup(...script: FakeResponseSpec[]) {
 
 describe('fiscalization.registerReceipt', () => {
   it('registers a card payment by transactionId and decodes result.ofd', async () => {
-    const { resource, fetchImpl } = setup(wireResponse('fiscalization/register.success.wire.json'));
+    const { resource, fetchImpl } = setup(
+      wireResponse('fiscalization/registerReceipt.success.wire.json'),
+    );
 
     const receipt = await resource.registerReceipt(REGISTER);
 
@@ -61,12 +63,12 @@ describe('fiscalization.registerReceipt', () => {
 
   it('reports an OFD rejection as a settled failure without quoting the OFD answer', async () => {
     const { resource, requests, responses } = setup(
-      wireResponse('fiscalization/register.ofdError.wire.json'),
+      wireResponse('fiscalization/registerReceipt.ofdError.wire.json'),
     );
 
     const error = await expectApiError(resource.registerReceipt(REGISTER), { code: 'ofd_error' });
 
-    expect(error.isUnsettled).toBe(false);
+    expect(error.isOutcomeUnknown).toBe(false);
     const answer = ['invalid package code', 'Ofd error.'];
     expectNoSecretLeak(error, answer);
     expectNoSecretLeak([...requests, ...responses], answer);
@@ -74,7 +76,7 @@ describe('fiscalization.registerReceipt', () => {
 
   it('sends an item fiscalized under a PINFL', async () => {
     const { resource, fetchImpl } = setup(
-      fixtureResponse('fiscalization/register.success.docs.json'),
+      fixtureResponse('fiscalization/registerReceipt.success.docs.json'),
     );
 
     await resource.registerReceipt({
@@ -100,14 +102,16 @@ describe('fiscalization.registerReceipt', () => {
 
   it('reports a result without receiptId as malformed', async () => {
     const { resource } = setup(
-      fixtureResponse('fiscalization/register.missingReceiptId.synthesized.json'),
+      fixtureResponse('fiscalization/registerReceipt.missingReceiptId.synthesized.json'),
     );
 
     await expectMalformed(resource.registerReceipt(REGISTER), 'result.ofd.receiptId');
   });
 
   it('exposes nested gateway validation as flattened wire field paths', async () => {
-    const { resource } = setup(wireResponse('fiscalization/register.nestedValidation.wire.json'));
+    const { resource } = setup(
+      wireResponse('fiscalization/registerReceipt.nestedValidation.wire.json'),
+    );
 
     await expectApiError(resource.registerReceipt(REGISTER), {
       code: 'validation_error',
@@ -124,7 +128,9 @@ describe('fiscalization.registerReceipt', () => {
 
   it('keeps PINFLs and echoed tax ids out of errors and logger events', async () => {
     const { resource, requests, responses } = setup(
-      fixtureResponse('fiscalization/register.commitentNotActive.docs.json', { status: 400 }),
+      fixtureResponse('fiscalization/registerReceipt.commitentNotActive.docs.json', {
+        status: 400,
+      }),
     );
 
     const error = await expectApiError(

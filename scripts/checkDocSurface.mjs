@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-/** Checks that the usage index covers every public export, namespace, method and topic file. */
+/**
+ * Checks that the usage index covers every public export, namespace, method and topic file, and
+ * that each namespace row lists only methods of that namespace.
+ */
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -127,8 +130,17 @@ function surfacesOf(path, source, withClasses) {
   return surfaces;
 }
 
+/** Method names a namespace row lists in its first cell, after the `paylov.<namespace>` label.
+ * @param {string} row
+ */
+function listedMethodsOf(row) {
+  const cell = row.split('|')[1] ?? '';
+  return [...cell.matchAll(/`(\w+)`/g)].flatMap(([, name]) => (name === undefined ? [] : [name]));
+}
+
 /**
- * A surface's methods without `@example`, and those its INDEX.md row omits.
+ * A surface's methods without `@example`, those its INDEX.md row omits, and, for a namespace, the
+ * names its row lists that it lacks.
  * @param {string} file @param {Surface} surface @param {readonly string[]} indexLines
  * @param {ReadonlyMap<string, string>} namespaces
  */
@@ -149,6 +161,12 @@ function surfaceProblems(file, { kind, name, members }, indexLines, namespaces) 
     if (row !== undefined && !row.includes(`\`${member.name}\``)) {
       problems.push(`${file}: method ${member.name} not listed in the ${label} INDEX.md row`);
     }
+  }
+  if (kind !== 'interface' || row === undefined) return problems;
+  const known = new Set(members.map((member) => member.name));
+  for (const listed of listedMethodsOf(row)) {
+    if (!known.has(listed))
+      problems.push(`INDEX.md: the ${label} row lists ${listed}, not a method`);
   }
   return problems;
 }

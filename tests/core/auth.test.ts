@@ -39,6 +39,7 @@ import {
   PASSWORD,
   SUCCESS,
   SUCCESS_PAYLOAD,
+  rawPayload,
 } from './httpCases.js';
 
 const RESOURCE_PATH = GET_STATUS.route;
@@ -72,6 +73,10 @@ const BAD_PASSWORD = wireResponse('auth/token.invalidCredentials.wire.json');
 const REFRESH_REJECTED = wireResponse('auth/token.refreshRotated.wire.json');
 const RATE_LIMITED = wireResponse('auth/token.rateLimitedRetryAfter.wire.json');
 const EXPIRED = wireResponse('envelope/bearer.expired.wire.json');
+const RATE_LIMITED_GRANT: FakeResponseSpec = {
+  status: 429,
+  body: { result: null, error: { code: 'invalid_grant', message: 'invalid_grant' } },
+};
 const REVOKED = wireResponse('auth/revoke.success.wire.json');
 
 interface Harness {
@@ -343,6 +348,31 @@ describe('password latch', () => {
     expectNoSecrets(error);
   });
 
+  it('hands each caller its own copy of the rejection, concurrent waiters and later calls alike', async () => {
+    const gate = createGate();
+    const { http, fetchImpl } = setup([{ ...BAD_PASSWORD, gate }]);
+    const waiters = [1, 2].map(() => captureAsync(http.request(CREATE_RECEIPT, {}, rawPayload)));
+    await gate.started;
+    gate.release();
+    const errors = [
+      ...(await Promise.all(waiters)),
+      await captureAsync(http.request(CREATE_RECEIPT, {}, rawPayload)),
+    ];
+    expect(new Set(errors).size).toBe(3);
+    const diagnostics = errors.map((error) => {
+      if (!(error instanceof PaylovApiError))
+        throw new Error(`expected a PaylovApiError: ${String(error)}`);
+      return error.toJSON();
+    });
+    expect(diagnostics[0]).toMatchObject({
+      code: 'invalid_grant',
+      endpoint: `POST ${TOKEN_PATH}`,
+      isOutcomeUnknown: false,
+    });
+    expect(diagnostics.slice(1)).toEqual([diagnostics[0], diagnostics[0]]);
+    expect(fetchImpl.calls).toHaveLength(1);
+  });
+
   it('latches an unknown consumer key and tells it apart from a bad password', async () => {
     const { manager, fetchImpl } = setup([
       wireResponse('auth/token.invalidConsumerKey.wire.json'),
@@ -408,32 +438,91 @@ describe('rate-limit cool-down', () => {
     expect(fetchImpl.calls).toHaveLength(2);
   });
 
-  it('cools down after a 429 whose body read fails', async () => {
-    const clock = { value: 1_700_000_000_000 };
-    const fetchImpl = vi.fn<FetchLike>(() => {
-      const body = new ReadableStream({
+  it.each([
+    ['its Retry-After header over the body delay', { 'retry-after': '48' }, 48],
+    ['the body delay without a Retry-After header', {}, 2],
+  ] as const)(
+    'cools down a 429 carrying a card block for %s',
+    async (_label, headers, retryAfterSeconds) => {
+      const blocked: FakeResponseSpec = {
+        status: 429,
+        headers,
+        body: {
+          result: null,
+          error: { code: 'card_is_blocked', message: 'blocked', data: { sec_to_retry: 2 } },
+        },
+      };
+      const { manager, fetchImpl, clock } = setup([blocked, LOGIN]);
+      const error = await expectApiError(header(manager), {
+        code: 'card_is_blocked',
+        httpStatus: 429,
+      });
+      expect(error.retryAfterSeconds).toBe(retryAfterSeconds);
+      clock.value += retryAfterSeconds * 1000 - 1;
+      await expect(header(manager)).rejects.toBe(error);
+      expect(fetchImpl.calls).toHaveLength(1);
+      clock.value += 1;
+      await header(manager);
+      expect(fetchImpl.calls).toHaveLength(2);
+    },
+  );
+
+  it('cools down for the Retry-After of a 429 with a plain-text body', async () => {
+    const { manager, fetchImpl, clock } = setup([
+      { status: 429, rawBody: 'Too Many Requests', headers: { 'retry-after': '180' } },
+      LOGIN,
+    ]);
+    const error = await captureAsync(header(manager));
+    expect(error).toBeInstanceOf(PaylovProtocolError);
+    expect(error).toMatchObject({
+      code: 'sdk_unexpected_status',
+      httpStatus: 429,
+      retryAfterSeconds: 180,
+    });
+    clock.value += 179_999;
+    await expect(header(manager)).rejects.toBe(error);
+    expect(fetchImpl.calls).toHaveLength(1);
+    clock.value += 1;
+    await expect(header(manager)).resolves.toBe(`Bearer ${PASSWORD_TOKEN.access_token}`);
+    expect(fetchImpl.calls).toHaveLength(2);
+  });
+
+  it.each([
+    ['no Retry-After', {}, undefined, 60_000],
+    ['a Retry-After of 180', { 'retry-after': '180' }, 180, 180_000],
+  ] as const)(
+    'cools down after a 429 whose body read fails, with %s',
+    async (_label, headers, retryAfterSeconds, coolDownMs) => {
+      const clock = { value: 1_700_000_000_000 };
+      const failedRead = new ReadableStream({
         pull: (controller) => {
           controller.error(new TypeError('terminated'));
         },
       });
-      return Promise.resolve(new Response(body, { status: 429 }));
-    });
-    const manager = new TokenManager({
-      http: createHttpClient({ origin: BASE_URL, fetch: fetchImpl }),
-      lifecycle: new ClientLifecycle(),
-      consumerKey: CONSUMER_KEY,
-      consumerSecret: CONSUMER_SECRET,
-      username: USERNAME,
-      password: PASSWORD,
-      now: () => clock.value,
-    });
-    const error = await captureAsync(header(manager));
-    expect(error).toBeInstanceOf(PaylovProtocolError);
-    expect(error).toMatchObject({ code: 'sdk_unexpected_status', httpStatus: 429 });
-    clock.value += 59_999;
-    await expect(header(manager)).rejects.toBe(error);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-  });
+      const fetchImpl = vi
+        .fn<FetchLike>(() => Promise.resolve(new Response(JSON.stringify(PASSWORD_TOKEN))))
+        .mockResolvedValueOnce(new Response(failedRead, { status: 429, headers }));
+      const manager = new TokenManager({
+        http: createHttpClient({ origin: BASE_URL, fetch: fetchImpl }),
+        lifecycle: new ClientLifecycle(),
+        consumerKey: CONSUMER_KEY,
+        consumerSecret: CONSUMER_SECRET,
+        username: USERNAME,
+        password: PASSWORD,
+        now: () => clock.value,
+      });
+      const error = await captureAsync(header(manager));
+      expect(error).toBeInstanceOf(PaylovProtocolError);
+      expect(error).toMatchObject({ code: 'sdk_unexpected_status', httpStatus: 429 });
+      expect(recordOf(error)['retryAfterSeconds']).toBe(retryAfterSeconds);
+      clock.value += coolDownMs - 1;
+      await expect(header(manager)).rejects.toBe(error);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      clock.value += 1;
+      await expect(header(manager)).resolves.toBe(`Bearer ${PASSWORD_TOKEN.access_token}`);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('starts on a rate-limited refresh without sending the password', async () => {
     const { manager, fetchImpl, clock } = setup([LOGIN, RATE_LIMITED, REFRESHED]);
@@ -447,10 +536,46 @@ describe('rate-limit cool-down', () => {
   });
 });
 
+describe('a rate-limited invalid_grant', () => {
+  it('cools down a refresh instead of falling back to the password', async () => {
+    const { manager, fetchImpl, clock } = setup([LOGIN, RATE_LIMITED_GRANT, REFRESHED]);
+    await header(manager);
+    clock.value += ACCESS_LIFETIME_MS;
+    const error = await expectApiError(header(manager), {
+      code: 'invalid_grant',
+      httpStatus: 429,
+    });
+    clock.value += 59_999;
+    await expect(header(manager)).rejects.toBe(error);
+    expect(fetchImpl.calls).toHaveLength(2);
+    clock.value += 1;
+    await expect(header(manager)).resolves.toBe(`Bearer ${REFRESH_TOKEN.access_token}`);
+    expect(fetchImpl.calls.map(grantTypeOf)).toEqual([
+      'password',
+      'refresh_token',
+      'refresh_token',
+    ]);
+  });
+
+  it('cools down a password grant instead of latching it', async () => {
+    const { manager, fetchImpl, clock } = setup([RATE_LIMITED_GRANT, LOGIN]);
+    const error = await expectApiError(header(manager), {
+      code: 'invalid_grant',
+      httpStatus: 429,
+    });
+    clock.value += 59_999;
+    await expect(header(manager)).rejects.toBe(error);
+    expect(fetchImpl.calls).toHaveLength(1);
+    clock.value += 1;
+    await expect(header(manager)).resolves.toBe(`Bearer ${PASSWORD_TOKEN.access_token}`);
+    expect(fetchImpl.calls.map(grantTypeOf)).toEqual(['password', 'password']);
+  });
+});
+
 describe('401 replay end to end', () => {
   it('refreshes and replays the request once', async () => {
     const { manager, http, fetchImpl } = setup([LOGIN, EXPIRED, REFRESHED, SUCCESS]);
-    await expect(http.request(GET_STATUS)).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(pathsOf(fetchImpl.calls)).toEqual([
       TOKEN_PATH,
       RESOURCE_PATH,
@@ -469,7 +594,7 @@ describe('401 replay end to end', () => {
 
   it('surfaces the second rejection instead of looping', async () => {
     const { http, fetchImpl } = setup([LOGIN, EXPIRED, REFRESHED, EXPIRED]);
-    const error = await expectApiError(http.request(CREATE_RECEIPT), {
+    const error = await expectApiError(http.request(CREATE_RECEIPT, {}, rawPayload), {
       code: 'permission_denied',
       httpStatus: 401,
     });
@@ -479,8 +604,10 @@ describe('401 replay end to end', () => {
 
   it('a bare 401 neither replays nor invalidates the token', async () => {
     const { http, fetchImpl } = setup([LOGIN, { status: 401, rawBody: '' }, SUCCESS]);
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'sdk_unexpected_status' });
-    await expect(http.request(GET_STATUS)).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_unexpected_status',
+    });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, RESOURCE_PATH, RESOURCE_PATH]);
   });
 
@@ -494,14 +621,14 @@ describe('401 replay end to end', () => {
       SUCCESS,
       SUCCESS,
     ]);
-    const first = http.request(GET_STATUS);
-    const second = http.request(GET_STATUS);
+    const first = http.request(GET_STATUS, {}, rawPayload);
+    const second = http.request(GET_STATUS, {}, rawPayload);
     // Both requests hold the first token before either 401 arrives.
     await Promise.all([early.started, late.started]);
     early.release();
-    await expect(first).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(first).resolves.toEqual(SUCCESS_PAYLOAD);
     late.release();
-    await expect(second).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(second).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(pathsOf(fetchImpl.calls)).toEqual([
       TOKEN_PATH,
       RESOURCE_PATH,
@@ -518,13 +645,15 @@ describe('waiter cancellation', () => {
     const gate = createGate();
     const { http, fetchImpl } = setup([{ ...LOGIN, gate }, SUCCESS]);
     const controller = new AbortController();
-    const aborted = captureAsync(http.request(GET_STATUS, { signal: controller.signal }));
-    const other = http.request(GET_STATUS);
+    const aborted = captureAsync(
+      http.request(GET_STATUS, { signal: controller.signal }, rawPayload),
+    );
+    const other = http.request(GET_STATUS, {}, rawPayload);
     await gate.started;
     controller.abort();
     await expect(aborted).resolves.toMatchObject({ code: 'sdk_aborted' });
     gate.release();
-    await expect(other).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(other).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, RESOURCE_PATH]);
     expect(fetchImpl.calls[0]?.signal?.aborted).toBe(false);
   });
@@ -539,7 +668,9 @@ describe('close', () => {
     expect(recordOf(fetchImpl.calls[1]?.body)).toEqual({ token: PASSWORD_TOKEN.access_token });
     expect(fetchImpl.calls[1]?.headers['authorization']).toBeUndefined();
     await expect(manager.authorize()).rejects.toMatchObject({ code: 'sdk_client_closed' });
-    await expect(http.request(GET_STATUS)).rejects.toMatchObject({ code: 'sdk_client_closed' });
+    await expect(http.request(GET_STATUS, {}, rawPayload)).rejects.toMatchObject({
+      code: 'sdk_client_closed',
+    });
     expect(fetchImpl.calls).toHaveLength(2);
   });
 
@@ -562,6 +693,18 @@ describe('close', () => {
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, REVOKE_PATH]);
   });
 
+  it('logs the recorded acknowledgement as a successful revocation', async () => {
+    const events: PaylovLoggerResponseEvent[] = [];
+    const { manager } = setup([LOGIN, REVOKED], {
+      onResponse: (event) => void events.push(event),
+    });
+    await header(manager);
+    await manager.close();
+    const revocations = events.filter((event) => event.endpoint === `POST ${REVOKE_PATH}`);
+    expect(revocations).toHaveLength(1);
+    expect(revocations[0]).not.toHaveProperty('errorCode');
+  });
+
   it('treats an already revoked token as done', async () => {
     const { manager } = setup([LOGIN, wireResponse('auth/revoke.invalidToken.wire.json')]);
     await header(manager);
@@ -576,6 +719,9 @@ describe('close', () => {
       'validation_error',
     ],
     ['a connection failure', NETWORK_FAILURE, 0, 'sdk_network_error'],
+    ['a 200 with an HTML body', { rawBody: '<html>OK</html>' }, 200, 'sdk_malformed_response'],
+    ['a 200 with an empty JSON object', { body: {} }, 200, 'sdk_malformed_response'],
+    ['a 200 with another status', { body: { status: 'pending' } }, 200, 'sdk_malformed_response'],
   ] as const)(
     'resolves after %s and leaves it to the logger',
     async (_label, failure, httpStatus, errorCode) => {
@@ -585,11 +731,8 @@ describe('close', () => {
       });
       await header(manager);
       await expect(manager.close()).resolves.toBeUndefined();
-      expect(events.at(-1)).toMatchObject({
-        endpoint: `POST ${REVOKE_PATH}`,
-        httpStatus,
-        errorCode,
-      });
+      const revocations = events.filter((event) => event.endpoint === `POST ${REVOKE_PATH}`);
+      expect(revocations).toEqual([expect.objectContaining({ httpStatus, errorCode })]);
       expectNoSecrets(events);
       await expect(manager.authorize()).rejects.toMatchObject({ code: 'sdk_client_closed' });
       expect(fetchImpl.calls).toHaveLength(2);
@@ -642,7 +785,7 @@ describe('close', () => {
     const gate = createGate();
     const { manager, http, fetchImpl } = setup([LOGIN, { ...EXPIRED, gate }, REVOKED]);
     await header(manager);
-    const inFlight = captureAsync(http.request(CREATE_RECEIPT));
+    const inFlight = captureAsync(http.request(CREATE_RECEIPT, {}, rawPayload));
     await gate.started;
     await manager.close();
     gate.release();
@@ -657,11 +800,11 @@ describe('close', () => {
     const gate = createGate();
     const { manager, http, fetchImpl } = setup([LOGIN, { ...SUCCESS, gate }, REVOKED]);
     await header(manager);
-    const inFlight = http.request(CREATE_RECEIPT);
+    const inFlight = http.request(CREATE_RECEIPT, {}, rawPayload);
     await gate.started;
     await manager.close();
     gate.release();
-    await expect(inFlight).resolves.toMatchObject({ payload: SUCCESS_PAYLOAD });
+    await expect(inFlight).resolves.toEqual(SUCCESS_PAYLOAD);
     expect(pathsOf(fetchImpl.calls)).toEqual([TOKEN_PATH, CREATE_RECEIPT.route, REVOKE_PATH]);
     expect(fetchImpl.calls[1]?.signal?.aborted).toBe(false);
   });
@@ -713,6 +856,19 @@ describe('malformed token responses', () => {
     ['a null body', null, undefined],
     ['an array body', [], undefined],
   ];
+
+  it('reports a 200 empty JSON object grant in its one response event', async () => {
+    const events: PaylovLoggerResponseEvent[] = [];
+    const { manager } = setup([{ body: {} }], { onResponse: (event) => void events.push(event) });
+    await expectMalformed(header(manager), 'body.token_type');
+    expect(events).toEqual([
+      expect.objectContaining({
+        endpoint: `POST ${TOKEN_PATH}`,
+        httpStatus: 200,
+        errorCode: 'sdk_malformed_response',
+      }),
+    ]);
+  });
 
   it.each(cases)(
     'rejects %s as sdk_malformed_response at %s without the tokens',

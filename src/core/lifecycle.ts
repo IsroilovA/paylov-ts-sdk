@@ -34,8 +34,9 @@ export function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<
     const onAbort = (): void => {
       reject(new AbortedWait());
     };
+    // An abort that already fired sends no event: listening for it would leak the listener.
     if (signal.aborted) onAbort();
-    signal.addEventListener('abort', onAbort, { once: true });
+    else signal.addEventListener('abort', onAbort, { once: true });
     void promise.then(resolve, reject).finally(() => {
       signal.removeEventListener('abort', onAbort);
     });

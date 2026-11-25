@@ -2,6 +2,8 @@
 
 import type {
   CaptureHoldParams,
+  CreateHoldParams,
+  HoldsResource,
   GetHoldParams,
   Hold,
   ListTransactionsParams,
@@ -9,23 +11,28 @@ import type {
   PaylovClientConfig,
   PaylovOnboardingConfig,
   StartPanPaymentParams,
+  TransactionReference,
   WebhookInput,
 } from '../../src/index.js';
 import {
   createWebhookRequest,
   PaylovFakeGateway,
-  type PaylovFakeCall,
   type PaylovFakeMethod,
+  type PaylovFakeSurface,
 } from '../../src/testing.js';
+import type { IsEqual } from './exact.js';
 
 const fake = new PaylovFakeGateway();
 const clientConfig: PaylovClientConfig = fake.clientConfig;
 const onboardingConfig: PaylovOnboardingConfig = fake.onboardingConfig;
-const calls: readonly PaylovFakeCall[] = fake.calls;
-const holdScript: PaylovFakeMethod<Hold | null, GetHoldParams> = fake.holds.get;
+const holdScript: PaylovFakeMethod<Hold, GetHoldParams> = fake.holds.get;
 const anyScript: PaylovFakeMethod<unknown, unknown> = fake.payments.confirmPanPayment;
-const calledMethod: PaylovFakeCall['method'] = 'payments.pay';
-void [clientConfig, onboardingConfig, calls, holdScript, anyScript, calledMethod];
+// The holds script is nameable: `create` replies with what the gateway sends.
+const holdsScripts: PaylovFakeSurface<HoldsResource, { readonly create: TransactionReference }> =
+  fake.holds;
+const holdCreateScript: PaylovFakeMethod<TransactionReference, CreateHoldParams> =
+  fake.holds.create;
+void [clientConfig, onboardingConfig, holdScript, anyScript, holdsScripts, holdCreateScript];
 
 const captured: readonly CaptureHoldParams[] = fake.holds.capture.requests;
 const amountTiyin: number | undefined = fake.holds.capture.requests[0]?.amountTiyin;
@@ -65,13 +72,12 @@ fake.payments.pay.fail('invalid_grant', { reason: 'account_locked' });
 fake.holds.capture.requests[0] = { transactionId: 't', amountTiyin: 100 };
 // @ts-expect-error each method records its own params type
 const wrongParams: readonly CaptureHoldParams[] = fake.holds.release.requests;
-// @ts-expect-error a call names a real SDK method
-const misspelledMethod: PaylovFakeCall['method'] = 'payments.payy';
+// @ts-expect-error the fake keeps no request log beside each method's `requests`
+void fake.calls;
 // @ts-expect-error the fake never records a password
 void fake.onboarding.complete.requests[0]?.password;
-void [wrongParams, misspelledMethod];
+void wrongParams;
 
-type IsEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type ClientNamespace = {
   [K in keyof PaylovClient]: PaylovClient[K] extends object
     ? PaylovClient[K] extends (...args: never[]) => unknown

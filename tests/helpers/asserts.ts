@@ -94,7 +94,7 @@ export function basicAuthHeader(key: string, secret: string): string {
 }
 
 /** The expected gateway rejection; omitted `fields` mean the error has none. */
-export interface ExpectedApiError {
+interface ExpectedApiError {
   readonly code: string;
   readonly httpStatus?: number;
   readonly fields?: readonly string[] | undefined;
@@ -141,7 +141,7 @@ export async function expectMalformed(
 }
 
 /** The expected refusal; `field` is compared exactly, so pass `undefined` for a whole-input error. */
-export interface ExpectedInputError {
+interface ExpectedInputError {
   readonly code?: string;
   readonly field: string | undefined;
   readonly rule: PaylovInputRule;

@@ -1,9 +1,4 @@
-import {
-  FakeRefusal,
-  type FakeRequest,
-  type PaylovFakeSurface,
-  type Scripter,
-} from '../core/fake.js';
+import { FakeRefusal, type FakeRequest, type FakeSpecTable } from '../core/fake.js';
 import { ENDPOINTS, type PaylovOnboarding } from './client.js';
 import type {
   CheckOnboardingTokenParams,
@@ -36,21 +31,15 @@ function decodeCompleteRequest({
   return { token: query.string('token'), username: body.string('username') };
 }
 
-export function createOnboardingFake(
-  script: Scripter<'onboarding', PaylovOnboarding>,
-): PaylovFakeSurface<PaylovOnboarding> {
-  return {
-    checkToken: script(
-      'onboarding.checkToken',
-      ENDPOINTS.checkToken,
-      encodeTokenUsable,
-      decodeCheckTokenRequest,
-    ),
-    complete: script(
-      'onboarding.complete',
-      ENDPOINTS.complete,
-      encodeOnboardingCompleted,
-      decodeCompleteRequest,
-    ),
-  };
-}
+export const ONBOARDING_FAKES: FakeSpecTable<PaylovOnboarding> = {
+  checkToken: {
+    endpoint: ENDPOINTS.checkToken,
+    encode: encodeTokenUsable,
+    decodeRequest: decodeCheckTokenRequest,
+  },
+  complete: {
+    endpoint: ENDPOINTS.complete,
+    encode: encodeOnboardingCompleted,
+    decodeRequest: decodeCompleteRequest,
+  },
+};
