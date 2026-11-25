@@ -22,7 +22,11 @@ errors fail the same way again. A token 429 carries its delay
 ([authentication](authentication.md#rate-limit), W c904). Payment declines and refund eligibility
 live with their [payment operations](payments.md). A money-moving request without a usable response
 is reconciled by [transaction read](transactions.md#get-one-transaction), or for holds by
-[hold status](holds.md#status), since the transaction list hides unpaid rows (W c136, c553, c554).
+[hold status](holds.md#status), since the transaction list hides unpaid rows (W c136, c553, c554). A
+request the client abandons after sending still executes: a `receipts/pay` aborted after about 200
+ms read `payed` from 1 s on, and a `hold/create` aborted the same way read `hold` by its
+`externalId` from 1 s on (W c1573–c1578, c1581–c1587). A 5xx on a money-moving call is reconciled
+the same way, as an unknown outcome (M 2026-11-25).
 
 ## Response shapes
 
@@ -198,7 +202,9 @@ As named (D): `try_new_otp`, `incorrect_pin`, `pin_attempts_exceeded`, `too_many
 Issuer, limit, deposit and merchant-configuration refusals, each as named (D): `limit_exceeded`,
 `daily_limit_used_for_this_card`, `insufficient_deposit`, `do_not_honor`, `call_issuer`,
 `transaction_not_permitted`, `duplicate_transaction`, `issuer_unavailable`, `invalid_merchant`,
-`merchant_not_available`, `error_at_pay`, `unknown_error`.
+`merchant_not_available`, `error_at_pay`, `unknown_error`. On a money-moving call the SDK reads
+`error_at_pay` and `unknown_error` as an unknown outcome and the other codes as refusals (M
+2026-11-25).
 
 ### Transaction state and lookup
 
@@ -217,24 +223,25 @@ Issuer, limit, deposit and merchant-configuration refusals, each as named (D): `
 
 ### Fiscalization
 
-| Code                                        | HTTP | Meaning / endpoint triggers                                                                         | Grade          |
-| ------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------- | -------------- |
-| `ofd_commitent_or_subcommission_not_active` | 400  | [Register](fiscalization.md#register-fiscal-receipt), [split](splits.md#create-split-payment)       | D              |
-| `ofd_check_already_generated`               | 400  | [Register](fiscalization.md#register-fiscal-receipt), [attach](fiscalization.md#set-fiscal-receipt) | D              |
-| `ofd_too_many_requests_for_this_receipt`    | 400  | [Attach](fiscalization.md#set-fiscal-receipt)                                                       | D              |
-| `ofd_check_not_found`                       | 400  | [Receipt status](fiscalization.md#get-fiscal-receipt-status)                                        | W (c866, c876) |
-| `ofd_error`                                 | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                | D              |
-| `fiscal_receipt_not_generated`              | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                | D              |
+| Code                                        | HTTP | Meaning / endpoint triggers                                                                                                                      | Grade              |
+| ------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `ofd_commitent_or_subcommission_not_active` | 400  | [Register](fiscalization.md#register-fiscal-receipt), [split](splits.md#create-split-payment)                                                    | D                  |
+| `ofd_comitent_not_provided`                 | 400  | [Split](splits.md#create-split-payment) item without `tin` or `pinfl`                                                                            | W (c1739)          |
+| `ofd_check_already_generated`               | 400  | [Register](fiscalization.md#register-fiscal-receipt), [attach](fiscalization.md#set-fiscal-receipt), [split resend](splits.md#resend-to-the-ofd) | D; W (c1784) split |
+| `ofd_too_many_requests_for_this_receipt`    | 400  | [Attach](fiscalization.md#set-fiscal-receipt)                                                                                                    | D                  |
+| `ofd_check_not_found`                       | 400  | [Receipt status](fiscalization.md#get-fiscal-receipt-status)                                                                                     | W (c866, c876)     |
+| `ofd_error`                                 | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                                                             | D                  |
+| `fiscal_receipt_not_generated`              | 400  | [Register](fiscalization.md#register-fiscal-receipt)                                                                                             | D                  |
 
 ### Splits and sub-merchants
 
-| Code                              | HTTP | Meaning / endpoint triggers                           | Grade           |
-| --------------------------------- | ---- | ----------------------------------------------------- | --------------- |
-| `split_already_done`              | 400  | [Split creation](splits.md#create-split-payment)      | D               |
-| `split_not_found`                 | 400  | [Split status](splits.md#get-split-payment-status)    | D               |
-| `recipient_not_found`             | 400  | [Split creation](splits.md#create-split-payment)      | D               |
-| `receipt_not_available_for_split` | 400  | The transaction cannot be split                       | D (legacy enum) |
-| `sub_merchant_already_created`    | 400  | [Sub-merchants](sub-merchants.md#create-sub-merchant) | D               |
+| Code                              | HTTP | Meaning / endpoint triggers                                                               | Grade            |
+| --------------------------------- | ---- | ----------------------------------------------------------------------------------------- | ---------------- |
+| `split_already_done`              | 400  | [Split creation](splits.md#create-split-payment)                                          | W (c1743)        |
+| `split_not_found`                 | 400  | [Split status](splits.md#get-split-payment-status), [resend](splits.md#resend-to-the-ofd) | W (c1717, c1823) |
+| `recipient_not_found`             | 400  | [Split creation](splits.md#create-split-payment)                                          | W (c1722)        |
+| `receipt_not_available_for_split` | 400  | [Split creation](splits.md#create-split-payment) of an unpaid transaction                 | W (c1729)        |
+| `sub_merchant_already_created`    | 400  | [Sub-merchants](sub-merchants.md#create-sub-merchant)                                     | D                |
 
 ### Gateway setup and holds
 

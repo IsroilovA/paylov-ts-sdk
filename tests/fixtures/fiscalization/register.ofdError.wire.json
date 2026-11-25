@@ -1,0 +1,14 @@
+{
+  "capture": "1611",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "ofd_error",
+      "message": "Ofd error.",
+      "data": {
+        "ofd_response": "{'Code': 30, 'Message': 'failed to validate receipt item spic: invalid package code values of items: [0]'}"
+      }
+    }
+  }
+}

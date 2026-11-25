@@ -1,4 +1,9 @@
-import { MISS, type FakeRequest, type PaylovFakeSurface, type Scripter } from '../core/fake.js';
+import {
+  FakeRefusal,
+  type FakeRequest,
+  type PaylovFakeSurface,
+  type Scripter,
+} from '../core/fake.js';
 import { ENDPOINTS, type PaylovOnboarding } from './client.js';
 import type {
   CheckOnboardingTokenParams,
@@ -6,8 +11,9 @@ import type {
   OnboardingCompleted,
 } from './types.js';
 
+/** An unusable token is Paylov's `invalid_or_expired` error. */
 function encodeTokenUsable(isUsable: boolean): unknown {
-  return isUsable ? { status: 'ok' } : MISS;
+  return isUsable ? { status: 'ok' } : new FakeRefusal('invalid_or_expired');
 }
 
 function encodeOnboardingCompleted(completed: OnboardingCompleted): unknown {

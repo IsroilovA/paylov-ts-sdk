@@ -1,61 +1,39 @@
 import {
   arrayOf,
   asBoolean,
-  asNonNegativeInteger,
   asString,
   fieldOf,
-  DecodeFailure,
   readFields,
   type Decoder,
 } from '../core/decoding.js';
-import type {
-  ActivityTypeCheck,
-  FiscalReceipt,
-  FiscalReceiptRegistered,
-  FiscalReceiptRefunded,
-} from './types.js';
-
-const decodeOfdReceipt: Decoder<FiscalReceiptRegistered> = (value, path) => {
-  const field = readFields(value, path);
-  return {
-    receiptId: field('receiptId', asNonNegativeInteger),
-    receiptUrl: field('receiptUrl', asString),
-    terminalId: field('terminalId', asString),
-    fiscalSign: field('fiscalSign', asString),
-  };
-};
+import {
+  decodeFiscalReceipt,
+  decodeRegisteredReceipt,
+  type FiscalReceipt,
+  type FiscalReceiptRegistered,
+} from '../shared/fiscalReceipts.js';
+import type { ActivityTypeCheck, FiscalReceiptRefunded } from './types.js';
 
 export const decodeFiscalReceiptRegistered: Decoder<FiscalReceiptRegistered> = fieldOf(
   'ofd',
-  decodeOfdReceipt,
+  decodeRegisteredReceipt,
 );
 
 /**
  * A known transaction without a receipt answers `success: false` with `receiptUrl` and
- * `isRefund` null and the other receipt keys absent (W c274); an unknown id is an API error.
+ * `isRefund` null and the other receipt keys absent; an unknown id is an API error.
  */
 export const decodeReceiptLookup: Decoder<FiscalReceipt | null> = (value, path) => {
   const field = readFields(value, path);
-  if (!field('success', asBoolean)) return null;
-  return {
-    ...decodeOfdReceipt(value, path),
-    isRefund: field('isRefund', asBoolean),
-  };
+  return field('success', asBoolean) ? decodeFiscalReceipt(value, path) : null;
 };
 
 export const decodeReceiptRefunded: Decoder<FiscalReceiptRefunded> = (value, path) => {
   const field = readFields(value, path);
   return {
-    refund: field('ofd', fieldOf('refund', decodeOfdReceipt)),
-    sale: field('sale', decodeOfdReceipt),
+    refund: field('ofd', fieldOf('refund', decodeRegisteredReceipt)),
+    sale: field('sale', decodeRegisteredReceipt),
   };
-};
-
-/** `result.error` sits beside `success` and is ignored; only `success: true` is a success. */
-export const decodeAttachConfirmation: Decoder<void> = (value, path) => {
-  if (!fieldOf('success', asBoolean)(value, path)) {
-    throw new DecodeFailure(`${path}.success`);
-  }
 };
 
 interface ActivityTypeDetails {

@@ -74,7 +74,7 @@ export class PaylovClient {
    */
   readonly gateway: GatewayResource;
   /**
-   * Card Bind links, PAN binding, saved cards and the phone check. Moves no money.
+   * PAN binding, saved cards and the phone check. Moves no money.
    * See docs/usage/cards.md.
    * @example const cards = await paylov.cards.list({ userId: 'user-42' });
    */

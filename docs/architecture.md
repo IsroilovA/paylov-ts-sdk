@@ -4,11 +4,9 @@ Consequential decisions and the rationale that prevents a wrong fix.
 
 ## Package boundary
 
-- A server-only ESM package. Credentials stay on the backend; browsers receive only checkout and
-  Card Bind URLs.
-- Methods that take a full card number are opt-in surfaces named `Pan`, with a PCI-scope warning in
-  their JSDoc; the PAN never reaches logger events or errors. Card Bind and the hosted checkout page
-  are the default paths.
+- A server-only ESM package. Credentials stay on the backend.
+- Methods that take a full card number are named `Pan`, with a PCI-scope warning in their JSDoc; the
+  PAN never reaches logger events or errors.
 - Zero runtime dependencies limit the payment supply chain. Framework adapters belong in consuming
   applications.
 - The `/testing` fake gateway answers at the `fetch` boundary, so applications test the real
@@ -27,28 +25,40 @@ Consequential decisions and the rationale that prevents a wrong fix.
 Every Paylov endpoint with a verified or documented success shape is in scope, apart from these
 features, which the SDK's applications do not need:
 
-- A2C payouts (`/merchant/a2c/`), including payout reads and the deposit balance.
+- A2C payouts (`/merchant/a2c/`), including payout reads, the deposit balance and the
+  `merchant.deposit` webhook.
 - Card history and card history logs.
 - The PINFL ownership check (`userCard/checkPinflMatch/`).
 - The official profile (`userCard/createOfficialProfile/`), whose only documented purpose is A2C.
 - Service payments (`servicePayment/`, `sub/servicePayment/`).
+- Hosted card binding, where the cardholder enters the card on Paylov's Card Bind page: bind links
+  (`userCard/createBindLink/`), bind session reads (`userCard/bindSession/{token}/status/`) and the
+  Card Bind webhook.
+- Hosted checkout, where the customer pays on Paylov's page: the Checkout API, Create Payment Link
+  and the `transaction.check` / `transaction.perform` callbacks.
+- Cash-sale fiscal receipts (`fiscalization/register/` by `externalId` and `phoneNumber`, and their
+  `externalId` status reads): the applications take no cash.
+- Client-side fiscal receipts (`fiscalization/set-receipt/`): the applications run no cash register
+  or OFD provider of their own.
 
-The reference keeps no research or open questions for them; adding one starts from the vendor
-mirror. Transaction rows still decode `isA2c`, the `merchant.deposit` webhook still reports an A2C
-deposit source, and holds keep their optional `serviceId`: those are data of supported surfaces.
+The reference keeps no open questions for them, and no research apart from the hosted-checkout, Card
+Bind and fiscalization facts in [paylov/checkout.md](paylov/checkout.md),
+[paylov/cards.md](paylov/cards.md) and [paylov/fiscalization.md](paylov/fiscalization.md); adding
+one starts from the vendor mirror. Transaction rows still decode `isA2c`, and holds keep their
+optional `serviceId`: those are data of supported surfaces.
 
 Any other endpoint without a known success shape stays out until Paylov documents one, because a
 decoder would have to guess; [paylov/README.md](paylov/README.md#surface-outside-the-sdk) lists them
 with reasons. GraphQL account sign-in stays out because it would hold end-user credentials. The
-internal-checkout GraphQL backend stays out: it is undocumented and credential-free, and
-`createCheckoutUrl` and the `payments` PAN methods cover its uses through documented APIs.
+internal-checkout GraphQL backend stays out: it is undocumented and credential-free, and the
+`payments` PAN methods cover its card-payment use through documented APIs.
 
 ## Layers
 
 - Features never import each other or the auth modules, and use only the call helpers and pure core,
   so none can build a transport that bypasses authentication or `close()`. Pure core (no I/O,
-  credentials or client state) imports only itself; `shared/`, the checkout link and the webhook
-  receiver use only pure core, so they stay transport-free.
+  credentials or client state) imports only itself; `shared/` and the webhook receiver use only pure
+  core, so they stay transport-free.
 - Fakes load only from other fakes and the testing surface, so no fake encoder reaches production
   code paths. Only `core/http.ts` calls the platform `fetch`.
 - Transports are separate so authentication cannot recurse or leak: the token manager's transport
@@ -71,10 +81,9 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   instead of restating the predicate. On an endpoint that moves money, the generic codes
   `processing_error`, `unknown_error` and `error_at_pay` count as ambiguous: they name no reason,
   and Paylov documents neither their triggers nor whether money moved (a maintainer decision). The
-  endpoint declaration carries that classification, so the predicate never matches routes. A pay
-  answered `processing_error` never ends up paid ([payments](paylov/payments.md#flow)), so that code
-  stays definitive there. Specific declines stay definitive. A connection error records whether any
-  attempt reached fetch (`isSent`), because an abort before that provably sent nothing.
+  endpoint declaration carries that classification, so the predicate never matches routes. Specific
+  declines stay definitive. A connection error records whether any attempt reached fetch (`isSent`),
+  because an abort before that provably sent nothing.
 - Decoders report failures as an internal decode failure carrying only the path. It becomes a public
   protocol error only where a response exists; the webhook receiver maps it to an outcome. Any other
   exception from a decoder is an SDK bug and propagates.
@@ -85,10 +94,10 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   not one: DEV answers it for the card's own phone too ([cards](paylov/cards.md)).
 - Errors and logger events carry allowlisted metadata only, because key-based redaction cannot make
   arbitrary payload strings safe.
-- Caller input is checked only for presence and type, the money invariant, path and checkout-link
-  safety, and SDK configuration. Paylov owns business validation (bounds, lengths, formats, id
-  shapes): a local copy drifts from the gateway, whose limits are mostly measured on DEV alone, and
-  makes callers handle one failure in two shapes (`sdk_invalid_input` and the gateway's code).
+- Caller input is checked only for presence and type, the money invariant, path and link safety, and
+  SDK configuration. Paylov owns business validation (bounds, lengths, formats, id shapes): a local
+  copy drifts from the gateway, whose limits are mostly measured on DEV alone, and makes callers
+  handle one failure in two shapes (`sdk_invalid_input` and the gateway's code).
 - Response decoders establish the public type and the conversions the SDK owns: money units,
   timestamps of known zone, `…Raw` text and status words. For the same reason they do not re-check
   Paylov's invariants (id shapes, non-empty text, echoed statuses, cross-field consistency). The
@@ -162,15 +171,24 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
   hold they will not capture, also after it expires. Release is never inferred from expiry or status
   reads.
 - Nothing that moves money is retried automatically. After an ambiguous failure callers reconcile
-  through a read and retry with the same `externalId` or `transactionId`
-  ([usage/errors.md](usage/errors.md#recovery-after-an-ambiguous-failure)).
-- A reconciliation read returns `null` only on its verified not-found code; every other miss throws.
-  `fiscalization.getReceipt` also returns `null` for an unknown `externalId`, because that id names
-  the receipt itself; an unknown `transactionId` still throws.
-- A refund receipt comes from `payments.refund`, which cancels the payment's fiscalization;
-  `refundReceipt` runs only when `getReceipt({ isRefund: true })` then shows none. The docs reserve
-  the direct refund for that case ([fiscalization](paylov/fiscalization.md#refund-fiscal-receipt)),
-  and calling it first risks two refund receipts for one sale.
+  through a read and retry with the same `externalId` or `transactionId`, unless the read shows the
+  call ran and failed ([usage/errors.md](usage/errors.md#recovery-after-an-ambiguous-failure)).
+- A declined hold create leaves a record that consumes its `externalId`
+  ([holds](paylov/holds.md#create)). `holds.get` reports it as `declined`. `readHoldState` answers
+  its own kind only with the hold's `failed` transaction, the decline Paylov documents, so recovery
+  stops repeating that `externalId` instead of retrying it forever without trusting the undocumented
+  hold status alone.
+- A lookup never resolves `null` for "not found": a miss throws the gateway's not-found code, so a
+  caller cannot mistake a miss for an empty record and cannot skip it silently. Where Paylov reports
+  a miss only through a success body (`transactions.get`'s empty list), the SDK throws that
+  endpoint's not-found code itself (`transaction_not_found`, as `holds.get` does), definitive and
+  never unsettled. `null` remains only where it is a documented state, not a miss (a fiscal receipt
+  not registered yet).
+- A refund receipt comes from `payments.refund`, which registers it in the background;
+  `refundReceipt` runs only when `getReceipt({ isRefund: true })` still shows none minutes later.
+  The docs reserve the direct refund for that case
+  ([fiscalization](paylov/fiscalization.md#refund-fiscal-receipt)); Paylov refuses it before the
+  refund and once the refund receipt exists, so calling it first only adds a failing call.
 
 ## Callbacks
 
@@ -180,11 +198,7 @@ internal-checkout GraphQL backend stays out: it is undocumented and credential-f
 - The receiver accepts a list of credential pairs so a callback password can rotate without
   downtime. Every pair is compared in constant time, also after a match, so timing does not reveal
   which pair matched.
-- Check and perform are answered with a semantic decision that maps to the documented status.
-- Only integer minor-unit fields supply money; the whole-currency `amount` is ignored. The checkout
-  link is unsigned, so check handlers re-validate amount, currency and account.
-- The Card Bind webhook surfaces only the card id: the rest is unauthenticated processor data and
-  the webhook is never retried, so the authenticated `cards.get` read is the source of truth.
+- Only the integer `amount_in_tiyin` supplies money; the whole-SUM `amount` is ignored.
 
 ## Contract eligibility
 

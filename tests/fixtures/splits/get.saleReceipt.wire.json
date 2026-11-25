@@ -1,0 +1,24 @@
+{
+  "capture": "1780",
+  "status": 200,
+  "body": {
+    "result": [
+      {
+        "recipientId": "5eed0000-0000-4000-8000-000000000101",
+        "amount": 100000,
+        "status": "paid",
+        "createdAt": "2026-11-25 11:56:42"
+      },
+      {
+        "ofd": {
+          "isRefund": false,
+          "receiptUrl": "https://ofd.soliq.uz/epi?t=EZ000000000001&r=4178&c=20261125115642&s=100000000001",
+          "terminalId": "EZ000000000001",
+          "receiptId": 4178,
+          "fiscalSign": "100000000001"
+        }
+      }
+    ],
+    "error": null
+  }
+}

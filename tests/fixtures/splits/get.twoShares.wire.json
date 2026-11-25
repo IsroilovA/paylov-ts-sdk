@@ -1,0 +1,24 @@
+{
+  "capture": "1765",
+  "status": 200,
+  "body": {
+    "result": [
+      {
+        "recipientId": "5eed0000-0000-4000-8000-000000000101",
+        "amount": 50000,
+        "status": "paid",
+        "createdAt": "2026-11-25 11:56:19"
+      },
+      {
+        "recipientId": "5eed0000-0000-4000-8000-000000000101",
+        "amount": 50000,
+        "status": "paid",
+        "createdAt": "2026-11-25 11:56:19"
+      },
+      {
+        "ofd": {}
+      }
+    ],
+    "error": null
+  }
+}

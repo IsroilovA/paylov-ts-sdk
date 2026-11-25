@@ -57,9 +57,11 @@ describe('PaylovFakeGateway', () => {
   it('serves each answer to its own method when methods share an endpoint', async () => {
     const { fake, paylov } = setup();
     fake.transactions.list.fail('field_not_valid', { fields: ['beginDate'] });
-    fake.transactions.get.reply(null);
+    fake.transactions.get.fail('transaction_not_found');
 
-    await expect(paylov.transactions.get({ transactionId: TRANSACTION_ID })).resolves.toBeNull();
+    await expectApiError(paylov.transactions.get({ transactionId: TRANSACTION_ID }), {
+      code: 'transaction_not_found',
+    });
     await expectApiError(paylov.transactions.list({ fromDate: '2026-11-01' }), {
       code: 'field_not_valid',
       fields: ['beginDate'],
@@ -108,7 +110,7 @@ describe('PaylovFakeGateway', () => {
   it('fails an unscripted request recognizably and reports it', async () => {
     const { fake, paylov } = setup();
     await expectApiError(paylov.payments.pay(PAY), { code: 'fake_unscripted', httpStatus: 501 });
-    fake.holds.get.reply(null);
+    fake.holds.get.reply(HOLD);
 
     expect(
       capture(() => {
@@ -253,12 +255,17 @@ describe('PaylovFakeGateway', () => {
 
     it('yield to one-time answers of the same method', async () => {
       const { fake, paylov } = setup();
-      fake.holds.get.reply(null, { persist: true });
+      const released = {
+        ...HOLD,
+        status: 'released',
+        releasedAt: new Date('2026-11-12T16:00:00Z'),
+      };
+      fake.holds.get.reply(released, { persist: true });
       fake.holds.get.reply(HOLD);
 
       await expect(paylov.holds.get({ transactionId: TRANSACTION_ID })).resolves.toEqual(HOLD);
-      await expect(paylov.holds.get({ transactionId: TRANSACTION_ID })).resolves.toBeNull();
-      await expect(paylov.holds.get({ transactionId: TRANSACTION_ID })).resolves.toBeNull();
+      await expect(paylov.holds.get({ transactionId: TRANSACTION_ID })).resolves.toEqual(released);
+      await expect(paylov.holds.get({ transactionId: TRANSACTION_ID })).resolves.toEqual(released);
       fake.assertDone();
     });
 

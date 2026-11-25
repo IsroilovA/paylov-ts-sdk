@@ -25,9 +25,9 @@ Server-side TypeScript SDK for the Paylov payment gateway.
 
 - Follow the runtime and module contract in `package.json`. Add no runtime dependencies.
 - No `any` or unsafe production assertions. Decode external values from `unknown`.
-- Use explicit public types, camelCase names, and verb methods. Money fields end in `Tiyin` (`Cents`
-  only for USD checkout amounts); public money is a non-negative safe integer in the minor unit. Use
-  the shared money guards and converters.
+- Use explicit public types, camelCase names, and verb methods. Money fields end in `Tiyin`; public
+  money is a non-negative safe integer in the minor unit. Use the shared money guards and
+  converters.
 - Relative ESM imports end in `.js`; built-ins use `node:`. Code, script, and fixture filenames use
   camelCase; Markdown docs and skill directories use kebab-case, apart from conventional uppercase
   names such as `README.md`.

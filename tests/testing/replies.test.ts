@@ -53,12 +53,11 @@ const TRANSACTION: Transaction = {
   isHold: false,
   isSplit: false,
   isA2c: false,
-  isCheckout: true,
   fiscalReceipts: [
     {
       receiptId: 7,
       receiptUrl: 'https://ofd.example/7',
-      issuedAtRaw: '20260102030405',
+      issuedAt: new Date('2026-01-02T03:04:05Z'),
       isRefund: false,
     },
   ],
@@ -104,20 +103,6 @@ const CASES: Readonly<Record<string, Case>> = {
       undefined,
       () => paylov.gateway.listBanks(),
     ),
-  'cards.createBindLink': ({ fake, paylov }) =>
-    roundTrip(
-      fake.cards.createBindLink,
-      { token: 'EXAMPLE-BIND-TOKEN', bindUrl: 'https://bind.example/t', expiresAt: AT },
-      { userId: 'user-42', returnUrl: 'https://shop.example/cards' },
-      (params) => paylov.cards.createBindLink(params),
-    ),
-  'cards.getBindSession': ({ fake, paylov }) =>
-    roundTrip(
-      fake.cards.getBindSession,
-      { isBound: true, status: 'confirmed', card: CARD },
-      { token: 'EXAMPLE-BIND-TOKEN' },
-      (params) => paylov.cards.getBindSession(params),
-    ),
   'cards.startPanBinding': ({ fake, paylov }) =>
     roundTrip(
       fake.cards.startPanBinding,
@@ -127,7 +112,6 @@ const CASES: Readonly<Record<string, Case>> = {
         cardNumber: PAN,
         cardExpiry: '9912',
         phoneNumber: PHONE,
-        sms: { hash: 'app-hash', templateId: 1 },
       },
       (params) => paylov.cards.startPanBinding(params),
     ),
@@ -187,7 +171,6 @@ const CASES: Readonly<Record<string, Case>> = {
         cardExpiry: '9912',
         amountTiyin: 120_000,
         account: ACCOUNT,
-        sms: { templateId: 1 },
       },
       (params) => paylov.payments.startPanPayment(params),
     ),
@@ -195,7 +178,7 @@ const CASES: Readonly<Record<string, Case>> = {
     roundTrip(
       fake.payments.confirmPanPayment,
       { transactionId: id(2) },
-      { transactionId: id(2), otp: OTP, sms: { hash: 'app-hash' } },
+      { transactionId: id(2), otp: OTP },
       (params) => paylov.payments.confirmPanPayment(params),
     ),
   'transactions.get': ({ fake, paylov }) =>
@@ -207,9 +190,7 @@ const CASES: Readonly<Record<string, Case>> = {
       fake.transactions.list,
       {
         total: 1,
-        transactions: [
-          { ...TRANSACTION, status: 'refunded', cancelledAt: LATER, isCheckout: false },
-        ],
+        transactions: [{ ...TRANSACTION, status: 'refunded', cancelledAt: LATER }],
       },
       { fromDate: '2026-01-01', toDate: '2026-01-31', page: 2 },
       (params) => paylov.transactions.list(params),
@@ -276,21 +257,26 @@ const CASES: Readonly<Record<string, Case>> = {
             items: [{ ...ITEM, priceTiyin: 850_000, discountTiyin: 50_000 }],
           },
         ],
-        resendOfd: true,
       },
       (params) => paylov.splits.create(params),
+    ),
+  'splits.resendReceipt': ({ fake, paylov }) =>
+    roundTrip(
+      fake.splits.resendReceipt,
+      { transactionId: id(2), status: 'sent_to_ofd', lastOfdError: 'OFD rejected item 0' },
+      {
+        transactionId: id(2),
+        recipients: [{ recipientId: 'platform', amountTiyin: 850_000, items: [ITEM] }],
+      },
+      (params) => paylov.splits.resendReceipt(params),
     ),
   'splits.get': ({ fake, paylov }) =>
     roundTrip(
       fake.splits.get,
-      [
-        {
-          recipientId: 'platform',
-          amountTiyin: 850_000,
-          status: 'paid',
-          createdAtRaw: '2026-01-02',
-        },
-      ],
+      {
+        shares: [{ recipientId: 'platform', amountTiyin: 850_000, status: 'paid', createdAt: AT }],
+        receipt: { ...RECEIPT, isRefund: false },
+      },
       { transactionId: id(2) },
       (params) => paylov.splits.get(params),
     ),
@@ -332,20 +318,6 @@ const CASES: Readonly<Record<string, Case>> = {
       { transactionId: id(2), isRefund: true },
       (params) => paylov.fiscalization.getReceipt(params),
     ),
-  'fiscalization.attachReceipt': ({ fake, paylov }) =>
-    roundTrip(
-      fake.fiscalization.attachReceipt,
-      undefined,
-      {
-        transactionId: id(2),
-        terminalId: 'EXAMPLE-TERMINAL',
-        issuedAtRaw: '20260102080405',
-        fiscalSign: 'EXAMPLE-FISCAL-SIGN',
-        receiptUrl: 'https://ofd.example/7',
-        receiptId: 7,
-      },
-      (params) => paylov.fiscalization.attachReceipt(params),
-    ),
   'fiscalization.refundReceipt': ({ fake, paylov }) =>
     roundTrip(
       fake.fiscalization.refundReceipt,
@@ -385,6 +357,20 @@ const CASES: Readonly<Record<string, Case>> = {
  * request shape.
  */
 const MISSES: Readonly<Record<string, Case>> = {
+  'holds.get by externalId': ({ fake, paylov }) =>
+    roundTrip(
+      fake.holds.get,
+      {
+        transactionId: id(4),
+        status: 'held',
+        amountTiyin: 100_000,
+        capturedAt: null,
+        releasedAt: null,
+        serviceId: id(3),
+      },
+      { externalId: 'hold-1' },
+      (params) => paylov.holds.get(params),
+    ),
   'transactions.list': ({ fake, paylov }) =>
     roundTrip(
       fake.transactions.list,
@@ -395,17 +381,23 @@ const MISSES: Readonly<Record<string, Case>> = {
       {},
       () => paylov.transactions.list(),
     ),
-  'holds.get': ({ fake, paylov }) =>
-    roundTrip(fake.holds.get, null, { externalId: 'hold-1' }, (params) => paylov.holds.get(params)),
+  'splits.get without a receipt': ({ fake, paylov }) =>
+    roundTrip(
+      fake.splits.get,
+      {
+        shares: [
+          { recipientId: 'platform', amountTiyin: 850_000, status: 'cancelled', createdAt: AT },
+        ],
+        receipt: null,
+      },
+      { transactionId: id(2) },
+      (params) => paylov.splits.get(params),
+    ),
   'fiscalization.registerReceipt': ({ fake, paylov }) =>
     roundTrip(
       fake.fiscalization.registerReceipt,
       RECEIPT,
-      {
-        externalId: 'cash-1',
-        phoneNumber: PHONE,
-        items: [{ ...ITEM, pinfl: undefined, tin: '900000001' }],
-      },
+      { transactionId: id(3), items: [{ ...ITEM, pinfl: undefined, tin: '900000001' }] },
       (params) => paylov.fiscalization.registerReceipt(params),
     ),
   'subMerchants.create': ({ fake, paylov }) =>
@@ -422,15 +414,11 @@ const MISSES: Readonly<Record<string, Case>> = {
       { name: 'Sole trader', pinfl: PINFL },
       (params) => paylov.subMerchants.create(params),
     ),
-  'transactions.get': ({ fake, paylov }) =>
-    roundTrip(fake.transactions.get, null, { transactionId: id(2) }, (params) =>
-      paylov.transactions.get(params),
-    ),
   'fiscalization.getReceipt': ({ fake, paylov }) =>
     roundTrip(
       fake.fiscalization.getReceipt,
       null,
-      { externalId: 'order-1', isRefund: false },
+      { transactionId: id(3), isRefund: false },
       (params) => paylov.fiscalization.getReceipt(params),
     ),
   'fiscalization.getReceipt without isRefund': ({ fake, paylov }) =>
@@ -443,13 +431,6 @@ const MISSES: Readonly<Record<string, Case>> = {
   'onboarding.checkToken': ({ fake, onboarding }) =>
     roundTrip(fake.onboarding.checkToken, false, { token: 'EXAMPLE-ONBOARDING-TOKEN' }, (params) =>
       onboarding.checkToken(params),
-    ),
-  'cards.getBindSession': ({ fake, paylov }) =>
-    roundTrip(
-      fake.cards.getBindSession,
-      { isBound: false, status: 'created', card: null },
-      { token: 'EXAMPLE-BIND-TOKEN' },
-      (params) => paylov.cards.getBindSession(params),
     ),
   'fiscalization.checkActivityType': ({ fake, paylov }) =>
     roundTrip(

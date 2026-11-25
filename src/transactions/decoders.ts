@@ -6,7 +6,9 @@ import {
   asString,
   asTashkentDateTime,
   asTiyin,
+  asUtcDateTime,
   fieldOf,
+  DecodedMiss,
   DecodeFailure,
   nullable,
   readFields,
@@ -28,9 +30,9 @@ export const TRANSACTION_STATUS_BY_WIRE: ReadonlyMap<string, TransactionStatus> 
   ['waiting', 'held'],
   ['payed', 'paid'],
   ['cancel', 'refunded'],
-  // `cancel` marked a refunded sale and a dismissed hold, `refunded` an expired hold Paylov
-  // released, against the vendor's "Refunded"; which marks what in general is unsettled, so both
-  // read `refunded` [OPEN Q86].
+  // On DEV `cancel` marked a refunded sale and a dismissed hold, `refunded` an expired hold Paylov
+  // released after a failed capture, against the vendor's "Refunded"; both mean the money went back,
+  // so both read `refunded`.
   ['refunded', 'refunded'],
 ]);
 
@@ -41,15 +43,14 @@ const decodeFiscalReceiptSummary: Decoder<FiscalReceiptSummary> = (value, path) 
   return {
     receiptId: receipt('receipt_id', asNonNegativeInteger),
     receiptUrl: receipt('qr_code_url', asString),
-    // The zone is undocumented, so the text stays raw.
-    issuedAtRaw: receipt('date_time', asString),
+    issuedAt: receipt('date_time', asUtcDateTime),
     isRefund: receipt('is_refund', asBoolean),
   };
 };
 
 /**
- * Withholds `owner` (cardholder name), the float SUM `amount`, the label `transaction_type` and
- * `account`, which reads `{}` whatever was sent.
+ * Withholds `owner` (cardholder name), the float SUM `amount`, the label `transaction_type`, the
+ * hosted-checkout flag `via_link` and `account`, which reads `{}` whatever was sent.
  */
 const decodeTransaction: Decoder<Transaction> = (value, path) => {
   const transaction = readFields(value, path);
@@ -67,8 +68,6 @@ const decodeTransaction: Decoder<Transaction> = (value, path) => {
     isHold: transaction('is_hold', asBoolean),
     isSplit: transaction('is_split', asBoolean),
     isA2c: transaction('is_a2c', asBoolean),
-    // `null`, not `false`, on every payment outside checkout.
-    isCheckout: transaction('via_link', nullable(asBoolean)) === true,
     fiscalReceipts: transaction('ofd', arrayOf(decodeFiscalReceiptSummary)),
   };
 };
@@ -84,14 +83,15 @@ export const decodeTransactionPage: Decoder<TransactionPage> = (value, path) => 
 const decodeRows = fieldOf('transactions', arrayOf(decodeTransaction));
 
 /**
- * The `getTransactions?id=` result: no row is a miss. Without a usable `id` the endpoint lists
- * paid transactions instead, so any other row, or more than one, is malformed.
+ * The `getTransactions?id=` result. Paylov answers an unknown id with no row, which reads as
+ * `transaction_not_found`. Without a usable `id` the endpoint lists paid transactions instead, so
+ * any other row, or more than one, is malformed.
  */
-export function decodeRequestedTransaction(transactionId: string): Decoder<Transaction | null> {
+export function decodeRequestedTransaction(transactionId: string): Decoder<Transaction> {
   return (value, path) => {
     const rows = decodeRows(value, path);
     const [row] = rows;
-    if (row === undefined) return null;
+    if (row === undefined) throw new DecodedMiss('transaction_not_found');
     if (rows.length > 1 || row.transactionId.toLowerCase() !== transactionId.toLowerCase()) {
       throw new DecodeFailure(`${path}.transactions`);
     }

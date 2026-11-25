@@ -1,24 +1,32 @@
 # Transactions
 
-`transactions.get` is the reconciliation read for every payment kind: saved card, PAN, hold and
-checkout. `transactions.list` is a settled-sales feed.
+`transactions.get` is the reconciliation read for every payment kind: saved card, PAN and hold.
+`transactions.list` is a settled-sales feed.
 
 ## Reconcile one payment
 
 ```ts
-const transaction = await paylov.transactions.get({ transactionId });
-if (transaction === null) {
+import { isPaylovApiError } from '@isroilov_an/paylov';
+
+try {
+  const transaction = await paylov.transactions.get({ transactionId });
+  if (transaction.status === 'paid') await orders.markPaid(orderId, transaction.paidOrCreatedAt);
+} catch (error) {
   // Unknown to the gateway so far: read again after a delay before creating anew.
-} else if (transaction.status === 'paid') {
-  await orders.markPaid(orderId, transaction.paidOrCreatedAt);
+  if (!isPaylovApiError(error, 'transaction_not_found')) throw error;
+  await jobs.reconcileLater(orderId);
 }
 ```
 
+- Paylov answers an unknown id with an empty list; the SDK throws that as `transaction_not_found`,
+  the code `holds.get` throws. Right after an ambiguous call it does not prove the call did not run.
+
 - `status` is open: handle values you do not know. A refunded sale reads `refunded`. A hold reads
-  `held`, as in `holds.get`, until captured (`paid` here, `captured` in `holds.get`). A released
-  hold also reads `refunded`, whether dismissed before expiry or released by Paylov after a failed
-  capture, so for a hold `refunded` means only that the merchant keeps no money from it; read
-  `holds.get` to tell a release from a capture.
+  `held`, as in `holds.get`, until captured (`paid` here, `captured` in `holds.get`); a declined
+  hold reads `failed` (`declined` in `holds.get`). A released hold also reads `refunded`, whether
+  dismissed before or after expiry or released by Paylov after a failed capture, so for a hold
+  `refunded` means only that the merchant keeps no money from it; read `holds.get` to tell a release
+  from a capture.
 - Recovery per method: [errors.md](errors.md#recovery-after-an-ambiguous-failure).
 
 ## Refund state
@@ -32,8 +40,8 @@ else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
 ```
 
 - `refunded` needs a non-hold transaction reading `refunded` with `cancelledAt`; `not_refunded`
-  needs `paid` with no `cancelledAt`. Everything else is `unknown`: `null`, other statuses, and a
-  hold reading `refunded`, which may be a release rather than a refund.
+  needs `paid` with no `cancelledAt`. Everything else is `unknown`: other statuses, and a hold
+  reading `refunded`, which may be a release rather than a refund.
 - `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
   before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
 

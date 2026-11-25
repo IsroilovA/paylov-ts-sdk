@@ -218,9 +218,6 @@ type OnboardingCall = (onboarding: PaylovOnboarding, signal: AbortSignal) => Pro
 const CLIENT_CALLS: Readonly<Record<string, ClientCall>> = {
   'gateway.getStatus': (c, signal) => c.gateway.getStatus({ signal }),
   'gateway.listBanks': (c, signal) => c.gateway.listBanks({ signal }),
-  'cards.createBindLink': (c, signal) => c.cards.createBindLink({ userId: 'user-1' }, { signal }),
-  'cards.getBindSession': (c, signal) =>
-    c.cards.getBindSession({ token: 'EXAMPLE-BIND-TOKEN-NOT-A-REAL-TOKEN' }, { signal }),
   'cards.startPanBinding': (c, signal) =>
     c.cards.startPanBinding(
       { userId: 'user-1', cardNumber: 'PAN-FROM-SECURE-INPUT', cardExpiry: '9912' },
@@ -269,23 +266,19 @@ const CLIENT_CALLS: Readonly<Record<string, ClientCall>> = {
       { transactionId: ID, recipients: [{ recipientId: 'platform', amountTiyin: 100 }] },
       { signal },
     ),
+  'splits.resendReceipt': (c, signal) =>
+    c.splits.resendReceipt(
+      {
+        transactionId: ID,
+        recipients: [{ recipientId: 'platform', amountTiyin: 100, items: [RECEIPT_ITEM] }],
+      },
+      { signal },
+    ),
   'splits.get': (c, signal) => c.splits.get({ transactionId: ID }, { signal }),
   'fiscalization.registerReceipt': (c, signal) =>
     c.fiscalization.registerReceipt({ transactionId: ID, items: [RECEIPT_ITEM] }, { signal }),
   'fiscalization.getReceipt': (c, signal) =>
     c.fiscalization.getReceipt({ transactionId: ID }, { signal }),
-  'fiscalization.attachReceipt': (c, signal) =>
-    c.fiscalization.attachReceipt(
-      {
-        transactionId: ID,
-        terminalId: 'EXAMPLE-TERMINAL',
-        issuedAtRaw: '20261112160011',
-        fiscalSign: 'EXAMPLE-SIGN',
-        receiptUrl: 'https://ofd.example.com/receipt/1',
-        receiptId: 1,
-      },
-      { signal },
-    ),
   'fiscalization.refundReceipt': (c, signal) =>
     c.fiscalization.refundReceipt({ receiptId: 1 }, { signal }),
   'fiscalization.checkActivityType': (c, signal) =>

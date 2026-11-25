@@ -13,10 +13,11 @@ import type { PaylovWebhookCredentials, WebhookEvent, WebhookInput } from '../we
  *
  * const request = createWebhookRequest(
  *   {
- *     kind: 'transaction.check',
- *     id: 1,
- *     account: { order_id: 'A-1024' },
- *     amount: { currency: 860, amountTiyin: 50_000 },
+ *     kind: 'transaction.cancel',
+ *     transactionId: '00000000-0000-4000-8000-000000000001',
+ *     account: { order_id: '12345' },
+ *     amountTiyin: 150_000,
+ *     cancelledAt: new Date('2026-01-01T00:00:00Z'),
  *   },
  *   { login: webhookLogin, password: webhookPassword },
  * );

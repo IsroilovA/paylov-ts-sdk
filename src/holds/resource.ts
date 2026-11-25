@@ -1,4 +1,4 @@
-import { orOnMiss, readCall, send } from '../core/call.js';
+import { readCall, send } from '../core/call.js';
 import { MINUTE_MS, readClock, type Clock } from '../core/time.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
 import {
@@ -40,7 +40,6 @@ export const ENDPOINTS = {
     method: 'GET',
     route: '/merchant/payment/hold/status/',
     shape: 'envelope',
-    miss: 'transaction_not_found',
   },
 } as const;
 
@@ -55,13 +54,20 @@ export interface HoldsResource {
    * captured. Store `clientCaptureDeadline`, a client-side lower bound on the hold's expiry: Paylov
    * reports none, and an expired hold still reads `held`.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, the hold may exist. Read
-   * `holds.get({ externalId })`; a hold found is the result. `null` is not proof that the
+   * Every create that reaches Paylov uses up its `externalId`, a declined one too: the declined
+   * record reads `declined` in `holds.get`, and a new create with that id answers
+   * `external_id_already_exists`. Retry a decline with a new `externalId`.
+   *
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, the hold may exist, even after an abort. Read
+   * `holds.get({ externalId })` and pass the record to `readHoldState`, with the
+   * `transactions.get` read of a `declined` record: only a `held` record is the hold, and the
+   * `declined` state means create again with a new `externalId`. `null` is not proof that the
    * create did not run: read again after a delay, then call `create` again with the same
-   * `externalId`. A repeat answers `external_id_already_exists` when the hold exists.
+   * `externalId`. A repeat answers `external_id_already_exists` when a record exists: read it again.
    *
    * @throws {@link PaylovApiError} `insufficient_funds` or another card decline,
-   * `external_id_already_exists`, `card_not_found` (unknown or deleted card), `service_not_found`.
+   * `external_id_already_exists` (a hold, released or declined, has this id), `card_not_found`
+   * (unknown or deleted card), `service_not_found`.
    *
    * @example
    * const hold = await paylov.holds.create({
@@ -69,7 +75,7 @@ export interface HoldsResource {
    *   cardId: booking.cardId,
    *   amountTiyin: 150_000, // 1 500.00 SUM
    *   durationMinutes: 24 * 60,
-   *   externalId: `booking-${booking.id}`,
+   *   externalId: booking.holdExternalId, // stored before the call, new for every attempt
    * });
    * await bookings.saveHold(booking.id, hold.transactionId, hold.clientCaptureDeadline);
    */
@@ -102,10 +108,12 @@ export interface HoldsResource {
 
   /**
    * Releases an uncaptured hold in full, returning the reserved money to the card. It cannot undo a
-   * capture: after one, only `payments.refund` remains, and Paylov's test environment refuses it
-   * for a captured hold with `processing_error`, which the SDK reports as an unknown outcome. Release every hold you will not capture, also after its duration runs
-   * out. Release is the only documented way to free a hold, so the SDK reads `hold_not_found`
-   * then as nothing left to release.
+   * capture: after one, only `payments.refund` remains. Paylov states captured holds are
+   * refundable, but its test environment refused them with `processing_error`, which the SDK
+   * reports as an unknown outcome.
+   * Release every hold you will not capture, also after its duration runs out. Release is the only
+   * documented way to free a hold, so the SDK reads `hold_not_found` then as nothing left to
+   * release.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `holds.get({ transactionId })`: status
    * `released` means the release took effect.
@@ -118,17 +126,20 @@ export interface HoldsResource {
   release(params: ReleaseHoldParams, options?: PaylovCallOptions): Promise<TransactionReference>;
 
   /**
-   * Looks a hold up by exactly one of `transactionId` or `externalId`; `null` when the gateway
-   * knows no such hold (`transaction_not_found`). A miss right after an ambiguous `create` is not
-   * proof: read again after a delay. An expired hold can still read `held`: compare `now` with
-   * the `clientCaptureDeadline` from `holds.create`, or pass both to `readHoldState`.
+   * Looks a hold up by exactly one of `transactionId` or `externalId`. A declined create also
+   * leaves a record, `declined`; its `transactions.get` read `failed` confirms the decline. An
+   * expired hold can still read `held`: compare `now` with the `clientCaptureDeadline` from
+   * `holds.create`, or pass both to `readHoldState`.
+   *
+   * @throws {@link PaylovApiError} `transaction_not_found` when the gateway knows no such hold. Right
+   * after an ambiguous `create` it is not proof that the create did not run: read again after a
+   * delay.
    *
    * @example
-   * const hold = await paylov.holds.get({ externalId: `booking-${booking.id}` });
-   * if (hold === null) await retryCreateLater(booking.id);
-   * else if (hold.status === 'captured') await bookings.markPaid(booking.id, hold.capturedAt);
+   * const hold = await paylov.holds.get({ externalId: booking.holdExternalId });
+   * if (hold.status === 'captured') await bookings.markPaid(booking.id, hold.capturedAt);
    */
-  get(params: GetHoldParams, options?: PaylovCallOptions): Promise<Hold | null>;
+  get(params: GetHoldParams, options?: PaylovCallOptions): Promise<Hold>;
 }
 
 export function createHoldsResource(http: HttpClient, clock: Clock): HoldsResource {
@@ -180,8 +191,7 @@ export function createHoldsResource(http: HttpClient, clock: Clock): HoldsResour
       const { input, signal } = readCall(params, options, method);
       // Which key wins when both are sent is unobserved, so the SDK never sends both.
       const query = readTransactionLookup(input);
-      const hold = send(http, ENDPOINTS.get, { query, signal }, decodeHold);
-      return orOnMiss(hold, ENDPOINTS.get, null);
+      return send(http, ENDPOINTS.get, { query, signal }, decodeHold);
     },
   };
 }

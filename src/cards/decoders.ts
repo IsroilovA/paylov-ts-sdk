@@ -1,7 +1,6 @@
 import {
   arrayOf,
   asBoolean,
-  asIsoDateTime,
   asMaskedPan,
   asString,
   asTiyin,
@@ -11,7 +10,7 @@ import {
   nullish,
   readFields,
 } from '../core/decoding.js';
-import type { Card, CardBindLinkCreated, CardBindSession, PanBindingStarted } from './types.js';
+import type { Card, PanBindingStarted } from './types.js';
 
 type CardState = Pick<Card, 'isActive' | 'processingStatus' | 'isSmsEnabled'>;
 
@@ -49,7 +48,7 @@ function cardDecoder(decodeStatus: Decoder<CardState>): Decoder<Card> {
   };
 }
 
-/** Confirm and the bind session carry a flat `status`. */
+/** Confirm carries a flat `status`. */
 const decodeFlatCard: Decoder<Card> = cardDecoder(decodeFlatStatus);
 /** `getCard` and `getAllUserCards` nest it as `status.result`. */
 const decodeNestedCard: Decoder<Card> = cardDecoder(fieldOf('result', decodeFlatStatus));
@@ -65,24 +64,6 @@ export const decodePanBindingStarted: Decoder<PanBindingStarted> = (value, path)
     // The OTP is already sent, so no mask format may fail the call.
     otpSentPhone: result('otpSentPhone', asString),
   };
-};
-
-export const decodeBindLinkCreated: Decoder<CardBindLinkCreated> = (value, path) => {
-  const result = readFields(value, path);
-  return {
-    token: result('token', asString),
-    // The host differs between DEV and the docs: passed through unchanged.
-    bindUrl: result('bindUrl', asString),
-    expiresAt: result('expiresAt', asIsoDateTime),
-  };
-};
-
-/** Only a `confirmed` session has a card; any other state's `card` is not read. */
-export const decodeBindSession: Decoder<CardBindSession> = (value, path) => {
-  const result = readFields(value, path);
-  const status = result('state', asString);
-  if (status !== 'confirmed') return { isBound: false, status, card: null };
-  return { isBound: true, status, card: result('card', decodeFlatCard) };
 };
 
 /** `{match: boolean}`, the documented answer of the phone check. */

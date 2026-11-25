@@ -1,5 +1,4 @@
 import {
-  MISS,
   nullableOf,
   optionalEntry,
   utcDateTimeOf,
@@ -36,8 +35,7 @@ function encodeHoldReleased(released: TransactionReference): unknown {
   return { ...encodeTransactionReference(released), status: 'cancelled' };
 }
 
-function encodeHold(hold: Hold | null): unknown {
-  if (hold === null) return MISS;
+function encodeHold(hold: Hold): unknown {
   return {
     transactionId: hold.transactionId,
     status: encodeStatus(HOLD_STATUS_BY_WIRE, hold.status),
@@ -87,7 +85,7 @@ export const HOLD_CODECS: {
   readonly create: FakeCodec<TransactionReference, CreateHoldParams>;
   readonly capture: FakeCodec<HoldCaptured, CaptureHoldParams>;
   readonly release: FakeCodec<TransactionReference, ReleaseHoldParams>;
-  readonly get: FakeCodec<Hold | null, GetHoldParams>;
+  readonly get: FakeCodec<Hold, GetHoldParams>;
 } = {
   create: { encode: encodeTransactionReference, decodeRequest: decodeCreateRequest },
   capture: { encode: encodeHoldCaptured, decodeRequest: decodeCaptureRequest },

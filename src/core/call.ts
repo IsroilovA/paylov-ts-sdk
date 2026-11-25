@@ -1,11 +1,9 @@
 /**
  * The plumbing every endpoint method shares: read the call's input, send to a declared endpoint,
- * decode, and map the endpoint's miss code to a value.
+ * and decode.
  */
 
 import { decodePayload, type Decoder } from './decoding.js';
-import type { PaylovKnownErrorCode } from './errorCodes.js';
-import { isPaylovApiError } from './errors.js';
 import { readCallSignal, readParams, type Params } from './params.js';
 import type { Endpoint, HttpClient, RequestOptions } from './types.js';
 
@@ -61,24 +59,4 @@ export async function send<E extends Endpoint, T>(
 ): Promise<T> {
   const response = await http.request(endpoint, request);
   return decodePayload(response, endpoint.shape === 'envelope' ? 'result' : 'body', decode);
-}
-
-/**
- * Resolves to `fallback` when `call` rejects with the endpoint's `miss` code; every other
- * failure, a decode failure included, propagates.
- *
- * @example
- * return orOnMiss(send(http, ENDPOINTS.get, { query, signal }, decodeHold), ENDPOINTS.get, null);
- */
-export async function orOnMiss<T, F>(
-  call: Promise<T>,
-  endpoint: { readonly miss: PaylovKnownErrorCode },
-  fallback: F,
-): Promise<T | F> {
-  try {
-    return await call;
-  } catch (error) {
-    if (isPaylovApiError(error, endpoint.miss)) return fallback;
-    throw error;
-  }
 }

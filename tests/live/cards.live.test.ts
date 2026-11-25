@@ -1,6 +1,6 @@
 /**
  * Sandbox cards: refusals of unknown ids, then the Uzcard test card bound by PAN and OTP, read,
- * listed, checked and deleted; and Card Bind sessions, fresh and completed.
+ * listed, checked and deleted.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { isPaylovApiError, type Card } from '../../src/index.js';
 import { liveClient, liveGate, liveUserId, observe, refused, settle } from '../helpers/live.js';
-import { completeCardBind, uzcardTestCard } from './sandboxCards.js';
+import { uzcardTestCard } from './sandboxCards.js';
 
 const gate = await liveGate();
 const writes = gate.enabled && gate.config.writes;
@@ -50,59 +50,6 @@ describe.skipIf(!gate.enabled)('cards reads', () => {
   it('get of an unknown card id is card_not_found', async () => {
     const error = await refused('cards.get.unknown', client.cards.get({ cardId: randomUUID() }));
     expect(error.code).toBe('card_not_found');
-  });
-
-  it('getBindSession of an unknown token is link_expired', async () => {
-    const token = randomUUID().replaceAll('-', '');
-    const error = await refused(
-      'cards.getBindSession.unknown',
-      client.cards.getBindSession({ token }),
-    );
-    expect(error.code).toBe('link_expired');
-  });
-});
-
-describe.skipIf(!writes)('cards writes: Card Bind', () => {
-  if (!gate.enabled) return;
-  const client = liveClient(gate.config);
-
-  it('createBindLink returns an https link whose session starts as created', async () => {
-    const link = await client.cards.createBindLink({ userId: liveUserId('cards-bind-link') });
-    expect(link.token.length).toBeGreaterThan(0);
-    expect(new URL(link.bindUrl).protocol).toBe('https:');
-    // About 20 minutes; a wrong zone reading of `expiresAt` misses this by hours.
-    const minutesLeft = (link.expiresAt.getTime() - Date.now()) / 60_000;
-    observe('cards.createBindLink', { minutesLeft: Math.round(minutesLeft) });
-    expect(minutesLeft).toBeGreaterThan(10);
-    expect(minutesLeft).toBeLessThan(30);
-
-    const session = await client.cards.getBindSession({ token: link.token });
-    observe('cards.getBindSession.fresh', { isBound: session.isBound, status: session.status });
-    expect(session.isBound).toBe(false);
-    expect(session.status).toBe('created');
-    expect(session.card === null, 'no card yet').toBe(true);
-  });
-});
-
-describe.skipIf(!writes || testCard?.ok !== true)('cards writes: Card Bind completion', () => {
-  if (!gate.enabled || testCard?.ok !== true) return;
-  const { config } = gate;
-  const client = liveClient(config);
-  const userId = liveUserId('cards-bind-complete');
-  let cardId: string | undefined;
-
-  afterAll(async () => {
-    if (cardId !== undefined) await settle('cards.bind.cleanup', client.cards.delete({ cardId }));
-  });
-
-  it('a completed link reads confirmed with the bound card', async () => {
-    const link = await client.cards.createBindLink({ userId });
-    cardId = await completeCardBind(config.baseUrl, link.token, testCard.value);
-
-    const session = await client.cards.getBindSession({ token: link.token });
-    observe('cards.getBindSession.confirmed', { isBound: session.isBound, status: session.status });
-    expect(session.isBound).toBe(true);
-    if (session.isBound) expectBoundCard('cards.getBindSession', session.card, cardId, userId);
   });
 });
 

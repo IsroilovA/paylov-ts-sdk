@@ -21,19 +21,22 @@ c180–c211). Amounts are whole SUM in both directions (W c181, c187, c194, c195
 
 The merchant creates a hold against a bound card, then captures it with charge or releases it with
 dismiss (D). Hold status reads `hold`, `paid` and `cancelled`; the transaction read of the same id
-reads `waiting`, then `payed`, or `cancel` once dismissed (W c187, c346, c1526;
-[transactions](transactions.md#fields-of-transactions)). Whether a non-default `serviceId` changes
-who settles the funds is [OPEN Q10]; DEV has no second service.
+reads `waiting`, then `payed`, or `cancel` once dismissed, before or after expiry (W c187, c346,
+c1526, c1544; [transactions](transactions.md#fields-of-transactions)). A declined create still
+leaves a hold record, status `check`, and consumes its `externalId` ([create](#create)).
 
 Charge captures once, possibly partially ([charge](#charge)). Refunding a captured hold failed on
 DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the
 transaction `payed` (W c561, c887, c1529, c1530).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
-only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`.
-Whether a hold's duration can be extended is [OPEN Q88]. After an uncertain create, look the hold up
-by its `externalId`; a duplicate-id error proves only that the hold exists, not that it still
-reserves funds ([create](#create), W c1284, c1285).
+only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. A
+hold's duration cannot be extended after create; 28 days is the maximum, per the Paylov team (answer
+relayed by the maintainer, 2026-11-25: "no, it cannot. 28 days max", translated from Russian). After
+an uncertain create, look the hold up by its `externalId`; a create the client aborted after sending
+still ran and read `hold` a second later (W c1581–c1587). A found record or a duplicate-id error
+proves only that a record with that `externalId` exists, not that it reserves funds: it may be
+released or declined ([create](#create), W c1284, c1285, c1555, c1557).
 
 ## Create
 
@@ -79,6 +82,7 @@ Right after create the hold reads `hold` (W c184), and `getTransactions` reports
 | `time` above 40320                 | `field_not_valid`                                                      | The bare string `"time"` | W (c202)                  |
 | `externalId` over 64 characters    | `validation_error`                                                     | `{"externalId": [...]}`  | W (c206)                  |
 | Duplicate `externalId`             | `external_id_already_exists`, also after the earlier hold was released | —                        | W (c183, c1270, c1284)    |
+| `externalId` of a declined create  | `external_id_already_exists`, also on a card that can hold the amount  | —                        | W (c1554, c1557)          |
 | Unknown or deleted card            | `card_not_found`                                                       | —                        | W (c207, c328)            |
 | Unknown `serviceId`                | `service_not_found`                                                    | —                        | W (c208)                  |
 | The card cannot reserve the amount | `insufficient_funds` "There are insufficient funds on the card."       | —                        | W (c602–c606, c609, c610) |
@@ -88,10 +92,16 @@ On DEV the HUMO test card held 10 SUM twice and declined 100 to 1 000 000 000 SU
 `insufficient_funds` (W c600–c610); these are DEV test balances. The `invalid_amount` bound lies
 between 10^9 and 5 × 10^10 SUM (W c606, c611). `external_id_already_exists` proves only that a hold
 with that `externalId` exists: after a release the lookup by `externalId` still finds it,
-`cancelled` (W c1284, c1285). The create, charge and dismiss pages list no codes; a
-processing-center decline is one of the unified decline codes of the
-[error catalogue](errors.md#funds-and-declines), such as `insufficient_funds`, `card_expired`,
-`limit_exceeded` or `do_not_honor` (D, changelog).
+`cancelled` (W c1284, c1285). A declined create consumes its `externalId` too: after create answered
+`insufficient_funds`, status by that `externalId` returned a record with status `check`, the
+requested `amount`, a `transactionId` and `payedAt` and `cancelTime` `null`; `getTransactions` read
+that id `failed` with `is_hold: true` and `error_message` `processing_error`; a new create with the
+same `externalId` on the working Uzcard test card answered `external_id_already_exists` (W
+c1554–c1557). Retrying a declined hold therefore needs a new `externalId`. `check` is undocumented,
+so a decline counts only when the transaction reads `failed`, the status Paylov documents (M
+2026-11-25). The create, charge and dismiss pages list no codes; a processing-center decline is one
+of the unified decline codes of the [error catalogue](errors.md#funds-and-declines), such as
+`insufficient_funds`, `card_expired`, `limit_exceeded` or `do_not_honor` (D, changelog).
 
 ## Charge
 
@@ -147,17 +157,20 @@ Success (W c198); the response carries no time, status then carries `cancelTime`
 
 ```json
 {
-  "result": { "transactionId": "d1be13da-4355-4b27-956d-d83b87e013f1", "status": "cancelled" },
+  "result": {
+    "transactionId": "d1be13da-4355-4b27-956d-d83b87e013f1",
+    "status": "cancelled"
+  },
   "error": null
 }
 ```
 
-| Trigger                                                   | Code                                                                                                                                            | Grade                                                                          |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Already dismissed                                         | `hold_not_found`                                                                                                                                | W (c200)                                                                       |
-| After a full or partial charge                            | `hold_not_found`                                                                                                                                | W (c197)                                                                       |
-| Expired hold, after a charge answered `hold_time_expired` | `hold_not_found`; status stays `cancelled`                                                                                                      | W (c1276–c1279); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
-| Expired hold, without a charge attempt                    | Success, `status: "cancelled"`, about 150 s and 46.6 minutes after a 1-minute hold was created; status then reads `cancelled` with `cancelTime` | W (c1036, c1037, c1294, c1295)                                                 |
+| Trigger                                                   | Code                                                                                                                                                                                                                                        | Grade                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Already dismissed                                         | `hold_not_found`                                                                                                                                                                                                                            | W (c200)                                                                       |
+| After a full or partial charge                            | `hold_not_found`                                                                                                                                                                                                                            | W (c197)                                                                       |
+| Expired hold, after a charge answered `hold_time_expired` | `hold_not_found`; status stays `cancelled`                                                                                                                                                                                                  | W (c1276–c1279); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
+| Expired hold, without a charge attempt                    | Success, `status: "cancelled"`, about 150 s and 46.6 minutes after a 1-minute hold was created; status then reads `cancelled` with `cancelTime`, the transaction `cancel` with `cancel_time`, and a second dismiss answers `hold_not_found` | W (c1036, c1037, c1294, c1295, c1543–c1547)                                    |
 
 ## Status
 
@@ -184,16 +197,17 @@ Success (W c198); the response carries no time, status then carries `cancelTime`
 | `transactionId` | UUID           | Hold transaction id                                                               | W (c184)                   |
 | `status`        | string         | See below                                                                         | W (c184, c195, c199)       |
 | `payedAt`       | string \| null | `YYYY-MM-DD HH:MM:SS` in UTC once `paid`                                          | W (c195, c338)             |
-| `cancelTime`    | string \| null | `YYYY-MM-DD HH:MM:SS` in UTC once `cancelled`                                     | W (c199)                   |
+| `cancelTime`    | string \| null | `YYYY-MM-DD HH:MM:SS` in UTC once `cancelled`                                     | W (c199, c1545)            |
 | `amount`        | int            | SUM: the held amount while `hold` or `cancelled`, the captured amount once `paid` | W (c184, c195, c199)       |
 | `serviceId`     | UUID           | Always present; the merchant id when none was sent                                | W (c184, c185, c195, c199) |
 
-| Status      | Meaning                                                                                                                                                                                                               | Grade                                                                                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hold`      | Reserved; chargeable "if hold time have not been expired". An expired hold can still read `hold`: a 1-minute hold read `hold` at 24 polls up to 46.6 minutes after create, and `getTransactions` still read `waiting` | W (c184, c417, c458, c506, c535, c612, c717, c781, c817, c841, c892, c910, c916, c922, c926, c928, c947, c956, c958, c992, c1022, c1025, c1028, c1031, c1034, c1035), D; live run 2026-11-12 |
-| `paid`      | Charged                                                                                                                                                                                                               | W (c195, c338)                                                                                                                                                                               |
-| `cancelled` | Dismissed, or expired and released after a charge answered `hold_time_expired`; expiry alone did not set it during 46.6 minutes of polling                                                                            | W (c199, c1277, c1034)                                                                                                                                                                       |
-| `created`   | Listed without a meaning; never observed, not even right after create or during 46 minutes of polling                                                                                                                 | D                                                                                                                                                                                            |
+| Status      | Meaning                                                                                                                                                                                                                                    | Grade                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hold`      | Reserved; chargeable "if hold time have not been expired". An expired hold can still read `hold`: a 1-minute hold read `hold` at 24 polls up to 46.6 minutes after create, and `getTransactions` still read `waiting`                      | W (c184, c417, c458, c506, c535, c612, c717, c781, c817, c841, c892, c910, c916, c922, c926, c928, c947, c956, c958, c992, c1022, c1025, c1028, c1031, c1034, c1035), D; live run 2026-11-12 |
+| `paid`      | Charged                                                                                                                                                                                                                                    | W (c195, c338)                                                                                                                                                                               |
+| `cancelled` | Dismissed, before or after expiry, or expired and released after a charge answered `hold_time_expired`; expiry alone did not set it during 46.6 minutes of polling                                                                         | W (c199, c1277, c1034, c1545)                                                                                                                                                                |
+| `check`     | Read by `externalId` right after a create declined with `insufficient_funds`, with the requested `amount` and both times `null`; the transaction read `failed`. Undocumented: a decline only with that `failed` transaction (M 2026-11-25) | W (c1555, c1556)                                                                                                                                                                             |
+| `created`   | Listed without a meaning (D); never observed, not even right after create or during 46 minutes of polling                                                                                                                                  | D                                                                                                                                                                                            |
 
 | Trigger                                 | Code                    | `data` | Grade          |
 | --------------------------------------- | ----------------------- | ------ | -------------- |
@@ -231,5 +245,7 @@ DEV live run 2026-11-12; no numbered capture.
   `gateway_not_working`, `field_required` and `transaction_not_found` without assigning them to
   operations. Live, an unknown hold is `transaction_not_found` on status and charge, and
   `hold_not_found` comes only from dismiss (W c192, c197, c200, c210, c211).
+- The status page lists `paid`, `cancelled`, `hold` and `created`; the gateway also returns the
+  undocumented `check` for a declined create (W c1555).
 - The sandbox page bundle (S) labels hold amounts "tiyin", sends status as POST and shows mock
   fields (`holdId`, `expiresAt`, statuses `held`, `captured`, `released`). It is not contract.

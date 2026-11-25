@@ -19,8 +19,8 @@ none was observed live: every fact on this page is D unless graded otherwise.
 ## Flow
 
 In [hosted checkout](checkout.md#flow) Paylov asks the merchant to check the order, then to perform
-the payment; both calls need a status reply, and any other outcome stops the payment
-([answers](#delivery-contract), M 2026-11-14). The link is unsigned, so `transaction.check` is where
+the payment; both calls expect a status reply, and what any other outcome does to the payment is not
+documented ([answers](#delivery-contract), D). The link is unsigned, so `transaction.check` is where
 amount, currency and account are re-validated against the merchant's order (L). Cancellation,
 deposit and Card Bind deliveries report events instead: cancel and deposit are retried, Card Bind is
 not and falls back to the [bind session read](cards.md#bind-session-status). Each kind's dedupe key
@@ -28,8 +28,8 @@ identifies a repeated delivery.
 
 | Kind                  | Format                              | Trigger                                                 | Retries             | Merchant answer | Dedupe key       |
 | --------------------- | ----------------------------------- | ------------------------------------------------------- | ------------------- | --------------- | ---------------- |
-| `transaction.check`   | JSON-RPC 2.0 request                | Checkout payment, before it is performed                | None (M 2026-11-14) | Status result   | —                |
-| `transaction.perform` | JSON-RPC 2.0 request                | Checkout payment, after the customer confirms           | None (M 2026-11-14) | Status result   | `transaction_id` |
+| `transaction.check`   | JSON-RPC 2.0 request                | Checkout payment, before it is performed                | Not documented      | Status result   | —                |
+| `transaction.perform` | JSON-RPC 2.0 request                | Checkout payment, after the customer confirms           | Not documented      | Status result   | `transaction_id` |
 | `transaction.cancel`  | JSON-RPC 2.0 notification (no `id`) | Cancellation in the business panel or by Paylov staff   | Up to 3, every 60 s | Any 2xx         | `transaction_id` |
 | `merchant.deposit`    | JSON-RPC 2.0 notification (no `id`) | An A2C, Paynet or Munis deposit to the merchant account | Up to 3, every 60 s | Any 2xx         | `id`             |
 | Card Bind             | Plain JSON                          | A card bound through a Card Bind link                   | None                | Any 2xx         | `token`          |
@@ -52,18 +52,18 @@ body.
 **Registration:** no API registers a callback URL. Paylov support attaches the URL and Basic
 credentials to the merchant: checkout STEP 1 for check/perform, "attached to your merchant on the
 Paylov side" for cancel and deposit, "stored in the merchant profile" for Card Bind. Nothing is sent
-before. Whether the deposit webhook shares the check/perform URL and credentials is not documented.
+before. Whether the kinds share one URL and one credential pair, and from which source IPs callbacks
+come, is not documented (D).
 
 **Request IDs for check/perform:** a JSON-RPC 2.0 string or number. No page names the protocol for
 check and perform; their examples carry `"jsonrpc": "2.0"`, an integer `id` and a reply echoing it
 (D, S), and the cancel and deposit pages say "The request is sent as a JSON-RPC 2.0 notification."
 (D). String IDs follow JSON-RPC 2.0 rather than an observed Paylov request.
 
-**Answers to check/perform (M 2026-11-14):** Paylov goes on only after check answers `0` and
-completes the payment only after perform answers `0`. Any other status, a non-2xx or unparseable
-reply, or no reply stops it, and the customer is not charged or is refunded. Neither is retried. The
-docs show only the `0` answer and link the status codes (D), and they name retries only for cancel
-and deposit and none for Card Bind (D).
+**Answers to check/perform:** the docs show only the `0` answer and link the status codes (D). What
+Paylov does with the payment after any other status, a non-2xx or unparseable reply, or no reply,
+and whether check or perform is retried or a perform can arrive twice, is not documented (D); the
+docs name retries only for cancel and deposit and none for Card Bind (D).
 
 ## transaction.check
 
@@ -97,8 +97,8 @@ Response: `{"jsonrpc": "2.0", "id": 1234567, "result": {"status": "0", "statusTe
 - `account` values arrive as strings, though the examples show numbers
   ([link encoding](checkout.md#link), L).
 - A tampered `currency_id` makes `currency` 840, and `amount_tiyin` is then US cents (L).
-- No rounding rule is stated for the whole-currency `amount` of a payment that is not whole SUM;
-  Paylov stores the exact tiyin ([units](README.md#amount-units-by-operation), W c1160, c1164).
+- No rounding rule is documented (D) for the whole-currency `amount` of a payment that is not whole
+  SUM; Paylov stores the exact tiyin ([units](README.md#amount-units-by-operation), W c1160, c1164).
 - Callbacks carry the `account` keys sent when the transaction was created: the cancel page says
   "Account fields sent when the transaction was created", and the check and perform examples echo
   the link's `order_id` (D). DEV reads return checkout `account: {}` instead
@@ -132,7 +132,7 @@ A custom error:
 ## transaction.cancel
 
 Sent when a transaction is cancelled from the Paylov business panel or by Paylov processing staff.
-The docs do not say whether an API `payment/cancel` also emits it.
+The docs name no other trigger, such as an API `payment/cancel` or a hold dismissal (D).
 
 ```json
 {
@@ -199,7 +199,8 @@ Acknowledgement, retries and timeouts match [transaction.cancel](#transactioncan
 
 ## Card Bind webhook
 
-Sent once after a card is bound through a [Card Bind](cards.md#card-bind) link.
+Sent once after a card is bound through a [Card Bind](cards.md#card-bind) link; whether a PAN
+binding also emits it is not documented (D).
 
 ```json
 { "token": "EXAMPLE-BIND-TOKEN", "userId": "partner-user-10234", "status": "confirmed", "card": {} }

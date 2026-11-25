@@ -12,7 +12,11 @@ Depend on the namespaces your code uses, not on `PaylovClient`; a `PaylovClient`
 narrowed type:
 
 ```ts
-import type { PaymentsResource, TransactionsResource } from '@isroilov_an/paylov';
+import {
+  PaylovApiError,
+  type PaymentsResource,
+  type TransactionsResource,
+} from '@isroilov_an/paylov';
 
 export interface PaylovPort {
   readonly payments: Pick<PaymentsResource, 'create' | 'pay'>;
@@ -24,7 +28,15 @@ const fake: PaylovPort = {
     create: async () => ({ transactionId: '00000000-0000-4000-8000-000000000001' }),
     pay: async ({ transactionId }) => ({ transactionId }),
   },
-  transactions: { get: async () => null },
+  transactions: {
+    get: async () => {
+      throw new PaylovApiError({
+        code: 'transaction_not_found',
+        httpStatus: 200,
+        endpoint: 'GET /merchant/getTransactions/',
+      });
+    },
+  },
 };
 ```
 
@@ -50,7 +62,8 @@ fake.assertDone();
 
 - Each SDK method has a script with `reply`, `fail`, `disconnect` and `hang`. Scripting a value or a
   failure the gateway cannot send throws `TypeError`.
-- `reply(null)` or `reply(false)` on a read sends the gateway's not-found answer.
+- A lookup miss is a failure: `fake.holds.get.fail('transaction_not_found')`.
+  `fake.onboarding.checkToken.reply(false)` sends the gateway's `invalid_or_expired` answer.
 - A status outside the SDK's vocabulary passes through; a raw gateway spelling the SDK renames, such
   as a hold's `'paid'`, throws `TypeError`.
 - An unscripted request fails with `fake_unscripted`, and a request the fake cannot read back into
@@ -130,7 +143,9 @@ fake.assertDone();
 - A state it does not simulate, such as refunding a captured hold or a hold with a `serviceId`,
   answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`: script that call instead.
 - A scripted answer takes precedence over the simulation for the call it matches and does not change
-  the stored state. Use it for declines and transient failures.
+  the stored state. Use it for declines and transient failures. A scripted `holds.create` decline
+  stores no record, unlike Paylov, which keeps a `declined` hold and its used-up `externalId`:
+  script the `holds.get` and `transactions.get` that follow too.
 - Generated ids are `00000000-0000-4000-a000-…`; times are whole seconds from `now`. An id that only
   a scripted reply returned is unknown to the simulation.
 
@@ -163,11 +178,11 @@ const receiver = new PaylovWebhookReceiver({ credentials: [credentials] });
 
 const request = createWebhookRequest(
   {
-    kind: 'transaction.perform',
-    id: 2,
+    kind: 'transaction.cancel',
     transactionId: '00000000-0000-4000-8000-0000000000b1',
     account: { order_id: 'A-1024' },
-    amount: { currency: 860, amountTiyin: 50_000 },
+    amountTiyin: 50_000,
+    cancelledAt: new Date('2026-01-02T03:04:05Z'),
   },
   credentials,
 );

@@ -10,7 +10,6 @@ import {
   type FiscalReceiptRefunded,
   type GetFiscalReceiptParams,
   type RegisterFiscalReceiptParams,
-  type TransactionLookup,
 } from '../../src/index.js';
 
 declare const client: PaylovClient;
@@ -19,40 +18,21 @@ const transactionId = '5eed0000-0000-4000-8000-000000000001';
 
 const cardParams: RegisterFiscalReceiptParams = { transactionId, items: [item] };
 const card: Promise<FiscalReceiptRegistered> = client.fiscalization.registerReceipt(cardParams);
-const cash: RegisterFiscalReceiptParams = {
-  externalId: 'cash-0001',
-  phoneNumber: '+998900000000',
-  items: [item],
-};
-// @ts-expect-error a card payment and a cash sale are exclusive
-const both: RegisterFiscalReceiptParams = { ...cash, transactionId };
-// @ts-expect-error a cash sale needs the customer's phone
-const cashWithoutPhone: RegisterFiscalReceiptParams = { externalId: 'cash-0001', items: [item] };
-// @ts-expect-error the phone belongs to cash sales only
-const cardWithPhone: RegisterFiscalReceiptParams = { ...cardParams, phoneNumber: '+998900000000' };
-void [card, cash, both, cashWithoutPhone, cardWithPhone];
+// @ts-expect-error only card payments are fiscalized; there is no cash sale
+const cash: RegisterFiscalReceiptParams = { externalId: 'cash-0001', items: [item] };
+// @ts-expect-error a receipt needs its card payment
+const withoutPayment: RegisterFiscalReceiptParams = { items: [item] };
+void [card, cash, withoutPayment];
 
-const lookup: TransactionLookup = { transactionId };
-const found: Promise<FiscalReceipt | null> = client.fiscalization.getReceipt({
-  ...lookup,
-  isRefund: true,
-});
-const byExternalId: GetFiscalReceiptParams = { externalId: 'cash-0001', transactionId: undefined };
-// @ts-expect-error a lookup takes exactly one identifier
-void client.fiscalization.getReceipt({ ...lookup, externalId: 'cash-0001' });
-// @ts-expect-error a lookup needs an identifier
+const getParams: GetFiscalReceiptParams = { transactionId, isRefund: true };
+const found: Promise<FiscalReceipt | null> = client.fiscalization.getReceipt(getParams);
+// @ts-expect-error a receipt is read by its card payment's transactionId only
+void client.fiscalization.getReceipt({ externalId: 'cash-0001' });
+// @ts-expect-error a lookup needs the transactionId
 void client.fiscalization.getReceipt({ isRefund: false });
-void [found, byExternalId];
-
-const attached: Promise<void> = client.fiscalization.attachReceipt({
-  transactionId,
-  terminalId: 'EP000000000378',
-  issuedAtRaw: '20260915143025',
-  fiscalSign: '947030008479',
-  receiptUrl: 'https://ofd.soliq.uz/epi?t=EP000000000378&r=173723',
-  receiptId: 173723,
-});
-void attached;
+// @ts-expect-error receipts registered elsewhere cannot be attached
+void client.fiscalization.attachReceipt;
+void found;
 
 const refunded: Promise<FiscalReceiptRefunded> = client.fiscalization.refundReceipt({
   receiptId: 184595,

@@ -29,7 +29,6 @@ const LIST_PAGES = 5;
 
 async function readTransaction(client: PaylovClient, transactionId: string): Promise<Transaction> {
   const transaction = await client.transactions.get({ transactionId });
-  if (transaction === null) throw new Error('transactions.get found no such transaction');
   expect(transaction.transactionId === transactionId, 'transactionId').toBe(true);
   return transaction;
 }
@@ -39,7 +38,6 @@ function observeTransaction(label: string, transaction: Transaction): void {
     status: transaction.status,
     amountTiyin: transaction.amountTiyin,
     isHold: transaction.isHold,
-    isCheckout: transaction.isCheckout,
     declineCode: transaction.declineCode,
     receipts: transaction.fiscalReceipts.length,
   });
@@ -49,8 +47,10 @@ describe.skipIf(!gate.enabled)('transactions reads', () => {
   if (!gate.enabled) return;
   const client = liveClient(gate.config);
 
-  it('get of an unknown transaction id is null', async () => {
-    expect(await client.transactions.get({ transactionId: randomUUID() })).toBeNull();
+  it('get of an unknown transaction id throws transaction_not_found', async () => {
+    await expect(client.transactions.get({ transactionId: randomUUID() })).rejects.toMatchObject({
+      code: 'transaction_not_found',
+    });
   });
 
   it('list pages hold paid transactions only', async () => {
@@ -118,7 +118,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('payments writes', () => {
       isHold: false,
       isSplit: false,
       isA2c: false,
-      isCheckout: false,
       declineCode: null,
       cancelledAt: null,
     });

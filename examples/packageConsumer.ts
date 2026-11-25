@@ -3,7 +3,6 @@
 import {
   PaylovClient,
   PaylovWebhookReceiver,
-  createWebhookResponse,
   formatSum,
   isPaylovError,
   sumToTiyin,
@@ -63,15 +62,19 @@ const event = receiver.receive({
   headers: { authorization: 'Basic ' + btoa(login + ':' + password) },
   body: {
     jsonrpc: '2.0',
-    id: 1234567,
-    method: 'transaction.check',
-    params: { account: { order_id: 12 }, amount: 500, amount_tiyin: 50000, currency: 860 },
+    method: 'transaction.cancel',
+    params: {
+      transaction_id: '9b3bd7be-9327-4608-b886-4353e49df05f',
+      status: 'cancelled',
+      account: { order_id: '12345' },
+      amount: 1500,
+      amount_in_tiyin: 150000,
+      cancel_time: 1767162243,
+    },
   },
 });
-if (event.kind !== 'transaction.check') throw new Error('webhook integration failed');
-const amountMatches = event.amount.currency === 860 && event.amount.amountTiyin === 50000;
-const response = createWebhookResponse(event, amountMatches ? 'accept' : 'invalid_amount');
-check(response.result.status === '0' && response.id === 1234567, 'webhook integration failed');
+if (event.kind !== 'transaction.cancel') throw new Error('webhook integration failed');
+check(event.amountTiyin === 150_000 && event.credentialIndex === 0, 'webhook integration failed');
 
 const fake = new PaylovFakeGateway();
 const faked = new PaylovClient(fake.clientConfig);
@@ -86,4 +89,4 @@ await faked.close();
 fake.assertDone();
 
 const scripted = receiver.receive(createWebhookRequest(event, { login, password }));
-check(scripted.kind === 'transaction.check', 'testing webhook request failed');
+check(scripted.kind === 'transaction.cancel', 'testing webhook request failed');

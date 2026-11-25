@@ -1,8 +1,6 @@
-import type { OtpSmsSettings } from '../shared/otpSms.js';
-
 /**
- * Card network as Paylov reports it. Casing differs between endpoints (the Card Bind docs show
- * `uzcard`), so compare case-insensitively.
+ * Card network as Paylov reports it. Casing may differ between endpoints, so compare
+ * case-insensitively.
  */
 export type CardVendor = 'Uzcard' | 'Humo' | 'MIR' | (string & {});
 
@@ -74,52 +72,6 @@ export interface Card {
   readonly isSmsEnabled: boolean;
 }
 
-/** Parameters for `cards.createBindLink`. */
-export interface CreateBindLinkParams {
-  /** The merchant's own user id the card will be bound to. */
-  readonly userId: string;
-  /** Absolute http(s) URL the Card Bind page may redirect to when it finishes. */
-  readonly returnUrl?: string;
-}
-
-/** A one-time Card Bind link for one card, valid for about 20 minutes. */
-export interface CardBindLinkCreated {
-  /**
-   * Identifies the session in `cards.getBindSession` and the bind webhook. It works like a
-   * credential for the bind page: keep it, and `bindUrl`, which embeds it, out of logs.
-   */
-  readonly token: string;
-  /** The Paylov page to open in a webview, exactly as the gateway returned it. */
-  readonly bindUrl: string;
-  readonly expiresAt: Date;
-}
-
-/** Parameters for `cards.getBindSession`. */
-export interface GetBindSessionParams {
-  /** The `token` from `cards.createBindLink` or the bind webhook. */
-  readonly token: string;
-}
-
-/** `created`: nothing entered yet; `card_pending`: waiting for the SMS code; `confirmed`: bound. */
-export type CardBindStatus = 'created' | 'card_pending' | 'confirmed' | (string & {});
-
-/** A session whose card is bound. */
-export interface BoundCardBindSession {
-  readonly isBound: true;
-  readonly status: 'confirmed';
-  readonly card: Card;
-}
-
-/** A session without a card yet. `status` is never `confirmed` here. */
-export interface PendingCardBindSession {
-  readonly isBound: false;
-  readonly status: CardBindStatus;
-  readonly card: null;
-}
-
-/** Result of `cards.getBindSession`; branch on `isBound`. */
-export type CardBindSession = BoundCardBindSession | PendingCardBindSession;
-
 /** Parameters for `cards.startPanBinding`. */
 export interface StartPanBindingParams {
   /** The merchant's own user id the card will be bound to. */
@@ -133,7 +85,6 @@ export interface StartPanBindingParams {
   readonly cardExpiry: string;
   /** The phone linked to the card; when given, a different phone fails with `phone_not_match`. */
   readonly phoneNumber?: string;
-  readonly sms?: OtpSmsSettings;
 }
 
 /** Result of `cards.startPanBinding`: the OTP was sent; the card is unusable until confirmed. */

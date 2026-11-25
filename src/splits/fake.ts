@@ -1,21 +1,37 @@
 import {
   optionalEntry,
+  tashkentDateTimeOf,
   type FakeRequest,
   type PaylovFakeSurface,
   type Scripter,
 } from '../core/fake.js';
 import type { Params } from '../core/params.js';
-import { decodeReceiptItem, encodeTransactionReference } from '../shared/fake.js';
+import {
+  decodeReceiptItem,
+  encodeFiscalReceipt,
+  encodeTransactionReference,
+} from '../shared/fake.js';
 import { ENDPOINTS, type SplitsResource } from './resource.js';
-import type { CreateSplitParams, GetSplitParams, SplitRecipient, SplitShare } from './types.js';
+import type {
+  CreateSplitParams,
+  GetSplitParams,
+  ResendSplitReceiptParams,
+  Split,
+  SplitReceiptRecipient,
+  SplitReceiptResent,
+  SplitRecipient,
+} from './types.js';
 
-function encodeSplitShares(shares: readonly SplitShare[]): unknown {
-  return shares.map((share) => ({
+/** The receipt entry follows the shares. */
+function encodeSplit(split: Split): unknown {
+  const shares = split.shares.map((share) => ({
     recipientId: share.recipientId,
     amount: share.amountTiyin,
     status: share.status,
-    createdAt: share.createdAtRaw,
+    createdAt: tashkentDateTimeOf(share.createdAt, 'createdAt'),
   }));
+  const ofd = split.receipt === null ? {} : encodeFiscalReceipt(split.receipt);
+  return [...shares, { ofd }];
 }
 
 /** Recipient amounts travel in tiyin. */
@@ -27,12 +43,35 @@ function decodeRecipient(recipient: Params): SplitRecipient {
   };
 }
 
+function encodeReceiptResent(resent: SplitReceiptResent): unknown {
+  return {
+    transactionId: resent.transactionId,
+    status: resent.status,
+    lastOfdError: resent.lastOfdError,
+  };
+}
+
+function decodeReceiptRecipient(recipient: Params): SplitReceiptRecipient {
+  return { ...decodeRecipient(recipient), items: recipient.array('items', decodeReceiptItem) };
+}
+
 function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
   return {
     transactionId: body.string('transactionId'),
     recipients: body.array('recipients', decodeRecipient),
-    ...optionalEntry('resendOfd', body.optionalBoolean('resendOFD')),
   };
+}
+
+function decodeResendRequest({ body }: FakeRequest): ResendSplitReceiptParams {
+  return {
+    transactionId: body.string('transactionId'),
+    recipients: body.array('recipients', decodeReceiptRecipient),
+  };
+}
+
+/** `resendOFD: true` marks a resend; a split sends no such flag. */
+function isResend({ body }: FakeRequest): boolean {
+  return body.optionalBoolean('resendOFD') === true;
 }
 
 function decodeGetRequest({ query }: FakeRequest): GetSplitParams {
@@ -45,10 +84,18 @@ export function createSplitsFake(
   return {
     create: script(
       'splits.create',
-      ENDPOINTS.create,
+      ENDPOINTS.splitPayment,
       encodeTransactionReference,
       decodeCreateRequest,
+      (request) => !isResend(request),
     ),
-    get: script('splits.get', ENDPOINTS.get, encodeSplitShares, decodeGetRequest),
+    resendReceipt: script(
+      'splits.resendReceipt',
+      ENDPOINTS.splitPayment,
+      encodeReceiptResent,
+      decodeResendRequest,
+      isResend,
+    ),
+    get: script('splits.get', ENDPOINTS.get, encodeSplit, decodeGetRequest),
   };
 }

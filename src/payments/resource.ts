@@ -1,6 +1,5 @@
 import { readCall, send } from '../core/call.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
-import { readOtpSms } from '../shared/otpSms.js';
 import { decodeTransactionReference, type TransactionReference } from '../shared/transactions.js';
 import { decodePanPaymentStarted, decodePaymentRefunded } from './decoders.js';
 import type {
@@ -19,9 +18,7 @@ export const ENDPOINTS = {
     method: 'POST',
     route: '/merchant/receipts/pay/',
     shape: 'envelope',
-    // A pay answered `processing_error` never ends up paid (docs/paylov/payments.md#flow).
     movesMoney: true,
-    definitiveCodes: ['processing_error'],
   },
   refund: {
     method: 'POST',
@@ -75,13 +72,13 @@ export interface PaymentsResource {
    * `transaction_not_available_for_payment`. Paylov does not document whether a pay can still land
    * while the status reads `created`; the SDK assumes a status that stays `created` across
    * repeated reads means the pay did not take effect: pay again with the same `transactionId`,
-   * never a new transaction. The SDK assumes a pay answered `processing_error` never lands, so it reads as a definitive
-   * decline.
+   * never a new transaction.
    *
    * @throws {@link PaylovApiError} `transaction_already_payed`,
    * `transaction_not_available_for_payment` (refunded, failed or not payable),
    * `card_is_not_for_this_check` (the card belongs to another user), `card_not_found`, and
-   * declines such as `insufficient_funds` and `processing_error`.
+   * declines such as `insufficient_funds`; `processing_error` (an unknown outcome: read the
+   * transaction before paying again).
    *
    * @example
    * await paylov.payments.pay({ transactionId, cardId, userId: 'user-42' });
@@ -90,19 +87,20 @@ export interface PaymentsResource {
 
   /**
    * Refunds a paid transaction **in full**; there is no partial refund. **Moves money back** to
-   * the card and also cancels the payment's fiscal (OFD) receipt. Release an uncaptured hold with
+   * the card. For a fiscalized payment Paylov then registers the refund (OFD) receipt within
+   * seconds to minutes; read it with `fiscalization.getReceipt`. Release an uncaptured hold with
    * `holds.release` instead.
    *
-   * Paylov may refuse an API refund for some payment kinds: checkout and PAN payments, and on
-   * Paylov's test environment captured holds. Then refund from the Paylov business panel or
-   * through Paylov support, and confirm with `paylov.transactions.get`.
+   * Paylov states that saved-card and PAN payments and captured holds are refundable, but its test
+   * environment refused PAN payments and captured holds. If a refund is refused, refund from the
+   * Paylov business panel or through Paylov support, and confirm with `paylov.transactions.get`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `paylov.transactions.get`: a refunded
    * transaction reads status `refunded` with `cancelledAt`. A repeated refund fails with
    * `transaction_not_available_for_cancel`.
    *
-   * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded, never
-   * paid, or a checkout or PAN payment), `processing_error` (an unknown outcome; Paylov's test
+   * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded or
+   * never paid; Paylov's test environment also answers it for a PAN payment), `processing_error` (an unknown outcome; Paylov's test
    * environment answers it for a captured hold and the transaction then still reads `paid`: refund
    * through the Paylov business panel, not by repeating the call), `transaction_not_found`,
    * `permission_denied`.
@@ -209,7 +207,6 @@ export function createPaymentsResource(http: HttpClient): PaymentsResource {
         amount: input.tiyinAsWholeSum('amountTiyin'),
         // The gateway requires the key.
         account: input.optionalJson('account') ?? {},
-        sms: input.optionalObject('sms', readOtpSms),
       };
       return send(http, ENDPOINTS.startPanPayment, { body, signal }, decodePanPaymentStarted);
     },
@@ -220,7 +217,6 @@ export function createPaymentsResource(http: HttpClient): PaymentsResource {
       const body = {
         transactionId: input.string('transactionId'),
         otp: input.string('otp'),
-        sms: input.optionalObject('sms', readOtpSms),
       };
       return send(http, ENDPOINTS.confirmPanPayment, { body, signal }, decodeTransactionReference);
     },

@@ -9,11 +9,13 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import { fixtureResponse } from '../helpers/fixtures.js';
+import { wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
 const PINFL = '88888888888888';
+const RECIPIENT = '5eed0000-0000-4000-8000-000000000101';
+const UNKNOWN_RECIPIENT = '5eed0000-0000-4000-8000-00000000dead';
 const ITEM = {
   title: 'Delivery',
   priceTiyin: 850_000,
@@ -30,7 +32,7 @@ function setup(...script: FakeResponseSpec[]) {
 
 describe('splits.create', () => {
   it('sends recipients with tiyin amounts and wire items', async () => {
-    const { resource, fetchImpl } = setup(fixtureResponse('splits/create.success.docs.json'));
+    const { resource, fetchImpl } = setup(wireResponse('splits/create.success.wire.json'));
 
     const created = await resource.create({
       transactionId: TRANSACTION_ID,
@@ -69,24 +71,7 @@ describe('splits.create', () => {
         },
       ],
     });
-    expect(created).toEqual({ transactionId: '9b3bd7be-9327-4608-b886-4353e49df05f' });
-  });
-
-  it('forwards resendOfd as resendOFD and rejects a non-boolean', async () => {
-    const { resource, fetchImpl } = setup(fixtureResponse('splits/create.success.docs.json'));
-    const params = {
-      transactionId: TRANSACTION_ID,
-      recipients: [{ recipientId: 'platform', amountTiyin: 150_000 }],
-    };
-
-    await resource.create({ ...params, resendOfd: true });
-    expect(recordOf(fetchImpl.calls[0]?.body)).toMatchObject({ resendOFD: true });
-
-    await expectInputError(resource.create({ ...params, resendOfd: 'yes' } as never), {
-      field: 'resendOfd',
-      rule: 'type',
-    });
-    expect(fetchImpl.calls).toHaveLength(1);
+    expect(created).toEqual({ transactionId: '5eed0000-0000-4000-8000-000000000201' });
   });
 
   it.each([
@@ -119,59 +104,125 @@ describe('splits.create', () => {
 
   it('surfaces recipient_not_found without the recipient ids it carries', async () => {
     const { resource, requests, responses } = setup(
-      fixtureResponse('splits/create.recipientNotFound.docs.json', { status: 400 }),
+      wireResponse('splits/create.recipientNotFound.wire.json'),
     );
 
     const error = await expectApiError(
       resource.create({
         transactionId: TRANSACTION_ID,
-        recipients: [{ recipientId: 'seller-42', amountTiyin: 100, items: [ITEM] }],
+        recipients: [{ recipientId: UNKNOWN_RECIPIENT, amountTiyin: 100_000, items: [ITEM] }],
       }),
       { code: 'recipient_not_found' },
     );
-    expectNoSecretLeak(error, ['<recipient_id>', 'seller-42', PINFL]);
-    expectNoSecretLeak([...requests, ...responses], ['seller-42', PINFL]);
+    expectNoSecretLeak(error, [UNKNOWN_RECIPIENT, PINFL]);
+    expectNoSecretLeak([...requests, ...responses], [UNKNOWN_RECIPIENT, PINFL]);
+  });
+});
+
+describe('splits.resendReceipt', () => {
+  it('sends the recipients with their items and resendOFD, and reads the resend answer', async () => {
+    const { resource, fetchImpl } = setup(wireResponse('splits/resendReceipt.success.wire.json'));
+
+    const resent = await resource.resendReceipt({
+      transactionId: TRANSACTION_ID,
+      recipients: [{ recipientId: RECIPIENT, amountTiyin: 850_000, items: [ITEM] }],
+    });
+
+    expect(fetchImpl.calls[0]).toMatchObject({
+      method: 'POST',
+      url: `${BASE_URL}/merchant/splitPayment/`,
+    });
+    expect(recordOf(fetchImpl.calls[0]?.body)).toMatchObject({
+      transactionId: TRANSACTION_ID,
+      recipients: [{ recipientId: RECIPIENT, amount: 850_000, items: [{ price: 850_000 }] }],
+      resendOFD: true,
+    });
+    expect(resent).toEqual({
+      transactionId: '5eed0000-0000-4000-8000-000000000202',
+      status: 'sent_to_ofd',
+      lastOfdError:
+        "{'Code': 30, 'Message': 'failed to validate receipt item spic: invalid package code values of items: [0]'}",
+    });
+  });
+
+  it('rejects a recipient without items before any request', async () => {
+    const { resource, fetchImpl } = setup();
+
+    await expectInputError(
+      resource.resendReceipt({
+        transactionId: TRANSACTION_ID,
+        recipients: [{ recipientId: RECIPIENT, amountTiyin: 850_000 }],
+      } as never),
+      { field: 'recipients[0].items', rule: 'required' },
+    );
+    expect(fetchImpl.calls).toHaveLength(0);
   });
 });
 
 describe('splits.get', () => {
-  it('reads every recipient share with tiyin amounts and the raw creation time', async () => {
-    const { resource, fetchImpl } = setup(fixtureResponse('splits/get.success.docs.json'));
+  it('reads every share with tiyin amounts and Tashkent times, and no receipt as null', async () => {
+    const { resource, fetchImpl } = setup(wireResponse('splits/get.twoShares.wire.json'));
 
-    const shares = await resource.get({ transactionId: TRANSACTION_ID });
+    const split = await resource.get({ transactionId: TRANSACTION_ID });
 
     expect(fetchImpl.calls[0]).toMatchObject({
       method: 'GET',
       url: `${BASE_URL}/merchant/splitPayment/status/?transactionId=${TRANSACTION_ID}`,
     });
-    expect(shares).toEqual([
-      {
-        recipientId: 'ccda5111-66a0-4896-90a2-b095ff558129',
-        amountTiyin: 100,
-        status: 'paid',
-        createdAtRaw: '2025-01-06 17:17:17',
-      },
-      {
-        recipientId: 'ffddb832-4bd2-410c-a1d9-26dv9fefb111',
-        amountTiyin: 100,
-        status: 'paid',
-        createdAtRaw: '2025-01-06 17:17:17',
-      },
-    ]);
+    const share = {
+      recipientId: RECIPIENT,
+      amountTiyin: 50_000,
+      status: 'paid',
+      createdAt: new Date('2026-11-25T06:56:19Z'),
+    };
+    expect(split).toEqual({ shares: [share, share], receipt: null });
+  });
+
+  it('reads the fiscal receipt entry that follows the shares', async () => {
+    const { resource } = setup(wireResponse('splits/get.saleReceipt.wire.json'));
+
+    const split = await resource.get({ transactionId: TRANSACTION_ID });
+
+    expect(split.shares).toHaveLength(1);
+    expect(split.receipt).toEqual({
+      receiptId: 4178,
+      receiptUrl:
+        'https://ofd.soliq.uz/epi?t=EZ000000000001&r=4178&c=20261125115642&s=100000000001',
+      terminalId: 'EZ000000000001',
+      fiscalSign: '100000000001',
+      isRefund: false,
+    });
+  });
+
+  it('throws split_not_found for a transaction without a split', async () => {
+    const { resource } = setup(wireResponse('splits/get.splitNotFound.wire.json'));
+
+    await expectApiError(resource.get({ transactionId: TRANSACTION_ID }), {
+      code: 'split_not_found',
+    });
+  });
+
+  it('throws transaction_not_found for an unknown transaction', async () => {
+    const { resource } = setup(wireResponse('splits/get.transactionNotFound.wire.json'));
+
+    await expectApiError(resource.get({ transactionId: TRANSACTION_ID }), {
+      code: 'transaction_not_found',
+    });
   });
 
   it('keeps unknown statuses open', async () => {
     const { resource } = setup({
       body: {
         result: [
-          { recipientId: 'r', amount: 1, status: 'pending', createdAt: '2025-01-06 17:17:17' },
+          { recipientId: 'r', amount: 1, status: 'pending', createdAt: '2026-11-25 11:56:19' },
+          { ofd: {} },
         ],
       },
     });
 
-    const [share] = await resource.get({ transactionId: TRANSACTION_ID });
+    const split = await resource.get({ transactionId: TRANSACTION_ID });
 
-    expect(share?.status).toBe('pending');
+    expect(split.shares[0]?.status).toBe('pending');
   });
 
   it.each([
@@ -180,6 +231,11 @@ describe('splits.get', () => {
       { result: [{ recipientId: 'r', amount: 1.5, status: 'paid', createdAt: '' }] },
       'result[0].amount',
     ],
+    [
+      { result: [{ recipientId: 'r', amount: 1, status: 'paid', createdAt: '2026-11-25' }] },
+      'result[0].createdAt',
+    ],
+    [{ result: [{ ofd: { isRefund: false, receiptId: 1 } }] }, 'result[0].ofd.receiptUrl'],
   ])('reports %j as malformed at %s', async (body, path) => {
     const { resource } = setup({ body });
 

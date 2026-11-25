@@ -32,7 +32,7 @@ Read and reconcile every result through [transactions](transactions.md); holds a
 [surface outside the SDK](README.md#surface-outside-the-sdk).
 
 A saved-card pay becomes `payed` and sets `date` to the payment time (W c089). A decline leaves one
-of two states, even for the same decline code (W):
+of two states, even for the same decline code (W), for a reason the docs do not give (D):
 
 - `failed`, with the card attached and `processing_error` in `error_message` (W c134, c135, c630,
   c631). It cannot be paid again: a later pay with either card answers
@@ -41,7 +41,9 @@ of two states, even for the same decline code (W):
 - `created`, with `card_id: null` (W c615, c616). A later pay with another card succeeded, and a
   further pay answered `transaction_already_payed` (W c617–c619).
 
-A pay answered `processing_error` never ends up paid (M 2026-11-23).
+A pay answered `processing_error` was never seen to end up paid, but Paylov does not document that
+it cannot, so the SDK reads it as an unknown outcome and the transaction is read before acting (M
+2026-11-25).
 
 After an uncertain pay, read the transaction by id with backoff; a replay error alone does not
 establish the earlier outcome ([common rules](#common-rules)). Recovery assumption (M 2026-11-15):
@@ -141,14 +143,14 @@ On DEV the HUMO test card paid 1, 2, 5 and 20 SUM and declined 50 and 1000 SUM w
 
 A one-off payment by full card number. No money moves until the OTP is confirmed.
 
-| Name         | Type   | Required | Description                                                                                                                                                                                                          | Grade                       |
-| ------------ | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `cardNumber` | string | Yes      | Full PAN; a bad Luhn digit → `card_not_found`. Minimum length untested here; [card binding](cards.md#create-user-card) requires 16 characters                                                                        | W (c176)                    |
-| `expireDate` | string | Yes      | `YYMM` with month 01–12; `MMYY` → `validation_error`; a valid but wrong expiry → `card_not_found`                                                                                                                    | W (c174, c175)              |
-| `amount`     | int    | Yes      | Whole SUM, at least 1: 1 SUM was created and confirmed; 0 → `invalid_amount`                                                                                                                                         | W (c177, c590, c593)        |
-| `account`    | object | Yes      | Merchant data; `{}` when none                                                                                                                                                                                        | W (c171, c172)              |
-| `extId`      | string | No       | At most 64 characters, else `validation_error` "String should have at most 64 characters"; echoed in the response in full, never stored (`external_id` reads `null`)                                                 | W (c166, c170, c594–c599)   |
-| `sms`        | object | No       | Undocumented here. `{hash?: string, templateId?: int}` as on [card binding](cards.md#create-user-card): omitted, `{}` and `{hash, templateId: 1}` completed alike, a string is `validation_error`; effect [OPEN Q29] | W (c737, c739, c1365–c1373) |
+| Name         | Type   | Required | Description                                                                                                                                                                                                                                                                          | Grade                       |
+| ------------ | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| `cardNumber` | string | Yes      | Full PAN; a bad Luhn digit → `card_not_found`. Minimum length untested here; [card binding](cards.md#create-user-card) requires 16 characters                                                                                                                                        | W (c176)                    |
+| `expireDate` | string | Yes      | `YYMM` with month 01–12; `MMYY` → `validation_error`; a valid but wrong expiry → `card_not_found`                                                                                                                                                                                    | W (c174, c175)              |
+| `amount`     | int    | Yes      | Whole SUM, at least 1: 1 SUM was created and confirmed; 0 → `invalid_amount`                                                                                                                                                                                                         | W (c177, c590, c593)        |
+| `account`    | object | Yes      | Merchant data; `{}` when none                                                                                                                                                                                                                                                        | W (c171, c172)              |
+| `extId`      | string | No       | At most 64 characters, else `validation_error` "String should have at most 64 characters"; echoed in the response in full, never stored (`external_id` reads `null`)                                                                                                                 | W (c166, c170, c594–c599)   |
+| `sms`        | object | No       | Undocumented here. `{hash?: string, templateId?: int}` as on [card binding](cards.md#create-user-card): omitted, `{}` and `{hash, templateId: 1}` completed alike, a string is `validation_error`; its effect is undocumented and none was observed; the SDK does not send the field | W (c737, c739, c1365–c1373) |
 
 ```json
 {
@@ -190,11 +192,11 @@ A one-off payment by full card number. No money moves until the OTP is confirmed
 
 `POST {BASE_URL}/merchant/confirmPayment/`
 
-| Name            | Type   | Required | Description                                                                                                                   | Grade                         |
-| --------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `transactionId` | UUID   | Yes      | From `paymentWithoutRegistration/`                                                                                            | W (c128)                      |
-| `otp`           | string | Yes      | The 6-digit code from the SMS                                                                                                 | W (c168), D                   |
-| `sms`           | object | No       | Undocumented here. As on create: `{}` and `{hash, templateId: 1}` accepted, a string is `validation_error`; effect [OPEN Q29] | W (c738, c1363, c1369, c1372) |
+| Name            | Type   | Required | Description                                                                                                                                                                                   | Grade                         |
+| --------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `transactionId` | UUID   | Yes      | From `paymentWithoutRegistration/`                                                                                                                                                            | W (c128)                      |
+| `otp`           | string | Yes      | The 6-digit code from the SMS                                                                                                                                                                 | W (c168), D                   |
+| `sms`           | object | No       | Undocumented here. As on create: `{}` and `{hash, templateId: 1}` accepted, a string is `validation_error`; its effect is undocumented and none was observed; the SDK does not send the field | W (c738, c1363, c1369, c1372) |
 
 Success is `{"result": {"transactionId": ...}, "error": null}` and the transaction becomes `payed`
 (W c168, c170, c179).
@@ -222,14 +224,24 @@ caused by card binding, PWR confirm still answered `invalid_otp` three times bef
 `POST {BASE_URL}/merchant/payment/cancel/`
 
 Fully refunds a paid transaction; there is no amount field and no partial refund. Cancelling a card
-payment also cancels its [fiscal receipt](fiscalization.md#refund-fiscal-receipt) (D). Release an
+payment also cancels its [fiscal receipt](fiscalization.md#refund-fiscal-receipt) (D); live, the
+refund receipt follows seconds to minutes after the cancel (W c1666, c1689, c1691). Release an
 uncaptured hold with [dismiss](holds.md#dismiss) instead.
 
-Which payment kinds the API refunds is not documented. On DEV, cancel refunds only saved-card
-payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and stayed
-`payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid checkout
-(W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Production was not
-tried. The other documented cancel paths are the Paylov business panel and Paylov staff, which emit
+The API refunds saved-card and PWR payments and captured holds, per the Paylov team (answer relayed
+by the maintainer, 2026-11-25: "Refunds of both are possible. Refunds of holds are possible too",
+translated from Russian); the docs do not say which kinds it refunds (D). DEV refunded only
+saved-card payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and
+stayed `payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid
+checkout (W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Saved-card
+payments also have an unknown API refund cut-off: two paid on 2026-11-13, about 11 days old,
+answered `transaction_not_available_for_cancel` and stayed `payed` (W c1562–c1564, c1566–c1568),
+while a same-day saved-card payment refunded (W c1579, c1580); the cut-off is agreed with each
+merchant, per the Paylov team (answer relayed by the maintainer, 2026-11-25: "agreed with each one
+separately", translated from Russian). The sandbox API Reference describes the cancel as "Cancel a
+payment that hasn't been settled yet" (S), which suggests the cut-off is the merchant settlement;
+neither the DEV window nor the production one is known. Production was not tried. The other
+documented cancel paths are the Paylov business panel and Paylov staff, which emit
 [`transaction.cancel`](callbacks.md#transactioncancel) (D); whether an API cancel emits it is
 undocumented, so confirm a refund with a [transaction read](transactions.md#get-one-transaction).
 
@@ -254,16 +266,23 @@ Success; `cancelTime` is `YYYY-MM-DD HH:MM:SS` in Tashkent time, UTC+05:00: the 
 The transaction then reads `status: "cancel"` with the same `cancel_time`, and unchanged `date` and
 `amount_in_tiyin` (W c113; [fields](transactions.md#fields-of-transactions)).
 
-| Trigger                                           | Code                                                           | Grade                  |
-| ------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
-| Already cancelled (replay)                        | `transaction_not_available_for_cancel`                         | W (c112)               |
-| Not paid (`created`); the receipt stays `created` | `transaction_not_available_for_cancel`                         | W (c114, c1272, c1273) |
-| Checkout transaction (`via_link: true`)           | `transaction_not_available_for_cancel`                         | W (c358)               |
-| Paid PWR payment                                  | `transaction_not_available_for_cancel`                         | W (c565)               |
-| Captured hold, on DEV                             | `processing_error`                                             | W (c559, c887)         |
-| Unknown                                           | `transaction_not_found`                                        | W (c115)               |
-| Non-UUID                                          | `validation_error` `{transactionId: ["must be a valid UUID"]}` | W (c116)               |
-| Not permitted for the merchant                    | `permission_denied`                                            | D                      |
+A [split](splits.md) payment refunds the same way: the parent reads `cancel` with `is_split: true`,
+every share reads `cancelled`, and a fiscalized split gets its refund receipt seconds later (W
+c1746–c1749, c1810–c1813).
+
+| Trigger                                                                                                                   | Code                                                           | Grade                  |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
+| Already cancelled (replay)                                                                                                | `transaction_not_available_for_cancel`                         | W (c112)               |
+| Not paid (`created`); the receipt stays `created`                                                                         | `transaction_not_available_for_cancel`                         | W (c114, c1272, c1273) |
+| Checkout transaction (`via_link: true`)                                                                                   | `transaction_not_available_for_cancel`                         | W (c358)               |
+| Paid PWR payment                                                                                                          | `transaction_not_available_for_cancel`                         | W (c565)               |
+| Saved-card payment about 11 days old                                                                                      | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1563, c1567)       |
+| Fiscalized saved-card payment whose register first failed with `ofd_error` three times, 1.5 and 7.5 minutes after payment | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1633, c1698)       |
+| Unfiscalized, unsplit saved-card payment 3.7 minutes after payment                                                        | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1831, c1834)       |
+| Captured hold, on DEV                                                                                                     | `processing_error`                                             | W (c559, c887)         |
+| Unknown                                                                                                                   | `transaction_not_found`                                        | W (c115)               |
+| Non-UUID                                                                                                                  | `validation_error` `{transactionId: ["must be a valid UUID"]}` | W (c116)               |
+| Not permitted for the merchant                                                                                            | `permission_denied`                                            | D                      |
 
 ## Observed behavior
 

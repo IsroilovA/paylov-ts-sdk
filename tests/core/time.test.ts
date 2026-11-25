@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  fromUnixSeconds,
-  parseIsoDateTime,
-  parseTashkentDateTime,
-  parseUtcDateTime,
-} from '../../src/core/time.js';
+import { fromUnixSeconds, parseTashkentDateTime, parseUtcDateTime } from '../../src/core/time.js';
 
 const MALFORMED_LOCAL = [
   '2026-11-12T10:00:00',
@@ -58,31 +53,6 @@ describe('parseUtcDateTime', () => {
 
   it.each(['2026-11-12T10:00:00', '2026-02-29 10:00:00'])('rejects %j', (value) => {
     expect(parseUtcDateTime(value)).toBeUndefined();
-  });
-});
-
-describe('parseIsoDateTime', () => {
-  it.each([
-    ['2026-11-12T10:15:30Z', '2026-11-12T10:15:30.000Z'],
-    ['2026-11-12T10:15:30+05:00', '2026-11-12T05:15:30.000Z'],
-    ['2026-11-12T10:15:30-03:30', '2026-11-12T13:45:30.000Z'],
-    ['2026-11-12T10:15:30.5+05:00', '2026-11-12T05:15:30.500Z'],
-    ['2026-11-12T10:15:30.123456+05:00', '2026-11-12T05:15:30.123Z'],
-  ])('parses %s', (value, expected) => {
-    expect(parseIsoDateTime(value)?.toISOString()).toBe(expected);
-  });
-
-  it.each([
-    '2026-11-12T10:15:30',
-    '2026-11-12 10:15:30Z',
-    '2026-11-12T10:15:30.1234567Z',
-    '2026-11-12T10:15:30+0500',
-    '2026-11-12T10:15:30+24:00',
-    '2026-11-12T10:15:30+05:60',
-    '2026-02-30T10:15:30Z',
-    '2026-11-12T25:15:30Z',
-  ])('rejects %s', (value) => {
-    expect(parseIsoDateTime(value)).toBeUndefined();
   });
 });
 

@@ -2,34 +2,20 @@
 
 import {
   asJsonObject,
-  asNonEmptyString,
-  asRecord,
   asTiyin,
   asUnixDateTime,
   asUuid,
-  fieldOf,
   isRecord,
   DecodeFailure,
   readFields,
-  type Decoder,
 } from '../core/decoding.js';
-import { decodeCheckoutAmount, type CheckoutAmount } from '../shared/checkoutAmount.js';
-import type {
-  InvalidWebhook,
-  InvalidWebhookReason,
-  WebhookCallbackId,
-  WebhookEvent,
-} from './types.js';
+import type { InvalidWebhook, InvalidWebhookReason, WebhookEvent } from './types.js';
 
 /** A decoded body, before the receiver adds the credential pair that authenticated it. */
 export type DecodedWebhook = WebhookEvent | InvalidWebhook;
 
 export function invalid(reason: InvalidWebhookReason): InvalidWebhook {
   return { kind: 'invalid', reason };
-}
-
-export function isCallbackId(value: unknown): value is WebhookCallbackId {
-  return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value));
 }
 
 function parseJsonBytes(bytes: Uint8Array): unknown {
@@ -55,28 +41,6 @@ function parseJsonBody(body: unknown): unknown {
   return JSON.parse(JSON.stringify(body));
 }
 
-// Check and perform carry `amount_tiyin`; cancel and deposit carry `amount_in_tiyin`. The
-// asymmetry is documented, and only the minor-unit field is read: no rounding rule is stated for
-// the whole-currency `amount`.
-const decodeParamsAmount: Decoder<CheckoutAmount> = (value, path) => {
-  const params = asRecord(value, path);
-  const amount = decodeCheckoutAmount(params['amount_tiyin'], params['currency']);
-  if (amount === undefined) throw new DecodeFailure(path);
-  return amount;
-};
-
-function decodeCheckOrPerform(
-  method: 'transaction.check' | 'transaction.perform',
-  id: WebhookCallbackId,
-  value: unknown,
-): DecodedWebhook {
-  const params = readFields(value, 'params');
-  const account = params('account', asJsonObject);
-  const amount = decodeParamsAmount(value, 'params');
-  if (method === 'transaction.check') return { kind: method, id, account, amount };
-  return { kind: method, id, transactionId: params('transaction_id', asUuid), account, amount };
-}
-
 function decodeCancel(value: unknown): DecodedWebhook {
   const params = readFields(value, 'params');
   return {
@@ -88,50 +52,11 @@ function decodeCancel(value: unknown): DecodedWebhook {
   };
 }
 
-function decodeDeposit(value: unknown): DecodedWebhook {
-  const params = readFields(value, 'params');
-  return {
-    kind: 'merchant.deposit',
-    depositId: params('id', asUuid),
-    // Opaque: the docs example is the numeric string "125".
-    merchantId: params('merchant', asNonEmptyString),
-    source: params('type', asNonEmptyString),
-    amountTiyin: params('amount_in_tiyin', asTiyin),
-    createdAt: params('create_time', asUnixDateTime),
-  };
-}
-
-const JSON_RPC_METHODS = [
-  'transaction.check',
-  'transaction.perform',
-  'transaction.cancel',
-  'merchant.deposit',
-] as const;
-
 function decodeJsonRpc(envelope: Readonly<Record<string, unknown>>): DecodedWebhook {
   if (envelope['jsonrpc'] !== '2.0') return invalid('invalid_request');
-  const method = JSON_RPC_METHODS.find((name) => name === envelope['method']);
-  if (method === undefined) return invalid('unknown_method');
   const params = envelope['params'];
-  if (method === 'transaction.cancel') return decodeCancel(params);
-  if (method === 'merchant.deposit') return decodeDeposit(params);
-  if (!isRecord(params)) return invalid('invalid_params');
-  const id = envelope['id'];
-  if (!isCallbackId(id)) return invalid('invalid_request');
-  return decodeCheckOrPerform(method, id, params);
-}
-
-// The card itself is unauthenticated processor data; its id is enough to read it through the
-// authenticated cards API.
-function decodeCardBind(envelope: Readonly<Record<string, unknown>>): DecodedWebhook {
-  const field = readFields(envelope, 'body');
-  return {
-    kind: 'card.bind',
-    token: field('token', asNonEmptyString),
-    userId: field('userId', asNonEmptyString),
-    status: field('status', asNonEmptyString),
-    cardId: field('card', fieldOf('cardId', asUuid)),
-  };
+  if (envelope['method'] === 'transaction.cancel') return decodeCancel(params);
+  return invalid('unknown_method');
 }
 
 export function decodeWebhook(body: unknown): DecodedWebhook {
@@ -145,11 +70,9 @@ export function decodeWebhook(body: unknown): DecodedWebhook {
   // Every field failure, nesting deeper than the JSON copy allows included, is `invalid_params`;
   // any other exception is an SDK bug and propagates.
   try {
-    if ('jsonrpc' in envelope) return decodeJsonRpc(envelope);
-    if ('token' in envelope) return decodeCardBind(envelope);
+    return decodeJsonRpc(envelope);
   } catch (error) {
     if (error instanceof DecodeFailure) return invalid('invalid_params');
     throw error;
   }
-  return invalid('invalid_request');
 }

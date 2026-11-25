@@ -1,18 +1,19 @@
 /** Compile-time contracts of `client.transactions`. */
 
-import type {
-  PaylovClient,
-  FiscalReceiptSummary,
-  Transaction,
-  TransactionPage,
-  TransactionStatus,
+import {
+  readRefundState,
+  type PaylovClient,
+  type FiscalReceiptSummary,
+  type Transaction,
+  type TransactionPage,
+  type TransactionStatus,
 } from '../../src/index.js';
 
 declare const client: PaylovClient;
 const transactionId = '5eed0000-0000-4000-8000-000000000001';
 
-const transaction: Transaction | null = await client.transactions.get({ transactionId });
-if (transaction !== null) {
+const transaction: Transaction = await client.transactions.get({ transactionId });
+{
   const status: TransactionStatus = transaction.status;
   const known: boolean =
     status === 'held' || status === 'paid' || status === 'failed' || status === 'refunded';
@@ -21,18 +22,21 @@ if (transaction !== null) {
   const cancelledAt: Date | null = transaction.cancelledAt;
   const receipts: readonly FiscalReceiptSummary[] = transaction.fiscalReceipts;
   const declineCode: string | null = transaction.declineCode;
-  const isCheckout: boolean = transaction.isCheckout;
-  void [known, passthrough, at, cancelledAt, receipts, declineCode, isCheckout];
+  void [known, passthrough, at, cancelledAt, receipts, declineCode];
   // @ts-expect-error the cardholder name is withheld
   void transaction.owner;
   // @ts-expect-error the float SUM amount is withheld; read amountTiyin
   void transaction.amount;
   // @ts-expect-error REST reads return the merchant account as {}, so it is withheld
   void transaction.account;
-  // @ts-expect-error a fiscal receipt time has no known zone, so it is not a Date
-  const receiptAt: Date | undefined = receipts[0]?.issuedAtRaw;
+  const receiptAt: Date | undefined = receipts[0]?.issuedAt;
   void receiptAt;
+  // @ts-expect-error the receipt time is a Date, not raw text
+  void receipts[0]?.issuedAtRaw;
 }
+// @ts-expect-error a miss throws, so get never returns null
+const missing: null = await client.transactions.get({ transactionId });
+void missing;
 // @ts-expect-error get needs a transactionId
 void client.transactions.get({});
 
@@ -47,3 +51,7 @@ void client.transactions.list({ status: 'paid' });
 
 const rrn: string = await client.transactions.getRrn({ transactionId });
 void rrn;
+
+void readRefundState({ transaction });
+// @ts-expect-error a missing transaction is a transaction_not_found error, never a null read
+void readRefundState({ transaction: null });

@@ -113,8 +113,8 @@ export function wireResponse(
  * fixture. Recordings must go through `wireResponse`, which also replays their status.
  *
  * @example
- * const { resource } = setupResource(createSplitsResource, [
- *   fixtureResponse('splits/create.recipientNotFound.docs.json', { status: 400 }),
+ * const { resource } = setupResource(createFiscalizationResource, [
+ *   fixtureResponse('fiscalization/register.commitentNotActive.docs.json', { status: 400 }),
  * ]);
  */
 export function fixtureResponse(

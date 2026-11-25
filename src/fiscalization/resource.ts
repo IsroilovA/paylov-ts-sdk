@@ -1,22 +1,18 @@
-import { orOnMiss, readCall, send } from '../core/call.js';
+import { readCall, send } from '../core/call.js';
 import { everyLiteral } from '../core/params.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
+import type { FiscalReceipt, FiscalReceiptRegistered } from '../shared/fiscalReceipts.js';
 import { readReceiptItem } from '../shared/receiptItems.js';
-import { readTransactionLookup } from '../shared/transactions.js';
 import {
   decodeActivityTypeCheck,
-  decodeAttachConfirmation,
   decodeReceiptLookup,
   decodeReceiptRefunded,
   decodeFiscalReceiptRegistered,
 } from './decoders.js';
 import type {
   ActivityTypeCheck,
-  AttachFiscalReceiptParams,
   CheckActivityTypeParams,
   FiscalActivityType,
-  FiscalReceipt,
-  FiscalReceiptRegistered,
   FiscalReceiptRefunded,
   GetFiscalReceiptParams,
   RefundFiscalReceiptParams,
@@ -32,14 +28,6 @@ export const ENDPOINTS = {
   getReceipt: {
     method: 'GET',
     route: '/merchant/fiscalization/status/',
-    shape: 'envelope',
-    // Paylov answers it only for an unknown `externalId`; an unknown `transactionId` is
-    // `transaction_not_found`.
-    miss: 'ofd_check_not_found',
-  },
-  attachReceipt: {
-    method: 'POST',
-    route: '/merchant/fiscalization/set-receipt/',
     shape: 'envelope',
   },
   refundReceipt: { method: 'POST', route: '/merchant/fiscalization/refund/', shape: 'envelope' },
@@ -69,16 +57,17 @@ export const WIRE_ACTIVITY_TYPES: Readonly<Record<FiscalActivityType, number>> =
  */
 export interface FiscalizationResource {
   /**
-   * Has Paylov register a fiscal receipt with the OFD: for a paid card payment by
-   * `transactionId`, or for a cash sale by `externalId` and `phoneNumber`. Moves no money. Item
+   * Has Paylov register a fiscal receipt with the OFD for a paid card payment. Moves no money. Item
    * prices are integer tiyin; the lines, each `(priceTiyin - discountTiyin) * count`, must total
    * the transaction amount.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before registering again;
    * `null` means nothing is registered yet. `ofd_check_already_generated` on a repeated call
-   * means a receipt exists.
+   * means a receipt exists. After `ofd_error` from the OFD rejecting an item, such as a
+   * `packageCode` that does not belong to the item's `code`, nothing is registered: fix the item
+   * and register again.
    *
-   * @throws {@link PaylovApiError} `ofd_check_already_generated`,
+   * @throws {@link PaylovApiError} `ofd_check_already_generated`, `transaction_not_found`,
    *   `receipt_not_available_for_operation` (not paid), `invalid_amount` (item total),
    *   `ofd_commitent_or_subcommission_not_active` (an item's TIN or PINFL has no active OFD
    *   contract), `ofd_error`, `fiscal_receipt_not_generated`, `permission_denied`.
@@ -106,10 +95,9 @@ export interface FiscalizationResource {
   ): Promise<FiscalReceiptRegistered>;
 
   /**
-   * Reads the receipt of a card payment by `transactionId`, or of a cash sale by the `externalId`
-   * it was registered with. Resolves `null` when no receipt is found for the transaction or the
-   * `externalId`; the OFD may register one later, so `null` is an observation, not proof. Moves
-   * no money and works without fiscalization enabled.
+   * Reads the receipt of a card payment. Resolves `null` when the transaction has no receipt; the
+   * OFD may register one later, so `null` is an observation, not proof. Moves no money and works
+   * without fiscalization enabled.
    *
    * @throws {@link PaylovApiError} `transaction_not_found` for an unknown `transactionId`.
    *
@@ -123,46 +111,22 @@ export interface FiscalizationResource {
   ): Promise<FiscalReceipt | null>;
 
   /**
-   * Attaches a receipt you fiscalized yourself to a paid Paylov transaction; nothing is sent to
-   * the OFD. Moves no money. Needs fiscalization in client-side mode, otherwise
-   * `permission_denied`.
-   *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before attaching again;
-   * `ofd_check_already_generated` on a repeated call means a receipt is attached.
-   *
-   * @throws {@link PaylovApiError} `ofd_check_already_generated`, `field_not_valid` (`fields`
-   *   names the wire field `transactionId`, `dateTime` for `issuedAtRaw`, or `qrCodeUrl` for
-   *   `receiptUrl`), `external_id_already_exists`,
-   *   `transaction_not_found`, `receipt_not_available_for_operation`,
-   *   `ofd_too_many_requests_for_this_receipt`, `permission_denied`.
-   *
-   * @example
-   * await paylov.fiscalization.attachReceipt({
-   *   transactionId,
-   *   terminalId: ofdReceipt.terminalId,
-   *   issuedAtRaw: '20260915143025',
-   *   fiscalSign: ofdReceipt.fiscalSign,
-   *   receiptUrl: ofdReceipt.receiptUrl,
-   *   receiptId: ofdReceipt.receiptId,
-   * });
-   */
-  attachReceipt(params: AttachFiscalReceiptParams, options?: PaylovCallOptions): Promise<void>;
-
-  /**
    * Registers an OFD refund receipt that reverses a sale receipt. Moves no money: refund a card
-   * payment with `payments.refund`, which Paylov documents also cancels its fiscalization. For a
-   * card payment, call this only when `getReceipt({ transactionId, isRefund: true })` shows no
-   * refund receipt after `payments.refund`.
+   * payment with `payments.refund`, after which Paylov registers its refund receipt within seconds
+   * to minutes. For a card payment, call this only when `getReceipt({ transactionId, isRefund:
+   * true })` still shows no refund receipt some minutes after `payments.refund`.
    *
-   * Recovery: store each `receiptId` with its `transactionId` or `externalId`; when
-   * `isPaylovOutcomeUnknown(error)`, read `getReceipt({ ..., isRefund: true })` before refunding
-   * again.
+   * Recovery: store each `receiptId` with its `transactionId`; when
+   * `isPaylovOutcomeUnknown(error)`, read `getReceipt({ transactionId, isRefund: true })` before
+   * refunding again. `ofd_check_already_generated` means a refund receipt exists.
    *
-   * @throws {@link PaylovApiError} `ofd_check_not_found`, `ofd_error`, `permission_denied`.
+   * @throws {@link PaylovApiError} `ofd_check_already_generated` (a refund receipt exists),
+   *   `receipt_not_available_for_operation` (a card payment that is not refunded), `ofd_check_not_found`
+   *   (unknown `receiptId`), `permission_denied` (fiscalization not enabled).
    *
    * @example
    * const { refund } = await paylov.fiscalization.refundReceipt({ receiptId: sale.receiptId });
-   * await receipts.saveRefund(sale.externalId, refund.receiptId, refund.receiptUrl);
+   * await receipts.saveRefund(transactionId, refund.receiptId, refund.receiptUrl);
    */
   refundReceipt(
     params: RefundFiscalReceiptParams,
@@ -194,12 +158,10 @@ export function createFiscalizationResource(http: HttpClient): FiscalizationReso
     async registerReceipt(params, options) {
       const method = 'fiscalization.registerReceipt';
       const { input, signal } = readCall(params, options, method);
-      const lookup = readTransactionLookup(input);
-      const sale =
-        lookup.transactionId === undefined
-          ? { ...lookup, phoneNumber: input.string('phoneNumber') }
-          : lookup;
-      const body = { ...sale, items: input.array('items', readReceiptItem) };
+      const body = {
+        transactionId: input.string('transactionId'),
+        items: input.array('items', readReceiptItem),
+      };
       return send(http, ENDPOINTS.registerReceipt, { body, signal }, decodeFiscalReceiptRegistered);
     },
 
@@ -207,26 +169,10 @@ export function createFiscalizationResource(http: HttpClient): FiscalizationReso
       const method = 'fiscalization.getReceipt';
       const { input, signal } = readCall(params, options, method);
       const query = {
-        ...readTransactionLookup(input),
+        transactionId: input.string('transactionId'),
         refunded: input.optionalBoolean('isRefund'),
       };
-      const receipt = send(http, ENDPOINTS.getReceipt, { query, signal }, decodeReceiptLookup);
-      return orOnMiss(receipt, ENDPOINTS.getReceipt, null);
-    },
-
-    async attachReceipt(params, options) {
-      const method = 'fiscalization.attachReceipt';
-      const { input, signal } = readCall(params, options, method);
-      const body = {
-        transactionId: input.string('transactionId'),
-        externalId: input.optionalString('externalId'),
-        terminalId: input.string('terminalId'),
-        dateTime: input.string('issuedAtRaw'),
-        fiscalSign: input.string('fiscalSign'),
-        qrCodeUrl: input.string('receiptUrl'),
-        receiptId: input.integer('receiptId'),
-      };
-      return send(http, ENDPOINTS.attachReceipt, { body, signal }, decodeAttachConfirmation);
+      return send(http, ENDPOINTS.getReceipt, { query, signal }, decodeReceiptLookup);
     },
 
     async refundReceipt(params, options) {

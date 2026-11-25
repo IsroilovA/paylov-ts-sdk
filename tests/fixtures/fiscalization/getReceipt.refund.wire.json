@@ -1,0 +1,15 @@
+{
+  "capture": "1689",
+  "status": 200,
+  "body": {
+    "result": {
+      "success": true,
+      "isRefund": true,
+      "receiptUrl": "https://ofd.soliq.uz/epi?t=EZ000000000001&r=4173&c=20261125112828&s=100000000003",
+      "terminalId": "EZ000000000001",
+      "receiptId": 4173,
+      "fiscalSign": "100000000003"
+    },
+    "error": null
+  }
+}

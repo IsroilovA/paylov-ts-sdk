@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { createFiscalizationResource } from '../../src/fiscalization/resource.js';
-import type { AttachFiscalReceiptParams } from '../../src/index.js';
 import {
   expectApiError,
   expectInputError,
@@ -10,16 +9,10 @@ import {
   recordOf,
 } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
-import {
-  fixtureResponse,
-  loadFixture,
-  patchedResponse,
-  wireResponse,
-} from '../helpers/fixtures.js';
+import { fixtureResponse, patchedResponse, wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
-const PHONE = '+998900000000';
 const ITEM_PINFL = '88888888888888';
 const PERSON_PINFL = '99999999999999';
 const ITEM = {
@@ -48,9 +41,7 @@ function setup(...script: FakeResponseSpec[]) {
 
 describe('fiscalization.registerReceipt', () => {
   it('registers a card payment by transactionId and decodes result.ofd', async () => {
-    const { resource, fetchImpl } = setup(
-      fixtureResponse('fiscalization/register.success.docs.json'),
-    );
+    const { resource, fetchImpl } = setup(wireResponse('fiscalization/register.success.wire.json'));
 
     const receipt = await resource.registerReceipt(REGISTER);
 
@@ -60,45 +51,49 @@ describe('fiscalization.registerReceipt', () => {
       body: { transactionId: TRANSACTION_ID, items: [{ ...WIRE_ITEM, tin: '123456789' }] },
     });
     expect(receipt).toEqual({
-      receiptId: 987654,
-      receiptUrl: 'https://ofd.example.com/receipt/12345',
-      terminalId: 'T123456',
-      fiscalSign: 'FS123ABC',
+      receiptId: 4171,
+      receiptUrl:
+        'https://ofd.soliq.uz/epi?t=EZ000000000001&r=4171&c=20261125112445&s=100000000001',
+      terminalId: 'EZ000000000001',
+      fiscalSign: '100000000001',
     });
   });
 
-  it('registers a cash sale by externalId and phoneNumber', async () => {
+  it('reports an OFD rejection as a settled failure without quoting the OFD answer', async () => {
+    const { resource, requests, responses } = setup(
+      wireResponse('fiscalization/register.ofdError.wire.json'),
+    );
+
+    const error = await expectApiError(resource.registerReceipt(REGISTER), { code: 'ofd_error' });
+
+    expect(error.isUnsettled).toBe(false);
+    const answer = ['invalid package code', 'Ofd error.'];
+    expectNoSecretLeak(error, answer);
+    expectNoSecretLeak([...requests, ...responses], answer);
+  });
+
+  it('sends an item fiscalized under a PINFL', async () => {
     const { resource, fetchImpl } = setup(
       fixtureResponse('fiscalization/register.success.docs.json'),
     );
 
     await resource.registerReceipt({
-      externalId: 'cash-0001',
-      phoneNumber: PHONE,
+      transactionId: TRANSACTION_ID,
       items: [{ ...ITEM, pinfl: ITEM_PINFL }],
     });
 
     expect(recordOf(fetchImpl.calls[0]?.body)).toEqual({
-      externalId: 'cash-0001',
-      phoneNumber: PHONE,
+      transactionId: TRANSACTION_ID,
       items: [{ ...WIRE_ITEM, pinfl: ITEM_PINFL }],
     });
   });
 
-  it.each([
-    [{}, undefined, 'exclusive'],
-    [
-      { transactionId: TRANSACTION_ID, externalId: 'cash-0001', phoneNumber: PHONE },
-      undefined,
-      'exclusive',
-    ],
-    [{ externalId: 'cash-0001' }, 'phoneNumber', 'required'],
-  ] as const)('rejects ids %j before any request', async (ids, field, rule) => {
+  it('requires the transactionId before any request', async () => {
     const { resource, fetchImpl } = setup();
 
     await expectInputError(
-      resource.registerReceipt({ ...ids, items: [{ ...ITEM, tin: '123456789' }] } as never),
-      { field, rule },
+      resource.registerReceipt({ items: [{ ...ITEM, tin: '123456789' }] } as never),
+      { field: 'transactionId', rule: 'required' },
     );
     expect(fetchImpl.calls).toHaveLength(0);
   });
@@ -127,37 +122,51 @@ describe('fiscalization.registerReceipt', () => {
     });
   });
 
-  it('keeps phones, PINFLs and echoed tax ids out of errors and logger events', async () => {
+  it('keeps PINFLs and echoed tax ids out of errors and logger events', async () => {
     const { resource, requests, responses } = setup(
       fixtureResponse('fiscalization/register.commitentNotActive.docs.json', { status: 400 }),
     );
 
     const error = await expectApiError(
       resource.registerReceipt({
-        externalId: 'cash-0001',
-        phoneNumber: PHONE,
+        transactionId: TRANSACTION_ID,
         items: [{ ...ITEM, pinfl: ITEM_PINFL }],
       }),
       { code: 'ofd_commitent_or_subcommission_not_active' },
     );
-    const secrets = [PHONE, ITEM_PINFL, '123456789', 'cash-0001'];
+    const secrets = [ITEM_PINFL, '123456789'];
     expectNoSecretLeak(error, secrets);
     expectNoSecretLeak([...requests, ...responses], secrets);
   });
 });
 
 describe('fiscalization.getReceipt', () => {
-  it('reads a receipt by transactionId with the isRefund filter', async () => {
+  it('reads a refund receipt by transactionId with the isRefund filter', async () => {
     const { resource, fetchImpl } = setup(
-      fixtureResponse('fiscalization/getReceipt.success.docs.json'),
+      wireResponse('fiscalization/getReceipt.refund.wire.json'),
     );
 
-    const receipt = await resource.getReceipt({ transactionId: TRANSACTION_ID, isRefund: false });
+    const receipt = await resource.getReceipt({ transactionId: TRANSACTION_ID, isRefund: true });
 
     expect(fetchImpl.calls[0]).toMatchObject({
       method: 'GET',
-      url: `${BASE_URL}/merchant/fiscalization/status/?transactionId=${TRANSACTION_ID}&refunded=false`,
+      url: `${BASE_URL}/merchant/fiscalization/status/?transactionId=${TRANSACTION_ID}&refunded=true`,
     });
+    expect(receipt).toEqual({
+      receiptId: 4173,
+      receiptUrl:
+        'https://ofd.soliq.uz/epi?t=EZ000000000001&r=4173&c=20261125112828&s=100000000003',
+      terminalId: 'EZ000000000001',
+      fiscalSign: '100000000003',
+      isRefund: true,
+    });
+  });
+
+  it('decodes the documented sale receipt', async () => {
+    const { resource } = setup(fixtureResponse('fiscalization/getReceipt.success.docs.json'));
+
+    const receipt = await resource.getReceipt({ transactionId: TRANSACTION_ID, isRefund: false });
+
     expect(receipt).toEqual({
       receiptId: 173723,
       receiptUrl: 'https://ofd.soliq.uz/epi?t=EP000000000001&r=001&c=20060102000000&s=000000000001',
@@ -167,31 +176,10 @@ describe('fiscalization.getReceipt', () => {
     });
   });
 
-  it('reads by externalId alone, without leaking it into logger events', async () => {
-    const { resource, fetchImpl, requests, responses } = setup(
-      fixtureResponse('fiscalization/getReceipt.success.docs.json'),
-    );
-
-    await resource.getReceipt({ externalId: 'cash/0001' });
-
-    expect(fetchImpl.calls[0]?.url).toBe(
-      `${BASE_URL}/merchant/fiscalization/status/?externalId=cash%2F0001`,
-    );
-    expectNoSecretLeak([...requests, ...responses], ['cash/0001', 'cash%2F0001']);
-  });
-
   it('returns null for the live no-receipt answer', async () => {
     const { resource } = setup(wireResponse('fiscalization/getReceipt.noReceipt.wire.json'));
 
     expect(await resource.getReceipt({ transactionId: TRANSACTION_ID })).toBeNull();
-  });
-
-  it('returns null for an unknown externalId, which names the receipt itself', async () => {
-    const { resource } = setup(
-      fixtureResponse('fiscalization/getReceipt.checkNotFound.synthesized.json', { status: 400 }),
-    );
-
-    expect(await resource.getReceipt({ externalId: 'cash-0001' })).toBeNull();
   });
 
   it('throws for an unknown transactionId instead of null', async () => {
@@ -220,64 +208,12 @@ describe('fiscalization.getReceipt', () => {
     );
   });
 
-  it.each([{}, { transactionId: TRANSACTION_ID, externalId: 'cash-0001' }])(
-    'requires exactly one identifier: %j',
-    async (params) => {
-      const { resource, fetchImpl } = setup();
-
-      await expectInputError(resource.getReceipt(params as never), {
-        field: undefined,
-        rule: 'exclusive',
-      });
-      expect(fetchImpl.calls).toHaveLength(0);
-    },
-  );
-});
-
-describe('fiscalization.attachReceipt', () => {
-  type WireAttachRequest = Omit<AttachFiscalReceiptParams, 'issuedAtRaw' | 'receiptUrl'> & {
-    readonly dateTime: string;
-    readonly qrCodeUrl: string;
-  };
-  const wireRequest = loadFixture<WireAttachRequest>(
-    'fiscalization/attachReceipt.request.docs.json',
-  );
-  const { dateTime, qrCodeUrl, ...sameNames } = wireRequest;
-  const request: AttachFiscalReceiptParams = {
-    ...sameNames,
-    issuedAtRaw: dateTime,
-    receiptUrl: qrCodeUrl,
-  };
-
-  it('sends the documented request and accepts success: true', async () => {
-    const { resource, fetchImpl } = setup(
-      fixtureResponse('fiscalization/attachReceipt.success.docs.json'),
-    );
-
-    await expect(resource.attachReceipt(request)).resolves.toBeUndefined();
-
-    expect(fetchImpl.calls[0]).toMatchObject({
-      method: 'POST',
-      url: `${BASE_URL}/merchant/fiscalization/set-receipt/`,
-    });
-    expect(recordOf(fetchImpl.calls[0]?.body)).toEqual(wireRequest);
-  });
-
-  it('treats anything but success: true as malformed', async () => {
-    const { resource } = setup({ body: { result: { success: false, error: null } } });
-
-    await expectMalformed(resource.attachReceipt(request), 'result.success');
-  });
-
-  it.each([
-    [{ receiptUrl: '' }, 'receiptUrl', 'required'],
-    [{ receiptId: '1' }, 'receiptId', 'type'],
-  ] as const)('rejects %j before any request', async (override, field, rule) => {
+  it('requires the transactionId before any request', async () => {
     const { resource, fetchImpl } = setup();
 
-    await expectInputError(resource.attachReceipt({ ...request, ...override } as never), {
-      field,
-      rule,
+    await expectInputError(resource.getReceipt({ isRefund: true } as never), {
+      field: 'transactionId',
+      rule: 'required',
     });
     expect(fetchImpl.calls).toHaveLength(0);
   });
@@ -344,6 +280,19 @@ describe('fiscalization.checkActivityType', () => {
       expect(check).toEqual(expected);
     },
   );
+
+  it.each([
+    ['self_employed', 'selfEmployedNegative'],
+    ['high_income', 'highIncomeNoRecord'],
+  ] as const)('reads the live negative %s answer as unconfirmed', async (activityType, fixture) => {
+    const { resource } = setup(
+      wireResponse(`fiscalization/checkActivityType.${fixture}.wire.json`),
+    );
+
+    const check = await resource.checkActivityType({ pinfl: PERSON_PINFL, activityType });
+
+    expect(check).toEqual({ isConfirmed: false, activityNames: [] });
+  });
 
   it('reads a high-income check that ran with status false as unconfirmed', async () => {
     const { resource } = setup({

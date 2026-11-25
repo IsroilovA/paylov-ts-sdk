@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   arrayOf,
-  asIsoDateTime,
   asJsonObject,
   asLiteral,
   asMaskedPan,
@@ -168,16 +167,12 @@ describe('date decoders', () => {
     expect(decode(asUtcDateTime, '2026-11-12 10:00:00').toISOString()).toBe(
       '2026-11-12T10:00:00.000Z',
     );
-    expect(decode(asIsoDateTime, '2026-11-12T10:00:00.123456+05:00').toISOString()).toBe(
-      '2026-11-12T05:00:00.123Z',
-    );
     expect(decode(asUnixDateTime, 1_762_934_400).toISOString()).toBe('2025-11-12T08:00:00.000Z');
   });
 
   it('reject malformed strings and non-strings', async () => {
     await expectMalformed(() => decode(asTashkentDateTime, '2026-11-12T10:00:00'), 'result');
     await expectMalformed(() => decode(asUtcDateTime, '2026-02-30 10:00:00'), 'result');
-    await expectMalformed(() => decode(asIsoDateTime, 1_762_934_400), 'result');
     await expectMalformed(() => decode(asUnixDateTime, '1762934400'), 'result');
     await expectMalformed(() => decode(asUnixDateTime, -1), 'result');
   });

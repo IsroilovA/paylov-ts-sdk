@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { PaylovInputRule } from '../../src/core/errors.js';
 import { PaylovWebhookReceiver } from '../../src/webhooks/receiver.js';
-import type { TransactionCheckEvent, WebhookInput } from '../../src/webhooks/types.js';
+import type { TransactionCancelEvent, WebhookInput } from '../../src/webhooks/types.js';
 import {
   basicAuthHeader,
   expectInputError,
@@ -17,11 +17,7 @@ const LOGIN = 'callback-user';
 const PASSWORD = 'EXAMPLE-CALLBACK-PASSWORD-NOT-A-REAL-CREDENTIAL';
 const AUTHORIZATION = basicAuthHeader(LOGIN, PASSWORD);
 const WRONG_AUTHORIZATION = basicAuthHeader(LOGIN, 'wrong-password');
-const CHECK = loadFixture<Fixture>('webhooks/transactionCheck.request.docs.json');
-const PERFORM = loadFixture<Fixture>('webhooks/transactionPerform.request.docs.json');
 const CANCEL = loadFixture<Fixture>('webhooks/transactionCancel.notification.docs.json');
-const DEPOSIT = loadFixture<Fixture>('webhooks/merchantDeposit.notification.docs.json');
-const CARD_BIND = loadFixture<Fixture>('webhooks/cardBind.notification.docs.json');
 
 const receiver = new PaylovWebhookReceiver({ credentials: [{ login: LOGIN, password: PASSWORD }] });
 
@@ -34,85 +30,22 @@ function withParams(fixture: Fixture, patch: Fixture): Fixture {
   return { ...fixture, params: { ...recordOf(fixture['params']), ...patch } };
 }
 
-const CHECK_EVENT: TransactionCheckEvent = {
-  kind: 'transaction.check',
-  id: 1234567,
-  account: { order_id: 12 },
-  amount: { currency: 860, amountTiyin: 50000 },
+const CANCEL_EVENT: TransactionCancelEvent = {
+  kind: 'transaction.cancel',
+  transactionId: '9b3bd7be-9327-4608-b886-4353e49df05f',
+  account: { order_id: '12345' },
+  amountTiyin: 150000,
+  cancelledAt: new Date('2025-12-31T06:24:03Z'),
 };
 
 describe('PaylovWebhookReceiver events', () => {
-  it('decodes the documented transaction.check request', () => {
-    expect(receiver.receive(post(CHECK))).toEqual({ ...CHECK_EVENT, credentialIndex: 0 });
-  });
-
-  it('decodes the documented transaction.perform request', () => {
-    expect(receiver.receive(post(PERFORM))).toEqual({
-      credentialIndex: 0,
-      kind: 'transaction.perform',
-      id: 1234567,
-      transactionId: '9bd1a92b-5cce-47c8-a2df-99a20836ab9e',
-      account: { order_id: 12 },
-      amount: { currency: 860, amountTiyin: 50000 },
-    });
-  });
-
-  it('reads a USD check amount as cents', () => {
-    expect(
-      receiver.receive(post(withParams(CHECK, { currency: 840, amount_tiyin: 1999 }))),
-    ).toEqual({
-      ...CHECK_EVENT,
-      credentialIndex: 0,
-      amount: { currency: 840, amountCents: 1999 },
-    });
-  });
-
   it('decodes the documented transaction.cancel notification', () => {
-    expect(receiver.receive(post(CANCEL))).toEqual({
-      credentialIndex: 0,
-      kind: 'transaction.cancel',
-      transactionId: '9b3bd7be-9327-4608-b886-4353e49df05f',
-      account: { order_id: '12345' },
-      amountTiyin: 150000,
-      cancelledAt: new Date('2025-12-31T06:24:03Z'),
-    });
-  });
-
-  it('decodes the documented merchant.deposit notification', () => {
-    expect(receiver.receive(post(DEPOSIT))).toEqual({
-      credentialIndex: 0,
-      kind: 'merchant.deposit',
-      depositId: '6f1c2b7e-3d4a-5b8c-9e0f-1a2b3c4d5e6f',
-      merchantId: '125',
-      source: 'a2c',
-      amountTiyin: 10000000,
-      createdAt: new Date('2025-12-31T06:24:03Z'),
-    });
-  });
-
-  it('passes through an unknown deposit channel as an open value', () => {
-    expect(receiver.receive(post(withParams(DEPOSIT, { type: 'uzum' })))).toMatchObject({
-      kind: 'merchant.deposit',
-      source: 'uzum',
-    });
-  });
-
-  it('decodes the documented card-bind notification, surfacing only the card id', () => {
-    const outcome = receiver.receive(post(CARD_BIND));
-    expect(outcome).toEqual({
-      credentialIndex: 0,
-      kind: 'card.bind',
-      token: 'pR3x...kLq9',
-      userId: 'partner-user-10234',
-      status: 'confirmed',
-      cardId: '5eed0000-0000-4000-8000-0000000000c1',
-    });
-    expect(JSON.stringify(outcome)).not.toContain('860012');
+    expect(receiver.receive(post(CANCEL))).toEqual({ ...CANCEL_EVENT, credentialIndex: 0 });
   });
 
   it('reads only the tiyin field, so a fractional or missing whole amount is accepted', () => {
-    expect(receiver.receive(post(withParams(CHECK, { amount: 500.5 })))).toEqual({
-      ...CHECK_EVENT,
+    expect(receiver.receive(post(withParams(CANCEL, { amount: 1500.5 })))).toEqual({
+      ...CANCEL_EVENT,
       credentialIndex: 0,
     });
     const cancelParams = { ...recordOf(CANCEL['params']) };
@@ -124,32 +57,18 @@ describe('PaylovWebhookReceiver events', () => {
 
   it('accepts any UUID version as a transaction id', () => {
     const v7 = '01890a5d-ac96-774b-bcce-b302099a8057';
-    expect(receiver.receive(post(withParams(PERFORM, { transaction_id: v7 })))).toMatchObject({
-      transactionId: v7,
-    });
     expect(receiver.receive(post(withParams(CANCEL, { transaction_id: v7 })))).toMatchObject({
       transactionId: v7,
     });
   });
 
-  it('passes through an unknown card-bind status as an open value', () => {
-    expect(receiver.receive(post({ ...CARD_BIND, status: 'expired' }))).toMatchObject({
-      kind: 'card.bind',
-      status: 'expired',
-    });
-  });
-
-  it('accepts parsed JSON, strings, bytes, and string JSON-RPC ids without exposing raw bodies', () => {
-    const request = { ...CHECK, id: 'merchant-correlation-id' };
+  it('accepts parsed JSON, strings, and bytes without exposing raw bodies', () => {
     for (const body of [
-      request,
-      JSON.stringify(request),
-      Buffer.from(JSON.stringify(request), 'utf8'),
+      CANCEL,
+      JSON.stringify(CANCEL),
+      Buffer.from(JSON.stringify(CANCEL), 'utf8'),
     ]) {
-      const outcome = recordOf(receiver.receive(post(body)));
-      expect(outcome['id']).toBe('merchant-correlation-id');
-      expect(outcome['raw']).toBeUndefined();
-      expect(outcome['amount']).toEqual({ currency: 860, amountTiyin: 50000 });
+      expect(receiver.receive(post(body))).toEqual({ ...CANCEL_EVENT, credentialIndex: 0 });
     }
   });
 });
@@ -169,13 +88,11 @@ describe('PaylovWebhookReceiver authentication', () => {
       { authorization: `Basic ${noColon}` },
       { authorization: [AUTHORIZATION, AUTHORIZATION] },
     ];
-    for (const body of [CHECK, CANCEL, CARD_BIND]) {
-      for (const headers of headerSets) {
-        expect(receiver.receive({ ...post(body), headers })).toEqual({
-          kind: 'invalid',
-          reason: 'unauthorized',
-        });
-      }
+    for (const headers of headerSets) {
+      expect(receiver.receive({ ...post(CANCEL), headers })).toEqual({
+        kind: 'invalid',
+        reason: 'unauthorized',
+      });
     }
   });
 
@@ -183,27 +100,27 @@ describe('PaylovWebhookReceiver authentication', () => {
     const token = AUTHORIZATION.slice('Basic '.length);
     expect(
       receiver.receive({
-        ...post(CHECK),
+        ...post(CANCEL),
         headers: { 'x-request-id': 'callback-request', AUTHORIZATION: `basic ${token}` },
       }).kind,
-    ).toBe('transaction.check');
+    ).toBe('transaction.cancel');
     expect(
-      receiver.receive({ ...post(CHECK), headers: { Authorization: [AUTHORIZATION] } }).kind,
-    ).toBe('transaction.check');
+      receiver.receive({ ...post(CANCEL), headers: { Authorization: [AUTHORIZATION] } }).kind,
+    ).toBe('transaction.cancel');
   });
 
   it('reads Fetch Headers and accepts an undefined method as unsupported', () => {
     const headers = new Headers({ Authorization: AUTHORIZATION });
-    expect(receiver.receive({ ...post(CHECK), headers }).kind).toBe('transaction.check');
+    expect(receiver.receive({ ...post(CANCEL), headers }).kind).toBe('transaction.cancel');
     const repeated = new Headers([
       ['authorization', AUTHORIZATION],
       ['authorization', AUTHORIZATION],
     ]);
-    expect(receiver.receive({ ...post(CHECK), headers: repeated })).toEqual({
+    expect(receiver.receive({ ...post(CANCEL), headers: repeated })).toEqual({
       kind: 'invalid',
       reason: 'unauthorized',
     });
-    expect(receiver.receive({ ...post(CHECK), method: undefined, headers })).toEqual({
+    expect(receiver.receive({ ...post(CANCEL), method: undefined, headers })).toEqual({
       kind: 'invalid',
       reason: 'unsupported_http_method',
     });
@@ -213,57 +130,32 @@ describe('PaylovWebhookReceiver authentication', () => {
 describe('PaylovWebhookReceiver invalid input', () => {
   it('returns local invalid reasons without response bodies', () => {
     const cases: readonly [WebhookInput, string][] = [
-      [{ ...post(CHECK), method: 'GET' }, 'unsupported_http_method'],
-      [{ ...post(CHECK), headers: null as never }, 'unauthorized'],
-      [{ ...post(CHECK, 'Basic not-base64'), method: 'GET' }, 'unsupported_http_method'],
+      [{ ...post(CANCEL), method: 'GET' }, 'unsupported_http_method'],
+      [{ ...post(CANCEL), headers: null as never }, 'unauthorized'],
+      [{ ...post(CANCEL, 'Basic not-base64'), method: 'GET' }, 'unsupported_http_method'],
       [post('{', WRONG_AUTHORIZATION), 'unauthorized'],
-      [post({ ...CHECK, method: 'merchant.withdrawal' }, WRONG_AUTHORIZATION), 'unauthorized'],
-      [post({ ...CHECK, params: null }, WRONG_AUTHORIZATION), 'unauthorized'],
+      [post({ ...CANCEL, method: 'merchant.withdrawal' }, WRONG_AUTHORIZATION), 'unauthorized'],
+      [post({ ...CANCEL, params: null }, WRONG_AUTHORIZATION), 'unauthorized'],
       [post('{'), 'malformed_body'],
       [post(new Uint8Array([0xff, 0xfe])), 'malformed_body'],
       [post(() => undefined), 'malformed_body'],
       [post([]), 'invalid_request'],
       [post({ unrelated: true }), 'invalid_request'],
-      [post({ ...CHECK, jsonrpc: '1.0' }), 'invalid_request'],
-      [post({ ...CHECK, id: null }), 'invalid_request'],
-      [post({ ...PERFORM, id: Number.NaN }), 'invalid_request'],
-      [post({ ...CHECK, method: 'merchant.withdrawal' }), 'unknown_method'],
-      [post({ ...DEPOSIT, params: null }), 'invalid_params'],
-      [post(withParams(DEPOSIT, { id: 'not-a-uuid' })), 'invalid_params'],
-      [post(withParams(DEPOSIT, { merchant: 125 })), 'invalid_params'],
-      [post(withParams(DEPOSIT, { merchant: '' })), 'invalid_params'],
-      [post(withParams(DEPOSIT, { type: '' })), 'invalid_params'],
-      [post(withParams(DEPOSIT, { amount_in_tiyin: 100.5 })), 'invalid_params'],
-      [
-        post(withParams(DEPOSIT, { amount_tiyin: 10000000, amount_in_tiyin: undefined })),
-        'invalid_params',
-      ],
-      [post(withParams(DEPOSIT, { create_time: '1767162243' })), 'invalid_params'],
+      [post({ ...CANCEL, jsonrpc: '1.0' }), 'invalid_request'],
+      [post({ ...CANCEL, method: 'merchant.withdrawal' }), 'unknown_method'],
+      [post({ ...CANCEL, method: 'merchant.deposit' }), 'unknown_method'],
       [
         post(withParams(CANCEL, { amount_tiyin: 150000, amount_in_tiyin: undefined })),
         'invalid_params',
       ],
-      [
-        post(withParams(PERFORM, { amount_in_tiyin: 50000, amount_tiyin: undefined })),
-        'invalid_params',
-      ],
-      [post({ ...CHECK, params: null }), 'invalid_params'],
+      [post({ ...CANCEL, params: null }), 'invalid_params'],
       [post({ ...CANCEL, params: [] }), 'invalid_params'],
-      [post(withParams(CHECK, { account: [] })), 'invalid_params'],
-      [post(withParams(CHECK, { amount_tiyin: 1.5 })), 'invalid_params'],
-      [post(withParams(CHECK, { amount_tiyin: -1 })), 'invalid_params'],
-      [post(withParams(CHECK, { currency: 978 })), 'invalid_params'],
-      [post(withParams(PERFORM, { transaction_id: 'not-a-uuid' })), 'invalid_params'],
+      [post(withParams(CANCEL, { account: [] })), 'invalid_params'],
       [post(withParams(CANCEL, { transaction_id: 'not-a-uuid' })), 'invalid_params'],
       [post(withParams(CANCEL, { account: 'order' })), 'invalid_params'],
       [post(withParams(CANCEL, { amount_in_tiyin: '150000' })), 'invalid_params'],
       [post(withParams(CANCEL, { cancel_time: 1767162243.5 })), 'invalid_params'],
       [post(withParams(CANCEL, { cancel_time: -1 })), 'invalid_params'],
-      [post({ ...CARD_BIND, token: '' }), 'invalid_params'],
-      [post({ ...CARD_BIND, userId: 10234 }), 'invalid_params'],
-      [post({ ...CARD_BIND, status: undefined }), 'invalid_params'],
-      [post({ ...CARD_BIND, card: undefined }), 'invalid_params'],
-      [post({ ...CARD_BIND, card: { cardId: 'not-a-uuid' } }), 'invalid_params'],
     ];
     for (const [input, reason] of cases) {
       expect(receiver.receive(input)).toEqual({ kind: 'invalid', reason });
@@ -287,9 +179,9 @@ describe('PaylovWebhookReceiver invalid input', () => {
   });
 
   it('reads an ArrayBuffer body as bytes and answers an unread body object malformed_body', () => {
-    const json = JSON.stringify(CHECK);
+    const json = JSON.stringify(CANCEL);
     expect(receiver.receive(post(new TextEncoder().encode(json).buffer))).toEqual({
-      ...CHECK_EVENT,
+      ...CANCEL_EVENT,
       credentialIndex: 0,
     });
     // A Fetch Request's body is a stream, which would re-serialize as `{}`.
@@ -307,7 +199,7 @@ describe('PaylovWebhookReceiver invalid input', () => {
   it('rejects an account nested too deep to copy as invalid_params in every body form', () => {
     let account: Record<string, unknown> = { order_id: 'A-1001' };
     for (let depth = 0; depth < 2_000; depth += 1) account = { x: account };
-    const request = withParams(CHECK, { account });
+    const request = withParams(CANCEL, { account });
     const json = JSON.stringify(request);
     for (const body of [request, json, Buffer.from(json, 'utf8')]) {
       expect(receiver.receive(post(body))).toEqual({ kind: 'invalid', reason: 'invalid_params' });
@@ -328,8 +220,8 @@ describe('PaylovWebhookReceiver credential rotation', () => {
 
   it('accepts every configured pair and reports which one matched', () => {
     for (const [index, pair] of [OLD, NEW].entries()) {
-      const outcome = rotating.receive(post(CHECK, basicAuthHeader(pair.login, pair.password)));
-      expect(outcome).toEqual({ ...CHECK_EVENT, credentialIndex: index });
+      const outcome = rotating.receive(post(CANCEL, basicAuthHeader(pair.login, pair.password)));
+      expect(outcome).toEqual({ ...CANCEL_EVENT, credentialIndex: index });
     }
   });
 
@@ -338,7 +230,7 @@ describe('PaylovWebhookReceiver credential rotation', () => {
       basicAuthHeader(OLD.login, NEW.password),
       basicAuthHeader(NEW.login, OLD.password),
     ]) {
-      expect(rotating.receive(post(CHECK, authorization))).toEqual({
+      expect(rotating.receive(post(CANCEL, authorization))).toEqual({
         kind: 'invalid',
         reason: 'unauthorized',
       });
@@ -350,10 +242,10 @@ describe('PaylovWebhookReceiver credential rotation', () => {
       credentials: [OLD, { login: OLD.login, password: NEW.password }],
     });
     const receive = (password: string): unknown =>
-      samePassword.receive(post(CHECK, basicAuthHeader(OLD.login, password)));
+      samePassword.receive(post(CANCEL, basicAuthHeader(OLD.login, password)));
 
-    expect(receive(OLD.password)).toEqual({ ...CHECK_EVENT, credentialIndex: 0 });
-    expect(receive(NEW.password)).toEqual({ ...CHECK_EVENT, credentialIndex: 1 });
+    expect(receive(OLD.password)).toEqual({ ...CANCEL_EVENT, credentialIndex: 0 });
+    expect(receive(NEW.password)).toEqual({ ...CANCEL_EVENT, credentialIndex: 1 });
     expect(receive(PASSWORD)).toEqual({ kind: 'invalid', reason: 'unauthorized' });
   });
 });

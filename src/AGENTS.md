@@ -29,8 +29,8 @@ Production source.
 - A method opens with
   `const method = '<ns>.<name>'; const { input, signal } = readCall(params, options, method);`,
   builds the body or query, and returns `send(http, ENDPOINTS.x, request, decodeX)` from
-  `core/call.ts`, passing identifiers as `path` values. Map a miss to a value only with `orOnMiss`
-  and an endpoint `miss` code. Add no local request, path, or recovery wrappers.
+  `core/call.ts`, passing identifiers as `path` values. Add no local request, path, or recovery
+  wrappers.
 - Results and lookups of a transaction use the `shared/transactions.ts` types and readers.
 - Response decoders are module-level `decodeX: Decoder<T>` constants in `decoders.ts`; each method
   calls exactly one. Only a decoder that checks an echoed request id is a factory
@@ -41,7 +41,11 @@ Production source.
 - Decoders check only what the public type and the SDK's own conversions need. Never add id-shape,
   non-empty, or echo checks outside `webhooks/` beyond the exceptions in
   [architecture.md](../docs/architecture.md#responses-and-errors).
-- A reconciliation read returns `null` on its verified not-found code; document any exception.
+- A lookup never resolves `null` or another value for "not found": its not-found code throws as the
+  gateway's `PaylovApiError`. A success body that means a miss throws `DecodedMiss` with the code
+  the gateway uses for that miss elsewhere. `null` is only for a documented state, never a miss. Map
+  an error code to a value only where the code is the method's documented answer, as
+  `invalid_or_expired` is `checkToken`'s `false`.
 - Pass documented merchant-owned opaque request data through unchanged. Treat values as PANs or
   phones only in their documented field context; long numeric identifiers are not sensitive by
   themselves.
@@ -50,7 +54,7 @@ Production source.
 
 - Params are `<Verb><Noun>Params`, one per method. An action result is `<Noun><Participle>`
   (`HoldCaptured`) or the shared `TransactionReference`; a read result is the entity noun.
-- Booleans read as predicates (`isActive`, `isCheckout`).
+- Booleans read as predicates (`isActive`, `isHold`).
 - The `Paylov` prefix marks only classes, configuration, errors, and core cross-cutting types.
 
 ## JSDoc

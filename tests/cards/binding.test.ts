@@ -6,7 +6,7 @@ import {
   expectMalformed,
   expectNoSecretLeak,
 } from '../helpers/asserts.js';
-import { patchedResponse, wireResponse } from '../helpers/fixtures.js';
+import { wireResponse } from '../helpers/fixtures.js';
 import { BASE_URL } from '../helpers/testHttp.js';
 import {
   PAN,
@@ -15,8 +15,6 @@ import {
   PINFL,
   PHONE,
   UZCARD_ID,
-  BIND_TOKEN,
-  OWNER,
   UZCARD,
   setup,
   withCard,
@@ -24,138 +22,6 @@ import {
 } from './cardCases.js';
 
 // Expectations come from docs/paylov/cards.md and the fixtures it cites.
-describe('cards.createBindLink', () => {
-  it('sends userId and returnUrl and passes the bindUrl host through unchanged', async () => {
-    const { cards, fetchImpl } = setup([wireResponse('cards/createBindLink.success.wire.json')]);
-
-    const link = await cards.createBindLink({
-      userId: 'user-42',
-      returnUrl: 'https://app.example/wallet/cards',
-    });
-
-    expect(link).toEqual({
-      token: BIND_TOKEN,
-      bindUrl: `https://paylov.uz/card-bind/?token=${BIND_TOKEN}`,
-      expiresAt: new Date('2026-11-12T16:11:50.670Z'),
-    });
-    expect(fetchImpl.calls[0]).toMatchObject({
-      method: 'POST',
-      url: `${BASE_URL}/merchant/userCard/createBindLink/`,
-      body: { userId: 'user-42', returnUrl: 'https://app.example/wallet/cards' },
-    });
-  });
-
-  it('omits an absent returnUrl', async () => {
-    const { cards, fetchImpl } = setup([wireResponse('cards/createBindLink.success.wire.json')]);
-
-    await cards.createBindLink({ userId: 'user-42' });
-
-    expect(fetchImpl.calls[0]?.body).toEqual({ userId: 'user-42' });
-  });
-
-  it.each([
-    ['app.example/cards', 'format'],
-    ['javascript:alert(1)', 'format'],
-    ['', 'required'],
-  ] as const)('refuses returnUrl %j before any request', async (returnUrl, rule) => {
-    const { cards, fetchImpl } = setup([]);
-
-    await expectInputError(cards.createBindLink({ userId: 'user-42', returnUrl }), {
-      field: 'returnUrl',
-      rule,
-    });
-
-    expect(fetchImpl.calls).toHaveLength(0);
-  });
-
-  it('rejects an expiry without an offset', async () => {
-    const { cards } = setup([
-      patchedResponse('cards/createBindLink.success.wire.json', ['result'], (result) => ({
-        ...result,
-        expiresAt: '2026-11-12T21:11:50',
-      })),
-    ]);
-
-    await expectMalformed(cards.createBindLink({ userId: 'user-42' }), 'result.expiresAt');
-  });
-});
-
-describe('cards.getBindSession', () => {
-  it('reads a fresh session as unbound and keeps the token out of logger events', async () => {
-    const { cards, fetchImpl, requests, responses } = setup([
-      wireResponse('cards/getBindSession.created.wire.json'),
-    ]);
-
-    const session = await cards.getBindSession({ token: BIND_TOKEN });
-
-    expect(session).toEqual({ isBound: false, status: 'created', card: null });
-    expect(fetchImpl.calls[0]?.url).toBe(
-      `${BASE_URL}/merchant/userCard/bindSession/${BIND_TOKEN}/status/`,
-    );
-    expect(requests[0]?.endpoint).toBe('GET /merchant/userCard/bindSession/{token}/status/');
-    expect(JSON.stringify([requests, responses])).not.toContain(BIND_TOKEN);
-  });
-
-  it('decodes the confirmed card with its flat status and an empty cardName as null', async () => {
-    const { cards } = setup([wireResponse('cards/getBindSession.confirmed.wire.json')]);
-
-    const session = await cards.getBindSession({ token: BIND_TOKEN });
-
-    expect(session).toEqual({
-      isBound: true,
-      status: 'confirmed',
-      card: {
-        cardId: '5eed0000-0000-4000-8000-000000000003',
-        userId: 'user-example-3',
-        holderName: OWNER,
-        cardName: null,
-        maskedCardNumber: '860000******0000',
-        balanceTiyin: 1_000_000_000,
-        bankId: '38',
-        bankName: 'Paylov Bank',
-        vendor: 'Uzcard',
-        processing: 'Uzcard',
-        isActive: true,
-        processingStatus: 'active',
-        isSmsEnabled: true,
-      },
-    });
-  });
-
-  it('reads a pending session whose card key is absent as unbound', async () => {
-    const { cards } = setup([{ body: { result: { state: 'card_pending' }, error: null } }]);
-
-    await expect(cards.getBindSession({ token: BIND_TOKEN })).resolves.toEqual({
-      isBound: false,
-      status: 'card_pending',
-      card: null,
-    });
-  });
-
-  it('rejects a confirmed session without a card', async () => {
-    const { cards } = setup([
-      { body: { result: { state: 'confirmed', card: null }, error: null } },
-    ]);
-
-    await expectMalformed(cards.getBindSession({ token: BIND_TOKEN }), 'result.card');
-  });
-
-  it('reads an unconfirmed session as unbound even when it carries a card', async () => {
-    const { cards } = setup([
-      patchedResponse('cards/getBindSession.confirmed.wire.json', ['result'], (result) => ({
-        ...result,
-        state: 'created',
-      })),
-    ]);
-
-    await expect(cards.getBindSession({ token: BIND_TOKEN })).resolves.toEqual({
-      isBound: false,
-      status: 'created',
-      card: null,
-    });
-  });
-});
-
 describe('cards.startPanBinding', () => {
   const params = { userId: 'user-42', cardNumber: PAN, cardExpiry: EXPIRY };
 
@@ -172,24 +38,13 @@ describe('cards.startPanBinding', () => {
     });
   });
 
-  it('omits an absent phoneNumber and sms', async () => {
+  it('omits an absent phoneNumber', async () => {
     const { cards, fetchImpl } = setup([wireResponse('cards/startPanBinding.success.wire.json')]);
 
     await cards.startPanBinding(params);
 
     expect(bodyKeys(fetchImpl.calls[0])).toEqual(['userId', 'cardNumber', 'expireDate']);
   });
-
-  it.each([[{ hash: 'app-hash', templateId: 1 }], [{}]])(
-    'forwards sms %j unchanged',
-    async (sms) => {
-      const { cards, fetchImpl } = setup([wireResponse('cards/startPanBinding.success.wire.json')]);
-
-      await cards.startPanBinding({ ...params, sms });
-
-      expect(fetchImpl.calls[0]?.body).toMatchObject({ sms });
-    },
-  );
 
   it('keeps an OTP phone of any mask as an opaque string', async () => {
     const { cards } = setup([
@@ -205,8 +60,6 @@ describe('cards.startPanBinding', () => {
     ['userId', { userId: ' ' }, 'required'],
     ['cardNumber', { cardNumber: 4111 }, 'type'],
     ['phoneNumber', { phoneNumber: '' }, 'required'],
-    ['sms', { sms: 'app-hash' }, 'type'],
-    ['sms.templateId', { sms: { templateId: '1' } }, 'type'],
   ] as const)('refuses an invalid %s before any request', async (field, patch, rule) => {
     const { cards, fetchImpl } = setup([]);
 

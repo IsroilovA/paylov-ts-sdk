@@ -24,18 +24,14 @@ export { readHoldState } from './holds/state.js';
 export { readRefundState } from './transactions/state.js';
 
 // Standalone surfaces
-export { createCheckoutUrl } from './checkout/link.js';
-export type { CreateCheckoutUrlParams } from './checkout/link.js';
 export { PaylovOnboarding } from './onboarding/client.js';
 export type * from './onboarding/types.js';
 export { PaylovWebhookReceiver } from './webhooks/receiver.js';
-export { createWebhookResponse } from './webhooks/responses.js';
 export type * from './webhooks/types.js';
 
 // Shared public types
-export type { CheckoutAmount, CheckoutCurrency } from './shared/checkoutAmount.js';
+export type { FiscalReceipt, FiscalReceiptRegistered } from './shared/fiscalReceipts.js';
 export type { FiscalReceiptItem, FiscalReceiptItemBase } from './shared/receiptItems.js';
-export type { OtpSmsSettings } from './shared/otpSms.js';
 export type { TransactionLookup, TransactionReference } from './shared/transactions.js';
 export type {
   FetchLike,

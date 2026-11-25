@@ -46,11 +46,17 @@ await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, 
 
 ## Refund
 
-- Always the full amount; it also cancels the payment's fiscal receipt. The transaction then reads
-  `refunded` and drops out of `transactions.list`.
-- Checkout and PAN payments cannot be refunded through the API, and Paylov's test environment
-  refused captured holds too: refund those from the Paylov business panel or through Paylov support,
-  and confirm with `transactions.get`. Before capture, release a hold instead.
+- Always the full amount. For a fiscalized payment Paylov registers the refund receipt within
+  seconds to minutes ([fiscalization.md](fiscalization.md#refund-receipts)). The transaction then
+  reads `refunded` and drops out of `transactions.list`.
+- Paylov states that saved-card and PAN payments and captured holds are all refundable through the
+  API, but its test environment refused PAN payments and captured holds. If a refund is refused,
+  refund from the Paylov business panel or through Paylov support, and confirm with
+  `transactions.get`. Before capture, release a hold instead.
+- Refund within your merchant's refund window: Paylov agrees it with each merchant. Its test
+  environment refused saved-card payments about 11 days old with
+  `transaction_not_available_for_cancel`, leaving them `paid`. Past the window, use the business
+  panel or Paylov support.
 - Keep refunds an admin action: Paylov documents no fee terms.
 
 After an ambiguous failure of `pay`, `confirmPanPayment` or `refund`, follow

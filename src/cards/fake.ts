@@ -5,17 +5,12 @@ import {
   type PaylovFakeSurface,
   type Scripter,
 } from '../core/fake.js';
-import { decodeOtpSms } from '../shared/fake.js';
 import { ENDPOINTS, type CardsResource } from './resource.js';
 import type {
   Card,
-  CardBindLinkCreated,
-  CardBindSession,
   CheckCardPhoneParams,
   ConfirmPanBindingParams,
-  CreateBindLinkParams,
   DeleteCardParams,
-  GetBindSessionParams,
   GetCardParams,
   ListCardsParams,
   PanBindingStarted,
@@ -46,7 +41,7 @@ function encodeCard(card: Card, status: unknown): unknown {
   };
 }
 
-/** Confirm and the bind session send a flat `status`. */
+/** Confirm sends a flat `status`. */
 function encodeFlatCard(card: Card): unknown {
   return encodeCard(card, encodeCardStatus(card));
 }
@@ -54,19 +49,6 @@ function encodeFlatCard(card: Card): unknown {
 /** Reads nest the status as `status.result`. */
 function encodeNestedCard(card: Card): unknown {
   return encodeCard(card, { result: encodeCardStatus(card) });
-}
-
-function encodeBindLinkCreated(created: CardBindLinkCreated): unknown {
-  return {
-    token: created.token,
-    bindUrl: created.bindUrl,
-    expiresAt: created.expiresAt.toISOString(),
-  };
-}
-
-function encodeBindSession(session: CardBindSession): unknown {
-  const card = session.card === null ? null : encodeFlatCard(session.card);
-  return { state: session.status, card };
 }
 
 function encodePanBindingStarted(started: PanBindingStarted): unknown {
@@ -93,24 +75,12 @@ function encodeMatch(isMatch: boolean): unknown {
   return { match: isMatch };
 }
 
-function decodeCreateBindLinkRequest({ body }: FakeRequest): CreateBindLinkParams {
-  return {
-    userId: body.string('userId'),
-    ...optionalEntry('returnUrl', body.optionalString('returnUrl')),
-  };
-}
-
-function decodeBindSessionRequest({ path }: FakeRequest): GetBindSessionParams {
-  return { token: path.string('token') };
-}
-
 function decodeStartPanBindingRequest({ body }: FakeRequest): StartPanBindingParams {
   return {
     userId: body.string('userId'),
     cardNumber: body.string('cardNumber'),
     cardExpiry: body.string('expireDate'),
     ...optionalEntry('phoneNumber', body.optionalString('phoneNumber')),
-    ...optionalEntry('sms', body.optionalObject('sms', decodeOtpSms)),
   };
 }
 
@@ -153,18 +123,6 @@ export function createCardsFake(
   script: Scripter<'cards', CardsResource>,
 ): PaylovFakeSurface<CardsResource> {
   return {
-    createBindLink: script(
-      'cards.createBindLink',
-      ENDPOINTS.createBindLink,
-      encodeBindLinkCreated,
-      decodeCreateBindLinkRequest,
-    ),
-    getBindSession: script(
-      'cards.getBindSession',
-      ENDPOINTS.getBindSession,
-      encodeBindSession,
-      decodeBindSessionRequest,
-    ),
     startPanBinding: script(
       'cards.startPanBinding',
       ENDPOINTS.startPanBinding,

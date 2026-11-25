@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import { orOnMiss, readCall, send, type EndpointRequest } from '../../src/core/call.js';
+import { readCall, send, type EndpointRequest } from '../../src/core/call.js';
 import { asNonEmptyString, fieldOf } from '../../src/core/decoding.js';
-import { PaylovApiError, PaylovProtocolError } from '../../src/core/errors.js';
+import { PaylovProtocolError } from '../../src/core/errors.js';
 import { capture, captureAsync } from '../helpers/asserts.js';
 import type { FakeResponseSpec } from '../helpers/fakeFetch.js';
 import { loadFixture } from '../helpers/fixtures.js';
@@ -11,10 +11,6 @@ import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 const CARD_ID = '5eed0000-0000-4000-8000-000000000001';
 const SUCCESS: FakeResponseSpec = {
   body: loadFixture('envelope/generic.success.synthesized.json'),
-};
-const FUNDS_ERROR: FakeResponseSpec = {
-  status: 400,
-  body: loadFixture('envelope/generic.error.synthesized.json'),
 };
 const decodeTransactionId = fieldOf('transactionId', asNonEmptyString);
 
@@ -37,13 +33,6 @@ describe('readCall', () => {
 
 const STATUS = { method: 'GET', route: '/merchant/status/', shape: 'envelope' } as const;
 const CARD = { method: 'GET', route: '/merchant/userCard/{cardId}/', shape: 'envelope' } as const;
-const PAY = {
-  method: 'POST',
-  route: '/merchant/receipts/pay/',
-  shape: 'envelope',
-  miss: 'insufficient_funds',
-} as const;
-
 // Compile-time only: every route placeholder needs a path value.
 expectTypeOf<EndpointRequest<typeof CARD>['path']>().toEqualTypeOf<
   Readonly<Record<'cardId', string>>
@@ -74,17 +63,5 @@ describe('send', () => {
     const revoke = { method: 'POST', route: '/merchant/oauth2/revoke/', shape: 'flat' } as const;
     const error = await captureAsync(send(http, revoke, {}, fieldOf('status', asNonEmptyString)));
     expect(error).toMatchObject({ code: 'sdk_malformed_response', path: 'body.status' });
-  });
-});
-
-describe('orOnMiss', () => {
-  it("maps only the endpoint's miss code to the fallback", async () => {
-    const { http } = setupResource((transport) => transport, [FUNDS_ERROR, FUNDS_ERROR]);
-    await expect(orOnMiss(send(http, PAY, {}, decodeTransactionId), PAY, null)).resolves.toBeNull();
-    const cardMiss = { miss: 'card_not_found' } as const;
-    await expect(
-      orOnMiss(send(http, PAY, {}, decodeTransactionId), cardMiss, null),
-    ).rejects.toBeInstanceOf(PaylovApiError);
-    await expect(orOnMiss(Promise.resolve(1), cardMiss, null)).resolves.toBe(1);
   });
 });

@@ -371,6 +371,17 @@ export function malformedResponse(context: ResponseContext, path?: string): Payl
   return new PaylovProtocolError({ code: 'sdk_malformed_response', ...context, path });
 }
 
+/**
+ * The gateway's not-found `code` for a success body that reports a miss without an error, such as
+ * an empty lookup list. Definitive, never unsettled.
+ */
+export function synthesizedMiss(
+  context: ResponseContext,
+  code: PaylovKnownErrorCode,
+): PaylovApiError {
+  return new PaylovApiError({ code, ...context });
+}
+
 /** `sdk_unexpected_status` for a non-2xx without a usable error body. */
 export function unexpectedStatus(context: ResponseContext): PaylovProtocolError {
   return new PaylovProtocolError({ code: 'sdk_unexpected_status', ...context });
@@ -396,7 +407,7 @@ export function isPaylovError(error: unknown): error is PaylovError {
 
 /**
  * Generic failure codes that name no reason, so a money-moving endpoint answering one may still
- * have acted, unless the endpoint lists the code in `definitiveCodes`.
+ * have acted.
  */
 export const UNSETTLED_FAILURE_CODES: ReadonlySet<string> = new Set([
   'processing_error',
@@ -409,10 +420,9 @@ export const UNSETTLED_FAILURE_CODES: ReadonlySet<string> = new Set([
  * connection error once a request was sent, or a gateway error with `isUnsettled`. That is HTTP
  * status 500 or above, or a generic failure code (`processing_error`, `unknown_error`,
  * `error_at_pay`) from a method that can charge, reserve, capture, release, refund or split funds.
- * The SDK assumes `processing_error` from `payments.pay` is a definitive decline. Reconcile such a
- * call through the method's documented status read before repeating it. False for input and
- * closed-client errors, an abort before anything was sent, other gateway errors (specific declines
- * such as `insufficient_funds` included), and anything the SDK did not throw.
+ * Reconcile such a call through the method's documented status read before repeating it. False
+ * for input and closed-client errors, an abort before anything was sent, other gateway errors
+ * (specific declines such as `insufficient_funds` included), and anything the SDK did not throw.
  *
  * @example
  * catch (error) {

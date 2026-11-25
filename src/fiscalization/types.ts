@@ -1,80 +1,23 @@
+import type { FiscalReceiptRegistered } from '../shared/fiscalReceipts.js';
 import type { FiscalReceiptItem } from '../shared/receiptItems.js';
-import type { TransactionLookup } from '../shared/transactions.js';
 
-/** Parameters for `fiscalization.registerReceipt` for a paid Paylov card payment. */
-export interface RegisterCardFiscalReceiptParams {
-  /** The paid Paylov transaction (UUID). */
+/** Parameters for `fiscalization.registerReceipt`. */
+export interface RegisterFiscalReceiptParams {
+  /** The paid Paylov card payment (UUID). */
   readonly transactionId: string;
   /** Receipt lines; their total must equal the transaction amount. */
   readonly items: readonly FiscalReceiptItem[];
-  // `?: undefined`, not `?: never`, so params built by spread still type-check under
-  // `exactOptionalPropertyTypes`.
-  readonly externalId?: undefined;
-  readonly phoneNumber?: undefined;
 }
 
-/** Parameters for `fiscalization.registerReceipt` for a cash sale made outside Paylov. */
-export interface RegisterCashFiscalReceiptParams {
-  /** Your own receipt id, the key `getReceipt` reads it back by. */
-  readonly externalId: string;
-  /** The customer's phone, `+998XXXXXXXXX`. Personal data; never logged or quoted. */
-  readonly phoneNumber: string;
-  /** Receipt lines. */
-  readonly items: readonly FiscalReceiptItem[];
-  readonly transactionId?: undefined;
-}
-
-/** A card payment by `transactionId`, or a cash sale by `externalId` and `phoneNumber`. */
-export type RegisterFiscalReceiptParams =
-  | RegisterCardFiscalReceiptParams
-  | RegisterCashFiscalReceiptParams;
-
-/**
- * Parameters for `fiscalization.getReceipt`: a card payment's `transactionId`, or the `externalId`
- * a cash sale was registered with.
- */
-export type GetFiscalReceiptParams = TransactionLookup & {
+/** Parameters for `fiscalization.getReceipt`. */
+export interface GetFiscalReceiptParams {
+  /** The card payment (UUID). */
+  readonly transactionId: string;
   /**
-   * `true` reads the refund receipt, `false` the sale receipt. Omit it to send no filter; which
-   * receipt Paylov then returns for a refunded transaction is not documented.
+   * `true` reads the refund receipt, `false` the sale receipt. Omitted, Paylov returns the refund
+   * receipt once one exists, otherwise the sale receipt.
    */
   readonly isRefund?: boolean;
-};
-
-/** A fiscal receipt the OFD registered. */
-export interface FiscalReceipt {
-  /** OFD receipt id; keep it with its `transactionId` or `externalId`. */
-  readonly receiptId: number;
-  /** Public receipt page on `ofd.soliq.uz`. */
-  readonly receiptUrl: string;
-  readonly terminalId: string;
-  readonly fiscalSign: string;
-  /** Whether this is a refund receipt rather than a sale receipt. */
-  readonly isRefund: boolean;
-}
-
-/** A receipt the OFD just registered; registration does not report `isRefund`. */
-export type FiscalReceiptRegistered = Omit<FiscalReceipt, 'isRefund'>;
-
-/**
- * Parameters for `fiscalization.attachReceipt`: a receipt the merchant fiscalized itself, for a
- * paid Paylov transaction.
- */
-export interface AttachFiscalReceiptParams {
-  /** The paid Paylov transaction (UUID). */
-  readonly transactionId: string;
-  /** OFD terminal id; Paylov documents at most 32 characters. */
-  readonly terminalId: string;
-  /** When the receipt was issued, `YYYYMMDDHHMMSS`, as Paylov documents it. */
-  readonly issuedAtRaw: string;
-  /** Fiscal signature; Paylov documents at most 64 characters. */
-  readonly fiscalSign: string;
-  /** The receipt's `https://ofd.soliq.uz/...` page. */
-  readonly receiptUrl: string;
-  /** OFD receipt id; Paylov answers `validation_error` for 0. */
-  readonly receiptId: number;
-  /** Your own receipt id; unique per merchant. */
-  readonly externalId?: string;
 }
 
 /** Parameters for `fiscalization.refundReceipt`. */

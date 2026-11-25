@@ -31,7 +31,9 @@ DEV host allowlist. Variables:
   `PAYLOV_CONSUMER_SECRET`, `PAYLOV_USERNAME`, `PAYLOV_PASSWORD`;
 - write lanes: `PAYLOV_LIVE_WRITES=1`, optionally with `PAYLOV_LIVE_REFUND=1` or
   `PAYLOV_LIVE_SLOW=1`; `PAYLOV_LIVE_TEST_CARDS` (`PAN:YYMM:OTP` entries separated by `;`, including
-  an Uzcard `8600` card; defaults to the public `sandbox.paylov.uz` bundle).
+  an Uzcard `8600` card; defaults to the public `sandbox.paylov.uz` bundle). The activity-type read
+  lane always takes the test PINFL of that bundle's Uzcard card and skips when the bundle is
+  unreachable.
 
 Procedure:
 

@@ -1,0 +1,11 @@
+{
+  "capture": "1706",
+  "status": 200,
+  "body": {
+    "result": {
+      "success": false,
+      "reason": "Malumot topilmadi",
+      "data": null
+    }
+  }
+}

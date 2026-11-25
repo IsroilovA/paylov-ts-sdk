@@ -1,5 +1,4 @@
 import type { PaylovJsonObject } from '../core/types.js';
-import type { OtpSmsSettings } from '../shared/otpSms.js';
 import type { TransactionReference } from '../shared/transactions.js';
 
 /** Parameters for `payments.create`. */
@@ -46,7 +45,6 @@ export interface StartPanPaymentParams {
   readonly amountTiyin: number;
   /** Merchant data stored with the transaction; transaction reads do not return it. */
   readonly account?: PaylovJsonObject;
-  readonly sms?: OtpSmsSettings;
 }
 
 /** Parameters for `payments.confirmPanPayment`. */
@@ -55,7 +53,6 @@ export interface ConfirmPanPaymentParams {
   readonly transactionId: string;
   /** The code the cardholder received by SMS. */
   readonly otp: string;
-  readonly sms?: OtpSmsSettings;
 }
 
 /** The result of `payments.refund`. */

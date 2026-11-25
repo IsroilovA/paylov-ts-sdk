@@ -1,5 +1,6 @@
 /** A pure decision over a `transactions.get` result. */
 
+import { isRecord } from '../core/decoding.js';
 import { invalidInput } from '../core/errors.js';
 import { readParams } from '../core/params.js';
 import type { ReadRefundStateParams, RefundState, Transaction } from './types.js';
@@ -21,10 +22,8 @@ export function readRefundState(params: ReadRefundStateParams): RefundState {
   const method = 'readRefundState';
   readParams(params, method);
   const { transaction } = params;
-  if (transaction === null) return UNKNOWN;
-  const value: unknown = transaction;
-  if (typeof value !== 'object') {
-    const message = `${method}: transaction must be a transactions.get result or null`;
+  if (!isRecord(transaction)) {
+    const message = `${method}: transaction must be a transactions.get result`;
     throw invalidInput(message, 'transaction', 'type');
   }
   return stateOf(transaction);
@@ -33,7 +32,7 @@ export function readRefundState(params: ReadRefundStateParams): RefundState {
 function stateOf(transaction: Transaction): RefundState {
   const { status, isHold, cancelledAt } = transaction;
   if (status === 'paid' && cancelledAt === null) return { kind: 'not_refunded' };
-  // On a hold, `refunded` has marked a dismissal and a release after expiry [OPEN Q86].
+  // On a hold, `refunded` marks a release, by dismissal or by Paylov after expiry.
   if (status === 'refunded' && !isHold && cancelledAt instanceof Date) {
     return { kind: 'refunded', refundedAt: cancelledAt };
   }

@@ -5,7 +5,7 @@ import type { Transaction } from '../../src/transactions/types.js';
 import { expectInputError } from '../helpers/asserts.js';
 
 // Expectations come from docs/paylov/transactions.md: a refunded sale reads `cancel` with its
-// `cancel_time`, while `refunded` was seen only on an expired hold's release [OPEN Q86].
+// `cancel_time`, while `refunded` was seen only on an expired hold's release.
 const CANCELLED_AT = new Date('2026-11-12T15:54:08Z');
 const PAID_SALE: Transaction = {
   transactionId: '00000000-0000-4000-8000-000000000001',
@@ -21,7 +21,6 @@ const PAID_SALE: Transaction = {
   isHold: false,
   isSplit: false,
   isA2c: false,
-  isCheckout: false,
   fiscalReceipts: [],
 };
 
@@ -41,8 +40,7 @@ describe('readRefundState', () => {
     });
   });
 
-  it.each<[string, Transaction | null]>([
-    ['no transaction found', null],
+  it.each<[string, Transaction]>([
     [
       'a refunded hold, which can also mark a release',
       { ...PAID_SALE, status: 'refunded', isHold: true, cancelledAt: CANCELLED_AT },
@@ -62,6 +60,7 @@ describe('readRefundState', () => {
   it.each([
     ['missing params', undefined, undefined],
     ['a missing transaction', {}, 'transaction'],
+    ['a null transaction', { transaction: null }, 'transaction'],
     ['a string transaction', { transaction: 'paid' }, 'transaction'],
   ] as const)('rejects %s', async (_case, params, field) => {
     // @ts-expect-error malformed JavaScript input

@@ -1,8 +1,0 @@
-{
-  "jsonrpc": "2.0",
-  "id": 1234567,
-  "result": {
-    "status": "+1",
-    "statusText": "monthly_limit_exceeded"
-  }
-}

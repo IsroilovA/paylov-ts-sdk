@@ -12,39 +12,11 @@ const AT = new Date('2026-01-02T03:04:05Z');
 
 const EVENTS: readonly WebhookEvent[] = [
   {
-    kind: 'transaction.check',
-    id: 1,
-    account: ACCOUNT,
-    amount: { currency: 860, amountTiyin: 50_000 },
-  },
-  {
-    kind: 'transaction.perform',
-    id: 'rpc-2',
-    transactionId: TRANSACTION_ID,
-    account: ACCOUNT,
-    amount: { currency: 840, amountCents: 1_250 },
-  },
-  {
     kind: 'transaction.cancel',
     transactionId: TRANSACTION_ID,
     account: ACCOUNT,
     amountTiyin: 50_000,
     cancelledAt: AT,
-  },
-  {
-    kind: 'merchant.deposit',
-    depositId: '00000000-0000-4000-8000-0000000000d1',
-    merchantId: '125',
-    source: 'a2c',
-    amountTiyin: 10_000_000,
-    createdAt: AT,
-  },
-  {
-    kind: 'card.bind',
-    token: 'EXAMPLE-BIND-TOKEN',
-    userId: 'user-42',
-    status: 'confirmed',
-    cardId: '00000000-0000-4000-8000-0000000000c1',
   },
 ];
 
@@ -70,7 +42,7 @@ describe('createWebhookRequest', () => {
   });
 
   it('rejects a time the wire cannot carry', () => {
-    const cancel = { ...(EVENTS[2] as WebhookEvent), cancelledAt: new Date(1_500) };
+    const cancel = { ...(EVENTS[0] as WebhookEvent), cancelledAt: new Date(1_500) };
     expect(capture(() => createWebhookRequest(cancel, CREDENTIALS))).toBeInstanceOf(TypeError);
   });
 });

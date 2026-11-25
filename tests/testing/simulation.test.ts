@@ -256,12 +256,20 @@ describe('the simulated gateway: holds', () => {
   });
 
   it('releases an expired hold without a capture attempt', async () => {
-    const { fake, paylov, advance } = simulated();
+    const { fake, paylov, advance, now } = simulated();
     const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
 
     advance(3);
     await paylov.holds.release(created);
-    expect(await paylov.holds.get(created)).toMatchObject({ status: 'released' });
+    expect(await paylov.holds.get(created)).toMatchObject({
+      status: 'released',
+      releasedAt: now(),
+    });
+    expect(await paylov.transactions.get(created)).toMatchObject({
+      status: 'refunded',
+      isHold: true,
+      cancelledAt: now(),
+    });
     await expectApiError(paylov.holds.release(created), { code: 'hold_not_found' });
     fake.assertDone();
   });
@@ -273,7 +281,9 @@ describe('the simulated gateway: holds', () => {
 
     await paylov.holds.release(created);
     await expectApiError(paylov.holds.create(HOLD), { code: 'external_id_already_exists' });
-    await expect(paylov.holds.get({ externalId: 'booking-unknown' })).resolves.toBeNull();
+    await expectApiError(paylov.holds.get({ externalId: 'booking-unknown' }), {
+      code: 'transaction_not_found',
+    });
     fake.assertDone();
   });
 });
@@ -382,11 +392,12 @@ describe('the simulated gateway: scripted overrides and limits', () => {
 
   it('serves a persistent scripted reply for every call of its method', async () => {
     const { fake, paylov } = simulated();
-    fake.transactions.get.reply(null, { persist: true });
+    fake.transactions.get.fail('transaction_not_found', {}, { persist: true });
     const { transactionId } = await paylov.payments.create({ amountTiyin: 100_000 });
 
-    await expect(paylov.transactions.get({ transactionId })).resolves.toBeNull();
-    await expect(paylov.transactions.get({ transactionId })).resolves.toBeNull();
+    const miss = { code: 'transaction_not_found' } as const;
+    await expectApiError(paylov.transactions.get({ transactionId }), miss);
+    await expectApiError(paylov.transactions.get({ transactionId }), miss);
     fake.assertDone();
   });
 
@@ -399,16 +410,6 @@ describe('the simulated gateway: scripted overrides and limits', () => {
         return paylov.payments.refund(created);
       },
       'payments.refund',
-    ],
-    [
-      'a transaction read of a hold dismissed after it expired',
-      async ({ paylov, advance }: Simulated) => {
-        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
-        advance(3);
-        await paylov.holds.release(created);
-        return paylov.transactions.get(created);
-      },
-      'transactions.get',
     ],
     [
       'a capture after the card was deleted',
@@ -604,7 +605,7 @@ describe('the simulated gateway: scripted overrides and limits', () => {
 // A 401 permission_denied expires the access token, so the replay needs a refresh grant.
 function scriptReplay(fake: PaylovFakeGateway): void {
   fake.transactions.get.fail('permission_denied', { httpStatus: 401 });
-  fake.transactions.get.reply(null);
+  fake.transactions.get.fail('transaction_not_found');
 }
 
 describe('the fake token endpoint', () => {
@@ -616,7 +617,9 @@ describe('the fake token endpoint', () => {
     fake.token.fail('invalid_grant', { grant: 'refresh_token' });
     scriptReplay(fake);
 
-    await expect(paylov.transactions.get({ transactionId: ID })).resolves.toBeNull();
+    await expectApiError(paylov.transactions.get({ transactionId: ID }), {
+      code: 'transaction_not_found',
+    });
     expect(fake.token.requests).toEqual(['password', 'refresh_token', 'password']);
     fake.assertDone();
   });

@@ -1,11 +1,11 @@
 /**
  * Wire encoders of the shared transaction shapes and request decoders of the shared request
- * shapes, the inverses of `transactions.ts`, `receiptItems.ts` and `otpSms.ts`.
+ * shapes, the inverses of `transactions.ts`, `fiscalReceipts.ts` and `receiptItems.ts`.
  */
 
 import { optionalEntry } from '../core/fake.js';
 import type { Params } from '../core/params.js';
-import type { OtpSmsSettings } from './otpSms.js';
+import type { FiscalReceipt, FiscalReceiptRegistered } from './fiscalReceipts.js';
 import type { FiscalReceiptItem } from './receiptItems.js';
 import type { TransactionReference } from './transactions.js';
 
@@ -47,10 +47,17 @@ export function decodeReceiptItem(item: Params): FiscalReceiptItem {
     : { ...base, pinfl: item.string('pinfl') };
 }
 
-/** The `sms` object as `readOtpSms` sent it. */
-export function decodeOtpSms(sms: Params): OtpSmsSettings {
+/** The OFD receipt fields `decodeRegisteredReceipt` reads. */
+export function encodeRegisteredReceipt(receipt: FiscalReceiptRegistered): Record<string, unknown> {
   return {
-    ...optionalEntry('hash', sms.optionalString('hash')),
-    ...optionalEntry('templateId', sms.optionalInteger('templateId')),
+    receiptId: receipt.receiptId,
+    receiptUrl: receipt.receiptUrl,
+    terminalId: receipt.terminalId,
+    fiscalSign: receipt.fiscalSign,
   };
+}
+
+/** The receipt and `isRefund` that `decodeFiscalReceipt` reads. */
+export function encodeFiscalReceipt(receipt: FiscalReceipt): Record<string, unknown> {
+  return { ...encodeRegisteredReceipt(receipt), isRefund: receipt.isRefund };
 }

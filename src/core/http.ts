@@ -186,9 +186,10 @@ function isTransientFailure(outcome: Attempt): boolean {
 }
 
 /**
- * Only the gateway's own authentication rejection is replayed. Bearer authentication is expected
- * to reject before any handler runs (an inference: every captured 401 answered a GET), so the
- * rejected request should not have executed. A bare 401 (a proxy) proves nothing about the token.
+ * Only the gateway's own authentication rejection is replayed. Bearer authentication rejects
+ * before any handler runs: a `hold/create` refused with 401 left no transaction
+ * (docs/architecture.md), so the rejected request did not execute. A bare 401 (a proxy) proves
+ * nothing about the token.
  * The token transport has no AuthProvider.
  */
 function isTokenRejection(

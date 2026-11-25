@@ -42,9 +42,12 @@ describe.skipIf(!gate.enabled)('holds reads', () => {
   if (!gate.enabled) return;
   const client = liveClient(gate.config);
 
-  it('get of an unknown transactionId or externalId is null', async () => {
-    expect(await client.holds.get({ transactionId: randomUUID() })).toBeNull();
-    expect(await client.holds.get({ externalId: externalId('unknown') })).toBeNull();
+  it('get of an unknown transactionId or externalId throws transaction_not_found', async () => {
+    const miss = { code: 'transaction_not_found' };
+    await expect(client.holds.get({ transactionId: randomUUID() })).rejects.toMatchObject(miss);
+    await expect(client.holds.get({ externalId: externalId('unknown') })).rejects.toMatchObject(
+      miss,
+    );
   });
 });
 
@@ -82,7 +85,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
 
   async function readHold(transactionId: string): Promise<Hold> {
     const hold = await client.holds.get({ transactionId });
-    if (hold === null) throw new Error('holds.get found no such hold');
     expect(hold.transactionId === transactionId, 'transactionId').toBe(true);
     return hold;
   }
@@ -101,7 +103,6 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
   it('create, read back by externalId, capture in part, read back captured', async () => {
     const created = await createHold('capture');
     const byExternal = await client.holds.get({ externalId: created.externalId });
-    if (byExternal === null) throw new Error('holds.get by externalId found nothing');
     observeHold('holds.get.fresh', byExternal);
     expect(byExternal.transactionId === created.transactionId, 'found by externalId').toBe(true);
     expect(byExternal).toMatchObject({
@@ -113,9 +114,9 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
     expect(byExternal.serviceId.length).toBeGreaterThan(0);
 
     const asTransaction = await client.transactions.get({ transactionId: created.transactionId });
-    observe('transactions.get.hold', { status: asTransaction?.status ?? null });
+    observe('transactions.get.hold', { status: asTransaction.status });
     expect(asTransaction).toMatchObject({ status: 'held', isHold: true });
-    expect(asTransaction?.externalId === created.externalId, 'transaction externalId').toBe(true);
+    expect(asTransaction.externalId === created.externalId, 'transaction externalId').toBe(true);
 
     const captured = await client.holds.capture({
       transactionId: created.transactionId,
@@ -137,7 +138,7 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
     expectRecent('holds.get.captured.capturedAt', paid.capturedAt);
 
     const settled = await client.transactions.get({ transactionId: created.transactionId });
-    observe('transactions.get.captured-hold', { status: settled?.status ?? null });
+    observe('transactions.get.captured-hold', { status: settled.status });
     expect(settled).toMatchObject({ status: 'paid', amountTiyin: CAPTURE_TIYIN, isHold: true });
   });
 

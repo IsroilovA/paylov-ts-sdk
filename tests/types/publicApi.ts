@@ -1,7 +1,6 @@
 /** Compile-time contracts for the package root: client, standalone surfaces, errors and money. */
 
 import {
-  createCheckoutUrl,
   formatSum,
   isPaylovApiError,
   isPaylovError,
@@ -15,8 +14,6 @@ import {
   PaylovProtocolError,
   sumToTiyin,
   type CardsResource,
-  type CheckoutAmount,
-  type CheckoutCurrency,
   type FiscalizationResource,
   type FiscalReceiptItem,
   type GatewayResource,
@@ -90,20 +87,6 @@ void transport;
 void new PaylovOnboarding({ baseUrl: 'https://dev.gw.paylov.uz' });
 // @ts-expect-error the credential-free surfaces take no merchant credentials
 void new PaylovOnboarding({ baseUrl: 'https://dev.gw.paylov.uz', password: paylovPassword });
-
-const amount: CheckoutAmount = { currency: 860, amountTiyin: 50_000 };
-const currency: CheckoutCurrency = amount.currency;
-void currency;
-// @ts-expect-error the checkout takes 860 and 840 only
-const euro: CheckoutCurrency = 978;
-void euro;
-const checkoutUrl: string = createCheckoutUrl({
-  merchantId: '5eed0000-0000-4000-8000-0000000000aa',
-  amount,
-  account: { order_id: 'A-1001' },
-  returnUrl: 'https://shop.example/return',
-});
-void checkoutUrl;
 
 // Shared public types
 const account: PaylovJsonObject = { order_id: 'A-1001', lines: [1, 2], meta: { gift: true } };

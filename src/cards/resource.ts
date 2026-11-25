@@ -1,9 +1,6 @@
 import { readCall, send } from '../core/call.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
-import { readOtpSms } from '../shared/otpSms.js';
 import {
-  decodeBindLinkCreated,
-  decodeBindSession,
   decodeCardList,
   decodeConfirmedCard,
   decodeFetchedCard,
@@ -13,13 +10,9 @@ import {
 } from './decoders.js';
 import type {
   Card,
-  CardBindLinkCreated,
-  CardBindSession,
   CheckCardPhoneParams,
   ConfirmPanBindingParams,
-  CreateBindLinkParams,
   DeleteCardParams,
-  GetBindSessionParams,
   GetCardParams,
   ListCardsParams,
   PanBindingStarted,
@@ -27,16 +20,6 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  createBindLink: {
-    method: 'POST',
-    route: '/merchant/userCard/createBindLink/',
-    shape: 'envelope',
-  },
-  getBindSession: {
-    method: 'GET',
-    route: '/merchant/userCard/bindSession/{token}/status/',
-    shape: 'envelope',
-  },
   startPanBinding: {
     method: 'POST',
     route: '/merchant/userCard/createUserCard/',
@@ -68,50 +51,8 @@ export const ENDPOINTS = {
 /** The `paylov.cards` namespace. Nothing here moves money. */
 export interface CardsResource {
   /**
-   * Starts a Card Bind session, the preferred way to bind a card: the cardholder enters the card
-   * and the SMS code on a Paylov page, so the card number never reaches your servers. Open
-   * `bindUrl` in a webview; the result arrives through the `card.bind` webhook or
-   * {@link CardsResource.getBindSession}. A link binds one card and expires after about 20
-   * minutes. Each call creates a new link.
-   *
-   * @throws {@link PaylovApiError} `permission_denied` when Card Bind is not enabled for the
-   * merchant.
-   *
-   * @example
-   * const link = await paylov.cards.createBindLink({
-   *   userId: 'user-42',
-   *   returnUrl: 'https://app.example/wallet/cards',
-   * });
-   * await bindSessions.save({ userId: 'user-42', token: link.token, expiresAt: link.expiresAt });
-   * openWebView(link.bindUrl);
-   */
-  createBindLink(
-    params: CreateBindLinkParams,
-    options?: PaylovCallOptions,
-  ): Promise<CardBindLinkCreated>;
-
-  /**
-   * Reads a Card Bind session, to recover a bind whose webhook never arrived (Paylov does not
-   * retry it). `isBound` is `true` exactly when the card is attached; `card` is the card as it was
-   * bound and stays even after the card is deleted, so read {@link CardsResource.get} for its
-   * current state. The token stays out of logger events.
-   *
-   * @throws {@link PaylovApiError} `link_expired` (expired or unknown token; a link that bound a
-   * card also answers it once expired, so check `cards.list` before offering a new link),
-   * `link_already_used` (a card was already bound with this link: never offer a new one).
-   *
-   * @example
-   * const session = await paylov.cards.getBindSession({ token: storedBindToken });
-   * if (session.isBound) await userCards.saveOnce(storedBindToken, session.card.cardId);
-   */
-  getBindSession(
-    params: GetBindSessionParams,
-    options?: PaylovCallOptions,
-  ): Promise<CardBindSession>;
-
-  /**
    * PCI scope: takes a full card number server-side; the SDK keeps it out of logger events and
-   * errors. Prefer {@link CardsResource.createBindLink}, which keeps it off your servers.
+   * errors.
    *
    * Registers a card for a user and makes its processing center (Uzcard or Humo) send an OTP to
    * the phone linked to the card; pass the returned `cardId` and the code to
@@ -215,20 +156,6 @@ export interface CardsResource {
 
 export function createCardsResource(http: HttpClient): CardsResource {
   return {
-    async createBindLink(params, options) {
-      const method = 'cards.createBindLink';
-      const { input, signal } = readCall(params, options, method);
-      const body = { userId: input.string('userId'), returnUrl: input.optionalUrl('returnUrl') };
-      return send(http, ENDPOINTS.createBindLink, { body, signal }, decodeBindLinkCreated);
-    },
-
-    async getBindSession(params, options) {
-      const method = 'cards.getBindSession';
-      const { input, signal } = readCall(params, options, method);
-      const path = { token: input.string('token') };
-      return send(http, ENDPOINTS.getBindSession, { path, signal }, decodeBindSession);
-    },
-
     async startPanBinding(params, options) {
       const method = 'cards.startPanBinding';
       const { input, signal } = readCall(params, options, method);
@@ -237,7 +164,6 @@ export function createCardsResource(http: HttpClient): CardsResource {
         cardNumber: input.string('cardNumber'),
         expireDate: input.string('cardExpiry'),
         phoneNumber: input.optionalString('phoneNumber'),
-        sms: input.optionalObject('sms', readOtpSms),
       };
       return send(http, ENDPOINTS.startPanBinding, { body, signal }, decodePanBindingStarted);
     },

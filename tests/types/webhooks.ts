@@ -1,13 +1,8 @@
-/** Compile-time contracts for inbound webhooks and callback answers. */
+/** Compile-time contracts for inbound webhooks. */
 
 import type { IncomingMessage } from 'node:http';
 
-import {
-  createWebhookResponse,
-  PaylovWebhookReceiver,
-  type WebhookOutcome,
-  type WebhookResponseBody,
-} from '../../src/index.js';
+import { PaylovWebhookReceiver, type WebhookOutcome } from '../../src/index.js';
 
 const receiver = new PaylovWebhookReceiver({
   credentials: [
@@ -42,43 +37,11 @@ void receiver.receive({ method: 'POST', headers: {}, body: fetchRequest.body });
 void receiver.receive({ method: 'POST', headers: {}, body: new Blob([]) });
 
 switch (outcome.kind) {
-  case 'transaction.check': {
-    const minor =
-      outcome.amount.currency === 860 ? outcome.amount.amountTiyin : outcome.amount.amountCents;
-    void minor;
-    const answer: WebhookResponseBody = createWebhookResponse(outcome, 'accept');
-    void answer;
-    void createWebhookResponse(outcome, { custom: 'monthly_limit_exceeded' });
-    // @ts-expect-error decisions are semantic, not wire statuses
-    void createWebhookResponse(outcome, '0');
-    // @ts-expect-error the whole-currency amount is not exposed
-    void outcome.amountTiyin;
-    break;
-  }
-  case 'transaction.perform':
-    void (outcome.transactionId, outcome.amount);
-    void createWebhookResponse(outcome, 'order_not_found');
-    break;
   case 'transaction.cancel': {
     const cancelledAt: Date = outcome.cancelledAt;
     void [outcome.transactionId, outcome.amountTiyin, cancelledAt];
-    // @ts-expect-error notifications carry no JSON-RPC id to answer
-    void createWebhookResponse(outcome, 'accept');
-    break;
-  }
-  case 'merchant.deposit': {
-    const createdAt: Date = outcome.createdAt;
-    const source: string = outcome.source;
-    void [outcome.depositId, outcome.merchantId, outcome.amountTiyin, createdAt, source];
-    // @ts-expect-error notifications carry no JSON-RPC id to answer
-    void createWebhookResponse(outcome, 'accept');
-    break;
-  }
-  case 'card.bind': {
-    const cardId: string = outcome.cardId;
-    void [outcome.token, outcome.userId, outcome.status, cardId];
-    // @ts-expect-error the card-bind event surfaces only the card id
-    void outcome.card;
+    // @ts-expect-error notifications carry no JSON-RPC id
+    void outcome.id;
     break;
   }
   case 'invalid':

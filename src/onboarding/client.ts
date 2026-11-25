@@ -1,6 +1,7 @@
 /** The operator onboarding step that issues merchant API credentials. */
 
-import { orOnMiss, readCall, send } from '../core/call.js';
+import { readCall, send } from '../core/call.js';
+import { isPaylovApiError } from '../core/errors.js';
 import { readSurfaceTransport } from '../core/config.js';
 import { createHttpClient } from '../core/http.js';
 import { readConfig } from '../core/params.js';
@@ -14,12 +15,7 @@ import type {
 } from './types.js';
 
 export const ENDPOINTS = {
-  checkToken: {
-    method: 'GET',
-    route: '/merchant/onboarding/',
-    shape: 'flat',
-    miss: 'invalid_or_expired',
-  },
+  checkToken: { method: 'GET', route: '/merchant/onboarding/', shape: 'flat' },
   complete: { method: 'POST', route: '/merchant/onboarding/', shape: 'flat' },
 } as const;
 
@@ -64,8 +60,13 @@ export class PaylovOnboarding {
     const method = 'onboarding.checkToken';
     const { input, signal } = readCall(params, options, method);
     const query = { token: input.string('token') };
-    const request = send(this.#http, ENDPOINTS.checkToken, { query, signal }, decodeTokenUsable);
-    return orOnMiss(request, ENDPOINTS.checkToken, false);
+    try {
+      return await send(this.#http, ENDPOINTS.checkToken, { query, signal }, decodeTokenUsable);
+    } catch (error) {
+      // Paylov answers an unusable token with this error; it is the method's `false`.
+      if (isPaylovApiError(error, 'invalid_or_expired')) return false;
+      throw error;
+    }
   }
 
   /**

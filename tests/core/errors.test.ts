@@ -248,7 +248,7 @@ describe('isPaylovApiError', () => {
 });
 
 describe('unsettled codes', () => {
-  it('leave exactly the money-moving operations unknown, except processing_error on pay', () => {
+  it('leave exactly the money-moving operations unknown', () => {
     const tables: Readonly<Record<string, Readonly<Record<string, Endpoint>>>> = {
       cards: CARD_ENDPOINTS,
       fiscalization: FISCALIZATION_ENDPOINTS,
@@ -284,9 +284,9 @@ describe('unsettled codes', () => {
       'holds.create': generic,
       'holds.release': generic,
       'payments.confirmPanPayment': generic,
-      'payments.pay': ['unknown_error', 'error_at_pay'],
+      'payments.pay': generic,
       'payments.refund': generic,
-      'splits.create': generic,
+      'splits.splitPayment': generic,
     });
   });
 });

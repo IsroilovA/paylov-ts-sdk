@@ -216,7 +216,7 @@ function requestFor(
  * fake.payments.create.reply({ transactionId: '00000000-0000-4000-8000-000000000001' });
  * fake.payments.pay.fail('insufficient_funds');
  *
- * await expect(checkout(paylov, order)).rejects.toMatchObject({ code: 'insufficient_funds' });
+ * await expect(payOrder(paylov, order)).rejects.toMatchObject({ code: 'insufficient_funds' });
  * fake.assertDone();
  */
 export class PaylovFakeGateway {
@@ -303,7 +303,7 @@ export class PaylovFakeGateway {
   }
 
   /**
-   * Binds a card in the simulation, as a finished Card Bind or PAN binding would: `cards.get`,
+   * Binds a card in the simulation, as a finished PAN binding would: `cards.get`,
    * `cards.list`, payments and holds then find it. Throws `TypeError` without `simulate: true` or
    * for a card id already bound.
    *

@@ -14,6 +14,8 @@ export const HOLD_STATUS_BY_WIRE: ReadonlyMap<string, HoldStatus> = new Map([
   ['hold', 'held'],
   ['paid', 'captured'],
   ['cancelled', 'released'],
+  // Seen only on a declined create's record; readHoldState confirms it with the transaction.
+  ['check', 'declined'],
 ]);
 
 const decodeHoldStatus = statusDecoder(HOLD_STATUS_BY_WIRE);

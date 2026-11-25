@@ -4,8 +4,8 @@ import {
   type PaylovFakeSurface,
   type Scripter,
 } from '../core/fake.js';
-import { decodeReceiptItem } from '../shared/fake.js';
-import { readTransactionLookup } from '../shared/transactions.js';
+import { decodeReceiptItem, encodeFiscalReceipt, encodeRegisteredReceipt } from '../shared/fake.js';
+import type { FiscalReceipt, FiscalReceiptRegistered } from '../shared/fiscalReceipts.js';
 import {
   ACTIVITY_TYPES,
   ENDPOINTS,
@@ -14,46 +14,27 @@ import {
 } from './resource.js';
 import type {
   ActivityTypeCheck,
-  AttachFiscalReceiptParams,
   CheckActivityTypeParams,
-  FiscalReceipt,
   FiscalReceiptRefunded,
-  FiscalReceiptRegistered,
   GetFiscalReceiptParams,
   RefundFiscalReceiptParams,
   RegisterFiscalReceiptParams,
 } from './types.js';
 
-function encodeOfdReceipt(receipt: FiscalReceiptRegistered): Record<string, unknown> {
-  return {
-    receiptId: receipt.receiptId,
-    receiptUrl: receipt.receiptUrl,
-    terminalId: receipt.terminalId,
-    fiscalSign: receipt.fiscalSign,
-  };
-}
-
 function encodeRegistered(receipt: FiscalReceiptRegistered): unknown {
-  return { ofd: encodeOfdReceipt(receipt) };
+  return { ofd: encodeRegisteredReceipt(receipt) };
 }
 
-/**
- * A known transaction without a receipt answers `success: false`. An unknown `externalId` answers
- * the endpoint's miss instead, which the SDK reads as the same `null`.
- */
+/** A known transaction without a receipt answers `success: false`. */
 function encodeReceiptLookup(receipt: FiscalReceipt | null): unknown {
   if (receipt === null) return { success: false, receiptUrl: null, isRefund: null };
-  return { success: true, ...encodeOfdReceipt(receipt), isRefund: receipt.isRefund };
-}
-
-function encodeAttached(): unknown {
-  return { success: true, error: null };
+  return { success: true, ...encodeFiscalReceipt(receipt) };
 }
 
 function encodeRefunded(refunded: FiscalReceiptRefunded): unknown {
   return {
-    ofd: { refund: encodeOfdReceipt(refunded.refund) },
-    sale: encodeOfdReceipt(refunded.sale),
+    ofd: { refund: encodeRegisteredReceipt(refunded.refund) },
+    sale: encodeRegisteredReceipt(refunded.sale),
   };
 }
 
@@ -66,30 +47,17 @@ function encodeActivityTypeCheck(check: ActivityTypeCheck): unknown {
 }
 
 function decodeRegisterRequest({ body }: FakeRequest): RegisterFiscalReceiptParams {
-  const items = body.array('items', decodeReceiptItem);
-  const lookup = readTransactionLookup(body);
-  return lookup.transactionId === undefined
-    ? { externalId: lookup.externalId, phoneNumber: body.string('phoneNumber'), items }
-    : { transactionId: lookup.transactionId, items };
+  return {
+    transactionId: body.string('transactionId'),
+    items: body.array('items', decodeReceiptItem),
+  };
 }
 
 function decodeGetRequest({ query }: FakeRequest): GetFiscalReceiptParams {
   const refunded = query.optionalString('refunded');
   return {
-    ...readTransactionLookup(query),
+    transactionId: query.string('transactionId'),
     ...optionalEntry('isRefund', refunded === undefined ? undefined : refunded === 'true'),
-  };
-}
-
-function decodeAttachRequest({ body }: FakeRequest): AttachFiscalReceiptParams {
-  return {
-    transactionId: body.string('transactionId'),
-    terminalId: body.string('terminalId'),
-    issuedAtRaw: body.string('dateTime'),
-    fiscalSign: body.string('fiscalSign'),
-    receiptUrl: body.string('qrCodeUrl'),
-    receiptId: body.integer('receiptId'),
-    ...optionalEntry('externalId', body.optionalString('externalId')),
   };
 }
 
@@ -119,12 +87,6 @@ export function createFiscalizationFake(
       ENDPOINTS.getReceipt,
       encodeReceiptLookup,
       decodeGetRequest,
-    ),
-    attachReceipt: script(
-      'fiscalization.attachReceipt',
-      ENDPOINTS.attachReceipt,
-      encodeAttached,
-      decodeAttachRequest,
     ),
     refundReceipt: script(
       'fiscalization.refundReceipt',

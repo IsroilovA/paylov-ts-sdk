@@ -9,11 +9,12 @@ Unofficial server-side TypeScript SDK for the [Paylov](https://paylov.uz) paymen
 
 ## Features
 
-- Card binding through hosted Card Bind or card number and OTP; saved-card and one-off payments;
-  full refunds.
-- Holds with single capture or release, splits to sub-merchants, and OFD fiscal receipts.
-- Transaction reconciliation, hosted checkout links, and authenticated webhook decoding with typed
-  responses.
+- Card binding by card number and OTP; saved-card and one-off payments; full refunds.
+- Holds with single capture or release, and OFD fiscal receipts.
+- Splits of a paid transaction among recipients identified by Paylov-issued ids, with each split's
+  fiscal receipt. Only the merchant's own id has been verified as a recipient on Paylov's test
+  environment.
+- Transaction reconciliation and authenticated webhook decoding.
 - Integer tiyin money, typed errors with recovery guidance for ambiguous failures, GET-only retries,
   and metadata-only logging that never records credentials or card data.
 - A `@isroilov_an/paylov/testing` entry point with an in-memory gateway for application tests,
@@ -57,10 +58,10 @@ The guides ship in the package under `docs/usage/`. Method contracts are in the 
 - [Usage index](docs/usage/INDEX.md): every export and method, and the guide that explains it.
 - [Setup](docs/usage/setup.md): requirements, hosts, client lifecycle and a sandbox check.
 - [Errors](docs/usage/errors.md): branching on failures and recovery after an ambiguous one.
-- [Webhooks](docs/usage/webhooks.md): receiving and answering Paylov callbacks.
+- [Webhooks](docs/usage/webhooks.md): receiving and acknowledging Paylov callbacks.
 - [Testing](docs/usage/testing.md): the in-memory gateway and webhook requests.
-- [Examples](https://github.com/IsroilovA/paylov-ts-sdk/tree/main/examples): runnable checkout and
-  hold-capture flows.
+- [Examples](https://github.com/IsroilovA/paylov-ts-sdk/tree/main/examples): runnable
+  package-consumer and hold-capture flows.
 
 Paylov's own references: the [sandbox](https://sandbox.paylov.uz/) and the
 [developer docs](https://developer.paylov.uz/).

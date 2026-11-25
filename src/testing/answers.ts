@@ -3,7 +3,7 @@
 import { isWireErrorCode } from '../core/envelope.js';
 import type { PaylovErrorCode } from '../core/errorCodes.js';
 import { decodeErrorDetails } from '../core/errorDetails.js';
-import { encodeErrorDetails, MISS, type PaylovFakeFailure } from '../core/fake.js';
+import { encodeErrorDetails, FakeRefusal, type PaylovFakeFailure } from '../core/fake.js';
 import { isRetryableStatus } from '../core/http.js';
 import type { Endpoint } from '../core/types.js';
 
@@ -48,10 +48,10 @@ export function respond(
   return { kind: 'respond', httpStatus, body, retryAfter };
 }
 
-/** The success answer for `payload`, or the endpoint's not-found error for `MISS`. */
+/** The success answer for `payload`, or the error a `FakeRefusal` names. */
 export function replyAnswer(endpoint: Endpoint, payload: unknown): Answer {
-  if (payload === MISS) {
-    return respond(400, errorBody({ code: endpoint.miss, message: String(endpoint.miss) }));
+  if (payload instanceof FakeRefusal) {
+    return respond(400, errorBody({ code: payload.code, message: payload.code }));
   }
   return respond(200, endpoint.shape === 'envelope' ? { result: payload, error: null } : payload);
 }

@@ -23,9 +23,10 @@ export interface GetRrnParams {
 
 /**
  * `created` (not yet paid), `held` (an uncaptured hold, as in `HoldStatus`), `paid` (a captured
- * hold too), `failed` (declined; see `declineCode`) or `refunded`. A refunded sale reads
- * `refunded`; so does a released hold, with `isHold` true: one dismissed before it expired, or an
- * expired one Paylov released when a capture failed.
+ * hold too), `failed` (declined, a hold whose create was declined too; see `declineCode`) or
+ * `refunded`. A refunded sale reads `refunded`; so does a released hold, with `isHold` true:
+ * one dismissed, before or after it expired, or an expired one Paylov released when a capture
+ * failed.
  * `transfer` and `pending` are documented but were never observed. Other values pass through
  * unchanged.
  */
@@ -44,22 +45,19 @@ export interface FiscalReceiptSummary {
   readonly receiptId: number;
   /** The tax authority's receipt page. */
   readonly receiptUrl: string;
-  /** When it was issued: `YYYY-MM-DD HH:MM:SS` as sent; Paylov does not state its zone. */
-  readonly issuedAtRaw: string;
+  /** The time on the receipt: the payment time for a sale, the refund time for a refund. */
+  readonly issuedAt: Date;
   /** `true` for the receipt of a refund. */
   readonly isRefund: boolean;
 }
 
-/** One gateway transaction: a receipt, PAN, hold or checkout payment. */
+/** One gateway transaction: a receipt, PAN or hold payment. */
 export interface Transaction {
   /** Gateway transaction id. */
   readonly transactionId: string;
-  /**
-   * The external reference stored with the transaction: a hold's `externalId`, and possibly a
-   * value on checkout payments. `null` for receipt and PAN payments.
-   */
+  /** The external reference stored with the transaction: a hold's `externalId`; `null` for receipt and PAN payments. */
   readonly externalId: string | null;
-  /** `null` for PAN and checkout payments, and for a receipt created without one until paid. */
+  /** `null` for PAN payments, and for a receipt created without one until paid. */
   readonly userId: string | null;
   /** Card id; `null` until a card is attached. A PAN payment gets a new one each time. */
   readonly cardId: string | null;
@@ -76,8 +74,6 @@ export interface Transaction {
   readonly isHold: boolean;
   readonly isSplit: boolean;
   readonly isA2c: boolean;
-  /** Paid through a checkout link. */
-  readonly isCheckout: boolean;
   readonly fiscalReceipts: readonly FiscalReceiptSummary[];
 }
 
@@ -91,8 +87,8 @@ export interface TransactionPage {
 
 /** Parameters for `readRefundState`. */
 export interface ReadRefundStateParams {
-  /** A `transactions.get` result for a sale; `null` when the gateway knew no such transaction. */
-  readonly transaction: Transaction | null;
+  /** A `transactions.get` result for a sale. */
+  readonly transaction: Transaction;
 }
 
 /**
@@ -100,8 +96,8 @@ export interface ReadRefundStateParams {
  * `readRefundState`:
  * - `refunded`: the sale reads `refunded`, with the refund time.
  * - `not_refunded`: the sale still reads `paid`.
- * - `unknown`: the read proves nothing: no transaction, a hold (whose `refunded` can also mark a
- *   release), a transaction that was never paid, an unobserved status, or a refund without a
+ * - `unknown`: the read proves nothing: a hold (whose `refunded` can also mark a release), a
+ *   transaction that was never paid, an unobserved status, or a refund without a
  *   time. Read again later or check the Paylov business panel; never refund again on it.
  */
 export type RefundState =

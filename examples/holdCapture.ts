@@ -56,7 +56,7 @@ try {
     clientCaptureDeadline: hold.clientCaptureDeadline,
     now: new Date(),
   });
-  console.log('state=%s amount=%s SUM', state.kind, formatSum(status?.amountTiyin ?? 0));
+  console.log('state=%s amount=%s SUM', state.kind, formatSum(status.amountTiyin));
 
   if (capture) {
     // Capture is single-use: the remainder cannot be captured later, and the SDK assumes Paylov
@@ -75,7 +75,7 @@ try {
   } else if (isPaylovApiError(error, 'transaction_not_available_for_payment', 'hold_not_found')) {
     // Already captured or released (or, for a release, expired): read it instead of retrying.
     const hold = await paylov.holds.get({ externalId });
-    console.error('hold already settled: %s', hold?.status ?? 'not found');
+    console.error('hold already settled: %s', hold.status);
   } else {
     // A connection or protocol error leaves the outcome unknown: reconcile with
     // holds.get({ externalId }) before acting again, never by repeating the call.

@@ -116,17 +116,20 @@ describe('payments.create', () => {
 });
 
 describe('payments.pay', () => {
-  it('reads a processing_error decline as definitive: such a pay never ends up paid', async () => {
+  it('reads processing_error as an unknown outcome and a specific decline as definitive', async () => {
     const params = { transactionId: TRANSACTION_ID, cardId: CARD_ID, userId: USER_ID };
     const { resource } = setup([
       wireResponse('payments/pay.processingError.wire.json'),
       wireResponse('payments/pay.cardNotForCheck.wire.json'),
     ]);
 
-    for (const code of ['processing_error', 'card_is_not_for_this_check']) {
+    for (const [code, isUnsettled] of [
+      ['processing_error', true],
+      ['card_is_not_for_this_check', false],
+    ] as const) {
       const error = await captureAsync(resource.pay(params));
-      expect(error).toMatchObject({ code, isUnsettled: false });
-      expect(isPaylovOutcomeUnknown(error)).toBe(false);
+      expect(error).toMatchObject({ code, isUnsettled });
+      expect(isPaylovOutcomeUnknown(error)).toBe(isUnsettled);
     }
   });
 
@@ -267,20 +270,11 @@ describe('payments.startPanPayment', () => {
     });
   });
 
-  it('forwards sms unchanged', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('payments/startPan.success.wire.json')]);
-
-    await resource.startPanPayment({ ...startPanParams, sms: { hash: 'app-hash', templateId: 1 } });
-
-    expect(fetchImpl.calls[0]?.body).toMatchObject({ sms: { hash: 'app-hash', templateId: 1 } });
-  });
-
   it.each([
     ['cardNumber', { cardNumber: ' ' }, 'sdk_invalid_input', 'required'],
     ['cardExpiry', { cardExpiry: 9912 }, 'sdk_invalid_input', 'type'],
     ['account', { account: 'order-1' }, 'sdk_invalid_input', 'type'],
     ['amountTiyin', { amountTiyin: 120_050 }, 'sdk_invalid_amount', 'format'],
-    ['sms.hash', { sms: { hash: 7 } }, 'sdk_invalid_input', 'type'],
   ] as const)('rejects an invalid %s before any request', async (field, patch, code, rule) => {
     const { resource, fetchImpl } = setup([]);
 
@@ -332,18 +326,6 @@ describe('payments.confirmPanPayment', () => {
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/confirmPayment/`);
     expect(fetchImpl.calls[0]?.body).toEqual({ transactionId: PAN_TRANSACTION_ID, otp: OTP });
     expect(JSON.stringify(requests)).not.toContain(OTP);
-  });
-
-  it('forwards sms unchanged', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('payments/confirmPan.success.wire.json')]);
-
-    await resource.confirmPanPayment({ transactionId: PAN_TRANSACTION_ID, otp: OTP, sms: {} });
-
-    expect(fetchImpl.calls[0]?.body).toEqual({
-      transactionId: PAN_TRANSACTION_ID,
-      otp: OTP,
-      sms: {},
-    });
   });
 
   it('rejects a blank OTP before any request', async () => {

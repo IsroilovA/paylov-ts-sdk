@@ -18,11 +18,11 @@ describe('layer rules', () => {
     ['shared/receiptItems.ts', '../core/http.js'],
     ['shared/receiptItems.ts', '../core/call.js'],
     ['shared/receiptItems.ts', '../cards/types.js'],
-    ['checkout/link.ts', '../core/http.js'],
-    ['checkout/link.ts', '../core/config.js'],
-    ['checkout/link.ts', '../core/decoding.js'],
+    ['webhooks/decode.ts', '../core/http.js'],
+    ['webhooks/decode.ts', '../core/config.js'],
     ['webhooks/decode.ts', '../core/envelope.js'],
     ['webhooks/decode.ts', '../core/lifecycle.js'],
+    ['webhooks/decode.ts', '../shared/receiptItems.js'],
     ['onboarding/client.ts', '../core/auth.js'],
     ['onboarding/client.ts', '../core/lifecycle.js'],
     ['onboarding/client.ts', '../core/envelope.js'],
@@ -57,7 +57,6 @@ describe('layer rules', () => {
     ['onboarding/client.ts', '../core/call.js'],
     ['cards/resource.ts', '../core/call.js'],
     ['cards/resource.ts', '../shared/receiptItems.js'],
-    ['checkout/link.ts', '../core/params.js'],
     ['webhooks/decode.ts', '../core/params.js'],
     ['shared/receiptItems.ts', '../core/params.js'],
     ['core/money.ts', './errorCodes.js'],
@@ -99,10 +98,10 @@ describe('architecture problems', () => {
 
   it('reports a missing required path of a surface', () => {
     const { problems } = architectureProblems({
-      exists: (path) => path !== 'src/checkout/link.ts',
+      exists: (path) => path !== 'src/webhooks/receiver.ts',
       imports: new Map(),
     });
-    expect(problems).toEqual(['checkout is missing src/checkout/link.ts']);
+    expect(problems).toEqual(['webhooks is missing src/webhooks/receiver.ts']);
   });
 });
 

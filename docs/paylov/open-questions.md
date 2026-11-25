@@ -7,60 +7,9 @@ evidence settles a question, record the fact on its owning page and remove the e
 [sync-paylov-reference skill](../../.agents/skills/sync-paylov-reference/SKILL.md); an M decision
 settles one only as the README's evidence rules allow.
 
-## Q10
+## Q108
 
-Does a non-default hold `serviceId` change who receives or settles the captured funds?
+Which ids besides the merchant's own can be split recipients (sub-merchants, other merchants)?
 
-`serviceId` must exist (`service_not_found`, W c208) and defaults to the merchant id (W c184); DEV
-has no second service. Page: [Holds](holds.md).
-
-## Q29
-
-What do `sms.hash` and `sms.templateId` change?
-
-Bind and PWR completed alike with `sms` omitted, `{}`, `{hash}` or `{hash, templateId: 1}` (W
-c725–c727, c729–c731, c733–c735, c737, c738, c1353–c1361, c1365–c1373), and bind with
-`templateId: 999999`, so DEV checks no template list (W c1522, c1523); a string, an array or a
-non-integer `templateId` is `validation_error` (W c728, c732, c736, c739, c1363). Card binding lists
-`sms` without a description, and the PWR pages omit it (D). DEV OTPs are fixed, so the SMS itself
-cannot be observed there. Page: [Cards](cards.md#create-user-card),
-[Payments](payments.md#payment-without-registration).
-
-## Q32
-
-Which payment kinds does Paylov fiscalize itself, and when must the merchant register a receipt?
-
-No page states automatic fiscalization (D); on the DEV merchant, which has no fiscalization, a paid
-payment has an empty `ofd` array (W c125, c1300) and status returns the no-receipt `success: false`
-shape (W c274, c1305–c1307). Page: [Fiscalization](fiscalization.md).
-
-## Q59
-
-Where do a split's fiscalization results appear, and when is a resend with `resendOFD: true` safe?
-
-The docs say to resend when the response lacks OFD data, yet the documented success carries none
-(D); item validation matches OFD register (W c220), and splits answer `permission_denied` on the DEV
-merchant (W c1452). Page: [Splits](splits.md).
-
-## Q86
-
-Which `getTransactions` status does each of these read, and is it the same on production as on DEV:
-a sale refunded by `payment/cancel`, a hold dismissed with `hold/dismiss`, a hold Paylov released
-after expiry, and a captured hold refunded by `payment/cancel`? Why does an expiry release read
-`refunded` while a dismissal reads `cancel`?
-
-The vendor page describes `cancel` as "Cancelled" and `refunded` as "Refunded" (D). On DEV, `cancel`
-marked the refunded sale (W c113) and a dismissed hold, with `cancel_time` set and `is_hold: true`
-(W c1526); `refunded` appeared once, on a 1-minute hold released after a charge answered
-`hold_time_expired`, with `cancel_time` set and `is_hold: true` (W c1280). DEV answered
-`processing_error` to `payment/cancel` on a captured hold, which then still read `payed` (W c557,
-c559, c561, c887, c1529, c1530). Page: [Transactions](transactions.md#fields-of-transactions).
-
-## Q88
-
-Can a hold's duration be extended after create, and by how much?
-
-The hold pages document only create, charge, dismiss and status, with `time` fixed at create (D).
-`time` is 1 to 40320 minutes (W c202, c203), and a second create with the same `externalId` is
-`external_id_already_exists`, also after the first was released (W c183, c1270, c1284), so a
-re-create cannot reuse the booking's id. Page: [Holds](holds.md).
+On DEV the merchant's own id is the only recipient that succeeded; an unknown UUID answers
+`recipient_not_found` (W c1722, c1724, c1740). Page: [Splits](splits.md#flow).

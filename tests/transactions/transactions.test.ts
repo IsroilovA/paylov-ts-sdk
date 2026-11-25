@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { isPaylovOutcomeUnknown } from '../../src/core/errors.js';
 import { createTransactionsResource } from '../../src/transactions/resource.js';
 import {
   expectApiError,
@@ -16,9 +17,9 @@ const RECEIPT_ID = '5eed0000-0000-4000-8000-000000000001';
 const CARD_ID = '5eed0000-0000-4000-8000-000000000002';
 const FAILED_ID = '5eed0000-0000-4000-8000-000000000003';
 const HOLD_ID = '5eed0000-0000-4000-8000-000000000009';
-const CHECKOUT_ID = '5eed0000-0000-4000-8000-00000000000a';
 const RELEASED_HOLD_ID = '5eed0000-0000-4000-8000-00000000000f';
 const DISMISSED_HOLD_ID = '5eed0000-0000-4000-8000-000000000011';
+const FISCALIZED_ID = '5eed0000-0000-4000-8000-000000000013';
 const DOCS_ID = '3667c3fb-68a5-4d1c-bd86-99df49c895d9';
 const FULL_PAN = ['860000', '123456', '7890'].join('');
 
@@ -53,7 +54,6 @@ describe('transactions.get', () => {
       isHold: false,
       isSplit: false,
       isA2c: false,
-      isCheckout: false,
       fiscalReceipts: [],
     });
   });
@@ -135,15 +135,7 @@ describe('transactions.get', () => {
     });
   });
 
-  it('marks a checkout transaction', async () => {
-    const { resource } = setup([wireResponse('transactions/get.checkout.wire.json')]);
-
-    const transaction = await resource.get({ transactionId: CHECKOUT_ID });
-
-    expect(transaction).toMatchObject({ isCheckout: true, userId: null, amountTiyin: 50_000 });
-  });
-
-  it('decodes fiscal receipts and keeps their time raw', async () => {
+  it('decodes the documented fiscal receipt with its time in UTC', async () => {
     const { resource } = setup([fixtureResponse('transactions/get.withReceipts.docs.json')]);
 
     const transaction = await resource.get({ transactionId: DOCS_ID });
@@ -151,15 +143,42 @@ describe('transactions.get', () => {
     expect(transaction).toMatchObject({
       status: 'paid',
       externalId: 'order-12345',
-      isCheckout: true,
     });
-    expect(transaction?.fiscalReceipts).toEqual([
+    expect(transaction.fiscalReceipts).toEqual([
       {
         receiptId: 123_456,
         receiptUrl:
           'https://ofd.soliq.uz/epi?t=EP000000000001&r=001&c=20060102000000&s=000000000001',
-        issuedAtRaw: '2026-04-01 06:38:38',
+        issuedAt: new Date('2026-04-01T06:38:38Z'),
         isRefund: false,
+      },
+    ]);
+  });
+
+  it('decodes the sale and refund receipts of a refunded payment at their UTC times', async () => {
+    const { resource } = setup([wireResponse('transactions/get.fiscalized.wire.json')]);
+
+    const transaction = await resource.get({ transactionId: FISCALIZED_ID });
+
+    expect(transaction).toMatchObject({
+      status: 'refunded',
+      paidOrCreatedAt: new Date('2026-11-25T11:28:21+05:00'),
+      cancelledAt: new Date('2026-11-25T11:28:28+05:00'),
+    });
+    expect(transaction.fiscalReceipts).toEqual([
+      {
+        receiptId: 4172,
+        receiptUrl:
+          'https://ofd.soliq.uz/epi?t=EZ000000000001&r=4172&c=20261125112821&s=100000000002',
+        issuedAt: new Date('2026-11-25T06:28:21Z'),
+        isRefund: false,
+      },
+      {
+        receiptId: 4173,
+        receiptUrl:
+          'https://ofd.soliq.uz/epi?t=EZ000000000001&r=4173&c=20261125112828&s=100000000003',
+        issuedAt: new Date('2026-11-25T06:28:28Z'),
+        isRefund: true,
       },
     ]);
   });
@@ -169,13 +188,18 @@ describe('transactions.get', () => {
 
     const transaction = await resource.get({ transactionId: RECEIPT_ID });
 
-    expect(transaction?.status).toBe('reversed');
+    expect(transaction.status).toBe('reversed');
   });
 
-  it('resolves to null when the gateway knows no such transaction', async () => {
+  it('throws a definitive transaction_not_found for the empty list of an unknown id', async () => {
     const { resource } = setup([wireResponse('transactions/get.empty.wire.json')]);
 
-    await expect(resource.get({ transactionId: RECEIPT_ID })).resolves.toBeNull();
+    const error = await expectApiError(resource.get({ transactionId: RECEIPT_ID }), {
+      code: 'transaction_not_found',
+      httpStatus: 200,
+    });
+    expect(error.endpoint).toBe('GET /merchant/getTransactions/');
+    expect(isPaylovOutcomeUnknown(error)).toBe(false);
   });
 
   it('accepts an upper-case id for a lower-case row', async () => {
@@ -183,7 +207,7 @@ describe('transactions.get', () => {
 
     const transaction = await resource.get({ transactionId: RECEIPT_ID.toUpperCase() });
 
-    expect(transaction?.transactionId).toBe(RECEIPT_ID);
+    expect(transaction.transactionId).toBe(RECEIPT_ID);
   });
 
   it('fails as malformed when the rows are not the requested transaction', async () => {
@@ -202,7 +226,6 @@ describe('transactions.get', () => {
     ['date', '2026-11-12T20:52:31'],
     ['cancel_time', '2026-11-12'],
     ['amount_in_tiyin', 1000.5],
-    ['via_link', 'true'],
     ['ofd', null],
   ])('fails as malformed when %s is %j, without echoing the value', async (key, value) => {
     const { resource } = setup([withPaidRow((row) => ({ ...row, [key]: value }))]);
@@ -247,13 +270,13 @@ describe('transactions.list', () => {
 
     expect(fetchImpl.calls[0]?.url).toBe(`${BASE_URL}/merchant/getTransactions/`);
     expect(page.total).toBe(6);
-    expect(page.transactions.map((row) => [row.status, row.isHold, row.isCheckout])).toEqual([
-      ['paid', false, true],
-      ['paid', true, false],
-      ['paid', true, false],
-      ['paid', false, false],
-      ['paid', false, false],
-      ['paid', false, false],
+    expect(page.transactions.map((row) => [row.status, row.isHold])).toEqual([
+      ['paid', false],
+      ['paid', true],
+      ['paid', true],
+      ['paid', false],
+      ['paid', false],
+      ['paid', false],
     ]);
     // A captured hold reports the captured amount, not the held one.
     expect(page.transactions[2]).toMatchObject({

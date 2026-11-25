@@ -1,0 +1,12 @@
+{
+  "capture": "1806",
+  "status": 200,
+  "body": {
+    "result": {
+      "transactionId": "5eed0000-0000-4000-8000-000000000202",
+      "status": "sent_to_ofd",
+      "lastOfdError": "{'Code': 30, 'Message': 'failed to validate receipt item spic: invalid package code values of items: [0]'}"
+    },
+    "error": null
+  }
+}

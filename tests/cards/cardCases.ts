@@ -13,7 +13,6 @@ export const PINFL = '12345678901234';
 export const PHONE = '+998900000000';
 export const UZCARD_ID = '5eed0000-0000-4000-8000-000000000001';
 export const HUMO_ID = '5eed0000-0000-4000-8000-000000000002';
-export const BIND_TOKEN = 'EXAMPLE-BIND-NOT-A-REAL-TOKEN';
 export const OWNER = 'EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON';
 export const FULL_PAN = ['8600', '0000', '0000', '0000'].join('');
 

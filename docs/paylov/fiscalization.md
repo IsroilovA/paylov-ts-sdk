@@ -16,27 +16,34 @@ checks. No money moves here. Grades: [evidence](README.md#evidence).
 
 - **Register:** the merchant has Paylov send a card transaction (by `transactionId`) or a cash
   payment (by `externalId` and `phoneNumber`) with its [items](#item-object) to OFD
-  ([register](#register-fiscal-receipt), D).
+  ([register](#register-fiscal-receipt), D, W c1629).
 - **Set receipt:** the merchant fiscalizes itself and attaches the receipt
   ([set receipt](#set-fiscal-receipt)); this needs client-side fiscalization, otherwise
-  `permission_denied` (D). The mode is merchant setup agreed with Paylov (M 2026-11-15).
+  `permission_denied` (D, W c1601). The mode is merchant setup agreed with Paylov (M 2026-11-15).
 - **Read:** [status](#get-fiscal-receipt-status) by transaction or receipt id. A known transaction
   without a receipt returns `success: false`, which does not mean the payment failed; unknown ids
   return errors (W c274, c866, c1308).
 - **Refund:** cancel a fiscalized card payment with
   [`payment/cancel`](payments.md#cancel-refund-payment), which also cancels its fiscalization, then
   read the refund receipt; the [direct refund](#refund-fiscal-receipt) is for when status shows none
-  (D).
+  (D). Live, the cancel registers the refund receipt seconds to minutes later (W c1666, c1689,
+  c1691).
 
-Which payments Paylov fiscalizes itself is [OPEN Q32]: no page states automatic fiscalization (D),
-and a paid payment of the DEV merchant, which has no fiscalization, has an empty `ofd` array (W
-c125, c1300). An item line totals `(price - discount) * count` ([items](#item-object), M
-2026-11-16). [Activity types](#activity-types) are independent of receipts.
+A merchant fiscalizes in one of two modes, per the Paylov team (answer relayed by the maintainer,
+2026-11-25: "it can be done by the merchant itself or automatically (if one fiscal product number is
+fine)", translated from Russian): it registers receipts itself, or Paylov fiscalizes its payments
+automatically with one fiscal product code for every item. No page states automatic fiscalization
+(D). The DEV merchant registers its receipts through register: register succeeds, set-receipt
+answers `permission_denied` (W c1629, c1601), and two payments it did not register kept an empty
+`ofd` array for more than four minutes after payment (W c1700, c1701). An item line totals
+`(price - discount) * count` ([items](#item-object), M 2026-11-16).
+[Activity types](#activity-types) are independent of receipts.
 
 Validation runs before the permission gate (W c269, c270 versus c271; c1310 versus c1301). Register,
 set-receipt, refund and activity types answer `400 permission_denied` without `data` for a merchant
-without fiscalization (W c271, c277, c279, c283, c1301–c1304). Status is not gated: it answered
-`200` for the same merchant (W c274, c1305).
+without fiscalization (W c271, c277, c279, c283, c1301–c1304); with fiscalization enabled,
+set-receipt still answers it outside client-side mode (W c1601). Status is not gated: it answered
+`200` for a merchant without fiscalization (W c274, c1305).
 
 ## Register fiscal receipt
 
@@ -60,26 +67,27 @@ both together still reached the permission gate (W c1309).
 
 Split payments use the same item object ([splits.md](splits.md)).
 
-| Name           | Type    | Required | Description                                                                          | Grade                                 |
-| -------------- | ------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------- |
-| `title`        | string  | Yes      | Item name.                                                                           | W (c270)                              |
-| `price`        | integer | Yes      | Pre-discount price of one unit ([unit](README.md#amount-units-by-operation)).        | W (c270) required; D unit; M per unit |
-| `discount`     | integer | No       | Discount on one unit ([unit](README.md#amount-units-by-operation)), at most `price`. | W (c270) optional; M unit; M per unit |
-| `count`        | integer | Yes      | Quantity, at least 1.                                                                | W (c270, c272)                        |
-| `code`         | string  | Yes      | Unique item code (IKPU).                                                             | W (c270)                              |
-| `vat_percent`  | integer | Yes      | VAT percentage.                                                                      | W (c270)                              |
-| `package_code` | string  | Yes      | Package type code.                                                                   | W (c270)                              |
-| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                               | D, W (c886)                           |
-| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                                      | D, W (c886)                           |
+| Name           | Type    | Required | Description                                                                          | Grade                                            |
+| -------------- | ------- | -------- | ------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `title`        | string  | Yes      | Item name.                                                                           | W (c270)                                         |
+| `price`        | integer | Yes      | Pre-discount price of one unit ([unit](README.md#amount-units-by-operation)).        | W (c270) required; D, W (c1629) unit; M per unit |
+| `discount`     | integer | No       | Discount on one unit ([unit](README.md#amount-units-by-operation)), at most `price`. | W (c270) optional; M unit; M per unit            |
+| `count`        | integer | Yes      | Quantity, at least 1.                                                                | W (c270, c272)                                   |
+| `code`         | string  | Yes      | Unique item code (IKPU).                                                             | W (c270)                                         |
+| `vat_percent`  | integer | Yes      | VAT percentage.                                                                      | W (c270)                                         |
+| `package_code` | string  | Yes      | Package type code; the OFD checks it against `code`.                                 | W (c270, c1611, c1629)                           |
+| `pinfl`        | string  | One of   | Individual taxpayer number, 14 digits.                                               | D, W (c886)                                      |
+| `tin`          | string  | One of   | Taxpayer identification number (INN), 9 digits.                                      | D, W (c886)                                      |
 
 The [vendor item table](../vendor/paylov/subscribe/ofd/register.md#item-object-inside-items) gives
 no `discount` unit, only that it "Cannot exceed the price" (D, all locales); a comparison with the
 tiyin `price` holds only in tiyin, so `discount` is tiyin (M 2026-11-15).
 
 No page states how items total for the `invalid_amount` check ("The total price of items does not
-match the transaction amount", D), and DEV rejects register for the merchant (W c271), so no total
-was observed. The table describes "the item" with a `count` "Quantity of the item", and caps the
-discount at "the price", so `price` is the unit price and `discount` applies per unit: a line totals
+match the transaction amount", D). Live, a 1000 SUM payment registered with one item of `price`
+100000 and `count` 1 (W c1629); `invalid_amount` and discounts were not observed. The table
+describes "the item" with a `count` "Quantity of the item", and caps the discount at "the price", so
+`price` is the unit price and `discount` applies per unit: a line totals
 `(price - discount) * count`, and the lines sum to the transaction amount (M 2026-11-16).
 
 Each item carries exactly one of `pinfl` and `tin` (D). An otherwise valid item with neither got
@@ -89,6 +97,29 @@ same item with `tin` reached the permission gate (W c886, c890); items with fiel
 report it (W c270, c272). An item with `tin: "12"` and `pinfl: "1"` together drew only its `count`
 error (W c272), so the validator does not check tax-id formats; a later business check may. ru names
 the `title` field `титул` in its table; every example uses `title`.
+
+The OFD validates `package_code` against `code`. With `code` `10305008003000000`, package codes
+`1884626` and `1748459` drew `ofd_error` with `data.ofd_response`
+`"{'Code': 30, 'Message': 'failed to validate receipt item spic: invalid package code values of items: [0]'}"`,
+for a `tin` and for a `pinfl` item, and `1546532` registered (W c1611, c1617, c1621, c1625, c1629).
+The vendor sub-merchant example TIN `123654987` registered on DEV (W c1629), so DEV did not refuse
+it as an inactive commitent.
+
+After each such `ofd_error`, status still answered no receipt and the transaction's `ofd` array
+stayed empty; the corrected register then created one receipt, and the transaction lists only that
+one (W c1612–c1631). A register of a fiscalized transaction answers `ofd_check_already_generated` (W
+c1702). An `ofd_error` after the OFD accepted a receipt was not observed; a retry then answers
+`ofd_check_already_generated` instead of a second receipt, since a register of a fiscalized
+transaction is refused (W c1702).
+
+The receipt URL is `https://ofd.soliq.uz/epi?t=<terminalId>&r=<receiptId>&c=<time>&s=<fiscalSign>`,
+`<time>` being `YYYYMMDDHHMMSS` in Tashkent time. For a sale it is the payment time, not the
+registration time: a payment made at 06:24:45 UTC and registered at 06:25:47 UTC carries
+`c=20261125112445` (W c1608, c1629).
+
+A cash sale, with the same item that registered card payments and a canary phone, answered
+`fiscal_receipt_not_generated` without `data`, and status by its `externalId` then answered
+`ofd_check_not_found` (W c1703, c1704); the docs state no further cash requirement (D).
 
 Request (the vendor card-payment example without the undocumented fields; see Deviations):
 
@@ -113,7 +144,9 @@ Request (the vendor card-payment example without the undocumented fields; see De
 }
 ```
 
-Success, D ([fixture](../../tests/fixtures/fiscalization/register.success.docs.json)):
+Success, D ([fixture](../../tests/fixtures/fiscalization/register.success.docs.json)); live the same
+shape, also without `error` (W c1629,
+[fixture](../../tests/fixtures/fiscalization/register.success.wire.json)):
 
 ```json
 {
@@ -141,21 +174,22 @@ Success, D ([fixture](../../tests/fixtures/fiscalization/register.success.docs.j
 | `permission_denied`                         | Fiscalization is not enabled for the merchant                                                                                                                                                                                                               | W (c271)             |
 | `receipt_not_available_for_operation`       | The transaction is not eligible for a fiscal receipt.                                                                                                                                                                                                       | D                    |
 | `field_required`                            | Required field missing (e.g. `items`).                                                                                                                                                                                                                      | D                    |
-| `ofd_check_already_generated`               | The transaction already has a fiscal receipt.                                                                                                                                                                                                               | D                    |
+| `ofd_check_already_generated`               | The transaction already has a fiscal receipt.                                                                                                                                                                                                               | D, W (c1702)         |
+| `transaction_not_found`                     | Unknown `transactionId`.                                                                                                                                                                                                                                    | W (c1602)            |
 | `ofd_commitent_or_subcommission_not_active` | An item's commitent (TIN) or sub-commission (PINFL) has no active contract in the OFD catalogue; `data`: `itemIndex`, `tin`, `pinfl` ([fixture](../../tests/fixtures/fiscalization/register.commitentNotActive.docs.json), built from the catalogue entry). | D                    |
 | `invalid_amount`                            | The items' total does not match the transaction amount.                                                                                                                                                                                                     | D                    |
-| `ofd_error`                                 | OFD processing failed.                                                                                                                                                                                                                                      | D                    |
-| `fiscal_receipt_not_generated`              | The receipt was not generated.                                                                                                                                                                                                                              | D                    |
+| `ofd_error`                                 | OFD processing failed; `data.ofd_response` is the OFD's answer as a string, e.g. an item rejected by its package code ([fixture](../../tests/fixtures/fiscalization/register.ofdError.wire.json)).                                                          | D, W (c1611)         |
+| `fiscal_receipt_not_generated`              | The receipt was not generated; a cash sale on DEV, without `data`.                                                                                                                                                                                          | D, W (c1703)         |
 
 ## Get fiscal receipt status
 
 `GET {BASE_URL}/merchant/fiscalization/status/`
 
-| Query           | Type          | Required | Description                                                                                                                                                                                                                         | Grade                    |
-| --------------- | ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `transactionId` | string (UUID) | One of   | Transaction ID.                                                                                                                                                                                                                     | D, W (c274)              |
-| `externalId`    | string        | One of   | Receipt identifier from cash-payment registration.                                                                                                                                                                                  | D                        |
-| `refunded`      | boolean       | No       | Filter by refund status. A paid transaction without a receipt answers the no-receipt shape with `refunded=false`, `true` or the filter omitted; which receipt an omitted filter returns for a refunded transaction is undocumented. | D, W (c274, c1305–c1307) |
+| Query           | Type          | Required | Description                                                                                                                                                                                                                                                                                                                     | Grade                                         |
+| --------------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `transactionId` | string (UUID) | One of   | Transaction ID.                                                                                                                                                                                                                                                                                                                 | D, W (c274)                                   |
+| `externalId`    | string        | One of   | Receipt identifier from cash-payment registration.                                                                                                                                                                                                                                                                              | D                                             |
+| `refunded`      | boolean       | No       | Filter by refund status. A paid transaction without a receipt answers the no-receipt shape with `refunded=false`, `true` or the filter omitted. Omitted, a fiscalized transaction answers its refund receipt once one exists, otherwise its sale receipt; `true` before the refund receipt exists answers the no-receipt shape. | D, W (c274, c1305–c1307, c1662, c1666, c1696) |
 
 The page requires either identifier and does not say whether both are allowed; live, both together
 answer for `transactionId` (W c878).
@@ -164,7 +198,9 @@ answer for `transactionId` (W c878).
 GET {BASE_URL}/merchant/fiscalization/status/?refunded=false&transactionId=e2da46c6-8c89-400e-8bd9-037297b2e8b1
 ```
 
-A receipt, D ([fixture](../../tests/fixtures/fiscalization/getReceipt.success.docs.json)):
+A receipt, D ([fixture](../../tests/fixtures/fiscalization/getReceipt.success.docs.json)); live the
+same shape for a sale receipt (W c1630) and a refund receipt, with `isRefund: true` (W c1689,
+[fixture](../../tests/fixtures/fiscalization/getReceipt.refund.wire.json)):
 
 ```json
 {
@@ -206,7 +242,7 @@ so that answer is unobserved.
 | `validation_error`      | Neither identifier, or an empty `externalId`; `data` is the bare string `"transactionId or externalId is required"`                                                  | W (c273, c875)                                                                       |
 | `validation_error`      | `transactionId` not a UUID; `data` `{"transactionId": ["transactionId must be a valid UUID"]}`                                                                       | W (c849, c863)                                                                       |
 | `transaction_not_found` | Unknown `transactionId` ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.transactionNotFound.synthesized.json); the capture redacts the message) | W (c1308, c1514); live run 2026-11-12 ([Observed behavior](#observed-behavior))      |
-| `ofd_check_not_found`   | Unknown `externalId`, message "Ofd check not found." ([synthesized fixture](../../tests/fixtures/fiscalization/getReceipt.checkNotFound.synthesized.json))           | W (c866, c876, c1513); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
+| `ofd_check_not_found`   | Unknown `externalId`, message "Ofd check not found."                                                                                                                 | W (c866, c876, c1513); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
 | No HTTP response        | A 5000-character `externalId`: the HTTP/2 session closes                                                                                                             | W (c870, c872)                                                                       |
 | `method_not_allowed`    | `POST` instead of `GET`                                                                                                                                              | W (c275)                                                                             |
 
@@ -229,11 +265,9 @@ and uz name it `CLIENT_SIDE`).
 | `receiptId`     | integer       | Yes      | OFD receipt ID, greater than 0.                   | W (c278, c280)              |
 
 The documented `dateTime` and `qrCodeUrl` constraints are not enforced before the permission gate:
-`"2026-11-12"` and `http://example.com` passed validation (W c280). The vendor request example is
-the [request fixture](../../tests/fixtures/fiscalization/attachReceipt.request.docs.json).
+`"2026-11-12"` and `http://example.com` passed validation (W c280).
 
-Success, D ([fixture](../../tests/fixtures/fiscalization/attachReceipt.success.docs.json)); the
-nested `result.error` is part of the documented shape:
+Success, D; the nested `result.error` is part of the documented shape:
 
 ```json
 {
@@ -244,16 +278,16 @@ nested `result.error` is part of the documented shape:
 }
 ```
 
-| Code                                     | Description                                                                                                               | Grade          |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| `validation_error`                       | A required field is missing (`{}` lists the six required fields), or `receiptId` is 0 ("Input should be greater than 0"). | W (c278, c280) |
-| `permission_denied`                      | Fiscalization is disabled, or the merchant does not use client-side fiscalization.                                        | W (c279), D    |
-| `field_not_valid`                        | `transactionId`, `dateTime` or `qrCodeUrl` has an invalid format; `data.field` names it.                                  | D              |
-| `external_id_already_exists`             | A receipt with this `externalId` already exists.                                                                          | D              |
-| `transaction_not_found`                  | The transaction does not exist or belongs to another merchant.                                                            | D              |
-| `receipt_not_available_for_operation`    | The transaction has not been successfully paid.                                                                           | D              |
-| `ofd_check_already_generated`            | A receipt is already attached to the transaction.                                                                         | D              |
-| `ofd_too_many_requests_for_this_receipt` | Too many receipt attempts exist for the transaction ([threshold](errors.md#deviations-from-vendor-docs)).                 | D              |
+| Code                                     | Description                                                                                                               | Grade              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `validation_error`                       | A required field is missing (`{}` lists the six required fields), or `receiptId` is 0 ("Input should be greater than 0"). | W (c278, c280)     |
+| `permission_denied`                      | Fiscalization is disabled, or the merchant does not use client-side fiscalization.                                        | W (c279, c1601), D |
+| `field_not_valid`                        | `transactionId`, `dateTime` or `qrCodeUrl` has an invalid format; `data.field` names it.                                  | D                  |
+| `external_id_already_exists`             | A receipt with this `externalId` already exists.                                                                          | D                  |
+| `transaction_not_found`                  | The transaction does not exist or belongs to another merchant.                                                            | D                  |
+| `receipt_not_available_for_operation`    | The transaction has not been successfully paid.                                                                           | D                  |
+| `ofd_check_already_generated`            | A receipt is already attached to the transaction.                                                                         | D                  |
+| `ofd_too_many_requests_for_this_receipt` | Too many receipt attempts exist for the transaction ([threshold](errors.md#deviations-from-vendor-docs)).                 | D                  |
 
 ## Refund fiscal receipt
 
@@ -297,13 +331,23 @@ request:
 }
 ```
 
-| Code                | Description                                   | Grade    |
-| ------------------- | --------------------------------------------- | -------- |
-| `validation_error`  | `receiptId` missing                           | W (c276) |
-| `permission_denied` | Fiscalization is not enabled for the merchant | W (c277) |
+| Code                                  | Description                                                                     | Grade            |
+| ------------------------------------- | ------------------------------------------------------------------------------- | ---------------- |
+| `validation_error`                    | `receiptId` missing                                                             | W (c276)         |
+| `permission_denied`                   | Fiscalization is not enabled for the merchant                                   | W (c277)         |
+| `ofd_check_not_found`                 | Unknown `receiptId`                                                             | W (c1600)        |
+| `receipt_not_available_for_operation` | The sale receipt of a paid card payment that is not cancelled                   | W (c1659, c1664) |
+| `ofd_check_already_generated`         | The sale already has a refund receipt, here the one `payment/cancel` registered | W (c1694)        |
 
 The [refund page](../vendor/paylov/subscribe/ofd/refund-receipt.md) documents no business error
-codes (D).
+codes (D). Live, `payment/cancel` of a fiscalized card payment registers the refund receipt in the
+background: status with `refunded=true` answered the no-receipt shape right after two cancels (W
+c1666, c1685), and the refund receipt 15 seconds and 3.5 minutes after them (W c1691, c1689). The
+transaction then lists it as a second `ofd` row
+([transactions](transactions.md#fields-of-transactions)), and its receipt URL carries the cancel
+time. A direct refund answered errors before and after the cancel (table above), so no direct refund
+succeeded and its success shape is D only; the docs reserve it for a refund whose receipt status
+does not show (D).
 
 ## Activity types
 
@@ -326,9 +370,12 @@ Success, D; `result.data` depends on the answer:
 
 `reason` is upstream free text. The examples read as follows (M 2026-11-15): for types 1 and 2,
 `success` is the answer, since the negative type-1 example is a "no" from a check that ran; for type
-3, `success` says the check ran and `data.status` is the answer. DEV answers `permission_denied` (W
-c283, c1304). By inference only: Didox, which may use the same tax-service upstream, returned the
-same `{success, reason, data}` object as `error.data` of `400 gateway_not_working` (W c318, c322 are
+3, `success` says the check ran and `data.status` is the answer. Live, with the sandbox test PINFL,
+type 1 answered the negative example's shape (W c1705), type 2
+`{"success": false, "reason": "<Uzbek Cyrillic text>", "data": 200}` (W c1599), and type 3
+`{"success": false, "reason": "Malumot topilmadi", "data": null}` ("no data found", W c1706). By
+inference only: Didox, which may use the same tax-service upstream, returned the same
+`{success, reason, data}` object as `error.data` of `400 gateway_not_working` (W c318, c322 are
 Didox responses, not activity-type responses).
 
 | Code                 | Description                                                              | Grade                |
@@ -344,7 +391,7 @@ DEV live run 2026-11-12, without a numbered capture, and a raw probe on 2026-11-
 - `GET status/` with an unknown `transactionId` (a random UUID) answered HTTP 400
   `transaction_not_found`, and with an unknown `externalId` HTTP 400 `ofd_check_not_found`; neither
   is the no-receipt `success: false` shape (W c274), which a paid transaction without a receipt
-  returns. The SDK resolves the `ofd_check_not_found` answer to `null`, like the no-receipt shape.
+  returns.
 
 ## Deviations from vendor docs
 
@@ -367,3 +414,9 @@ DEV live run 2026-11-12, without a numbered capture, and a raw probe on 2026-11-
 - The activity-type page's en and ru introduction says it "retrieves fiscal receipt data"; uz and
   the request describe an activity-type check, which this page follows. The sandbox bundle sends it
   as `GET`, which returns `405` (W c281).
+- The refund page reserves the direct refund for when status shows no refund receipt. For a card
+  payment, live, it answered `receipt_not_available_for_operation` before `payment/cancel` and
+  `ofd_check_already_generated` once the cancel's refund receipt existed (W c1659, c1694).
+- The activity-type page shows a negative answer only for type 1. Live, a negative type 2 also
+  carries `data: 200`, and a type 3 without a record answers `success: false` with `data: null` (W
+  c1599, c1706).

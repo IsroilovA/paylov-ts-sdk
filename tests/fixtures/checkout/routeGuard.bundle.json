@@ -1,8 +1,0 @@
-{
-  "provenance": {
-    "recordedAt": "2026-11-05T17:30:49.518548Z",
-    "source": "my.paylov.uz checkout SPA bundle (my-assets/index.c9087fa0.js), route guard `Mce`, verbatim",
-    "evidence": "bundle-evidence.json checkoutSpa.createRouteGuard"
-  },
-  "guard": "async(e,t,n)=>{const r=Sce();try{const i=String(e.params.id),s={};atob(i).split(\"&\").forEach(f=>{const[h,d]=f.split(\"=\");s[h]=d});const a={merchantId:\"\",amount:0,account:{},currencyId:860,amountInTiyin:!1,returnUrl:\"\"};let l=\"\";Object.keys(s).forEach(f=>{const h=f.replace(\"account.\",\"\");if(f.startsWith(\"account.\"))a.account[h]=s[f];else if(f===\"merchant_id\")a.merchantId=String(s[f]);else if(f===\"amount\")a.amount=Number(s[f]);else if(f===\"return_url\")l=String(s[f]),a.returnUrl=l;else if(h===\"currency_id\"&&s[f]!==\"null\")a.currencyId=Number(s[f]);else if(h===\"amount_in_tiyin\")a.amountInTiyin=JSON.parse(s[f].toLowerCase());else if(f===\"convert_to\"){const d=s[f];d&&!isNaN(Number(d))&&d.trim()!==\"\"&&(a.convertTo=Number(d))}});const c={...a};console.log(\"--- payload\",c);const u=await Lce(c);if(u.visaMasterLink){window.location.href=u.visaMasterLink;return}else{const f=`/checkout/${u.check.id}${l?\"?return_url=\"+l:\"\"}`;n(f)}n()}catch(i){r.errors=i,n()}}"
-}

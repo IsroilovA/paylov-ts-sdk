@@ -49,8 +49,6 @@ export type PaylovKnownErrorCode =
   | 'card_phone_not_linked'
   | 'card_has_no_phone'
   | 'pinfl_not_match'
-  | 'link_expired'
-  | 'link_already_used'
   // OTP and PIN
   | 'invalid_otp'
   | 'otp_expired'
@@ -88,6 +86,7 @@ export type PaylovKnownErrorCode =
   | 'bank_not_found'
   // Fiscalization
   | 'ofd_commitent_or_subcommission_not_active'
+  | 'ofd_comitent_not_provided'
   | 'ofd_check_already_generated'
   | 'ofd_too_many_requests_for_this_receipt'
   | 'ofd_check_not_found'

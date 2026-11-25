@@ -2,6 +2,7 @@ import {
   nullableOf,
   optionalEntry,
   tashkentDateTimeOf,
+  utcDateTimeOf,
   type FakeCodec,
   type FakeRequest,
   type PaylovFakeSurface,
@@ -23,7 +24,7 @@ function encodeFiscalReceiptSummary(receipt: FiscalReceiptSummary): unknown {
   return {
     receipt_id: receipt.receiptId,
     qr_code_url: receipt.receiptUrl,
-    date_time: receipt.issuedAtRaw,
+    date_time: utcDateTimeOf(receipt.issuedAt, 'issuedAt'),
     is_refund: receipt.isRefund,
   };
 }
@@ -46,13 +47,13 @@ function encodeTransaction(transaction: Transaction): unknown {
     is_hold: transaction.isHold,
     is_split: transaction.isSplit,
     is_a2c: transaction.isA2c,
-    via_link: transaction.isCheckout ? true : null,
+    via_link: null,
     ofd: transaction.fiscalReceipts.map(encodeFiscalReceiptSummary),
   };
 }
 
-function encodeRequestedTransaction(transaction: Transaction | null): unknown {
-  return { transactions: transaction === null ? [] : [encodeTransaction(transaction)] };
+function encodeRequestedTransaction(transaction: Transaction): unknown {
+  return { transactions: [encodeTransaction(transaction)] };
 }
 
 function encodeTransactionPage(page: TransactionPage): unknown {
@@ -89,7 +90,7 @@ function decodeRrnRequest({ path }: FakeRequest): GetRrnParams {
 }
 
 export const TRANSACTION_CODECS: {
-  readonly get: FakeCodec<Transaction | null, GetTransactionParams>;
+  readonly get: FakeCodec<Transaction, GetTransactionParams>;
   readonly list: FakeCodec<TransactionPage, ListTransactionsParams>;
 } = {
   get: {

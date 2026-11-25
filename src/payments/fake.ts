@@ -9,7 +9,7 @@ import {
 } from '../core/fake.js';
 import type { Params } from '../core/params.js';
 import type { PaylovJsonObject } from '../core/types.js';
-import { decodeOtpSms, encodeTransactionReference } from '../shared/fake.js';
+import { encodeTransactionReference } from '../shared/fake.js';
 import type { TransactionReference } from '../shared/transactions.js';
 import { ENDPOINTS, type PaymentsResource } from './resource.js';
 import type {
@@ -66,7 +66,6 @@ function decodeStartPanPaymentRequest({ body }: FakeRequest): StartPanPaymentPar
     cardExpiry: body.string('expireDate'),
     amountTiyin: decodeWholeSum(body, 'amount'),
     ...decodeAccount(body),
-    ...optionalEntry('sms', body.optionalObject('sms', decodeOtpSms)),
   };
 }
 
@@ -74,7 +73,6 @@ function decodeConfirmPanPaymentRequest({ body }: FakeRequest): ConfirmPanPaymen
   return {
     transactionId: body.string('transactionId'),
     otp: body.string('otp'),
-    ...optionalEntry('sms', body.optionalObject('sms', decodeOtpSms)),
   };
 }
 

@@ -7,14 +7,20 @@
  */
 
 import { isRecord } from './decoding.js';
-import type { PaylovErrorCode } from './errorCodes.js';
+import type { PaylovErrorCode, PaylovKnownErrorCode } from './errorCodes.js';
 import { tiyinToWireSum, wireSumToTiyin } from './money.js';
 import type { Params } from './params.js';
 import { MINUTE_MS, TASHKENT_OFFSET_MINUTES } from './time.js';
 import type { Endpoint } from './types.js';
 
-/** An encoder's answer for a result the gateway reports as the endpoint's `miss` error. */
-export const MISS: unique symbol = Symbol('paylov.fake.miss');
+/** An encoder's answer for a result the gateway reports as error `code`. */
+export class FakeRefusal {
+  readonly code: PaylovKnownErrorCode;
+
+  constructor(code: PaylovKnownErrorCode) {
+    this.code = code;
+  }
+}
 
 /** How a scripted failure reads once the SDK decodes it as a `PaylovApiError`. */
 export interface PaylovFakeFailure {
@@ -110,7 +116,7 @@ export type RequestDecoder<P> = (request: FakeRequest) => P;
 
 /**
  * How one SDK method's results and requests cross the wire in the fake: `encode` returns the
- * success payload, unwrapped, or `MISS`; `decodeRequest` reads a request back into the params.
+ * success payload, unwrapped, or a `FakeRefusal`; `decodeRequest` reads a request back into the params.
  * Both the scripted answers and the simulation use it.
  */
 export interface FakeCodec<T, P> {
@@ -151,7 +157,7 @@ export type MethodNameOf<Namespace extends string, R> = `${Namespace}.${IoMethod
 
 /**
  * Builds the script of SDK method `method` of surface `R`, which sends to `endpoint`. `encode`
- * returns the success payload, unwrapped, or `MISS`. A method that shares an endpoint with another
+ * returns the success payload, unwrapped, or a `FakeRefusal`. A method that shares an endpoint with another
  * passes `matches`, so each answer reaches only its own method's requests.
  */
 export type Scripter<Namespace extends string, R> = <T, P>(

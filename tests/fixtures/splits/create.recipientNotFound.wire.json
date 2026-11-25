@@ -1,0 +1,14 @@
+{
+  "capture": "1722",
+  "status": 400,
+  "body": {
+    "result": null,
+    "error": {
+      "code": "recipient_not_found",
+      "message": "Recipient not found.",
+      "data": {
+        "notFoundRecipientIds": ["5eed0000-0000-4000-8000-00000000dead"]
+      }
+    }
+  }
+}

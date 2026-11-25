@@ -1,6 +1,6 @@
 /** Shared public types and the internal transport contracts every surface builds on. */
 
-import type { PaylovErrorCode, PaylovKnownErrorCode } from './errorCodes.js';
+import type { PaylovErrorCode } from './errorCodes.js';
 
 /** Per-call options accepted by every SDK method that performs I/O. */
 export interface PaylovCallOptions {
@@ -115,15 +115,11 @@ export interface Endpoint {
   /** Absolute path template; the transport fills each `{name}` from the request's `path`. */
   readonly route: `/${string}`;
   readonly shape: ResponseShape;
-  /** The verified gateway code a method maps to a value instead of throwing (`orOnMiss`). */
-  readonly miss?: PaylovKnownErrorCode;
   /**
    * The endpoint can charge, reserve, capture, release, refund or split money, so a generic
    * failure code from it leaves the outcome unknown (`PaylovApiError.isUnsettled`).
    */
   readonly movesMoney?: true;
-  /** Generic failure codes this money-moving endpoint answers only when nothing moved. */
-  readonly definitiveCodes?: readonly PaylovKnownErrorCode[];
 }
 
 /** Raw headers and `Response` objects never cross this boundary. */

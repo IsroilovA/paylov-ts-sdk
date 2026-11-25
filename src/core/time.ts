@@ -8,8 +8,6 @@ import { configError } from './errors.js';
 import { isNonNegativeSafeInteger } from './numbers.js';
 
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
-const ISO_DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
 /** Tashkent's fixed offset east of UTC. */
 export const TASHKENT_OFFSET_MINUTES = 300;
@@ -65,26 +63,6 @@ export function parseTashkentDateTime(value: string): Date | undefined {
 /** `YYYY-MM-DD HH:mm:ss` in UTC. */
 export function parseUtcDateTime(value: string): Date | undefined {
   return parseLocal(value, 0);
-}
-
-/** Minutes east of UTC for groups 8–10 of an ISO match; `Z` leaves them unset. */
-function isoOffsetMinutes(match: RegExpExecArray): number | undefined {
-  if (match[8] === undefined) return 0;
-  const hours = Number(match[9]);
-  const minutes = Number(match[10]);
-  if (hours > 23 || minutes > 59) return undefined;
-  return (match[8] === '-' ? -1 : 1) * (hours * 60 + minutes);
-}
-
-/** ISO 8601 with `Z` or `±HH:MM`; fractions beyond milliseconds are truncated. */
-export function parseIsoDateTime(value: string): Date | undefined {
-  const match = ISO_DATE_TIME.exec(value);
-  if (match === null) return undefined;
-  const ms = wallClockMs(wallClockOf(match));
-  const offset = isoOffsetMinutes(match);
-  if (ms === undefined || offset === undefined) return undefined;
-  const fractionMs = Number((match[7] ?? '').padEnd(3, '0').slice(0, 3));
-  return new Date(ms + fractionMs - offset * MINUTE_MS);
 }
 
 /** Non-negative safe-integer unix seconds inside the `Date` range. */

@@ -1,14 +1,15 @@
 /** Compile-time contracts for `client.holds`. */
 
-import type {
-  CaptureHoldParams,
-  CreateHoldParams,
-  GetHoldParams,
-  Hold,
-  HoldCaptured,
-  HoldStatus,
-  PaylovClient,
-  TransactionReference,
+import {
+  readHoldState,
+  type CaptureHoldParams,
+  type CreateHoldParams,
+  type GetHoldParams,
+  type Hold,
+  type HoldCaptured,
+  type HoldStatus,
+  type PaylovClient,
+  type TransactionReference,
 } from '../../src/index.js';
 
 declare const client: PaylovClient;
@@ -74,8 +75,7 @@ void both;
 void neither;
 
 async function reconcile(): Promise<void> {
-  const hold: Hold | null = await client.holds.get({ externalId: 'booking-1' });
-  if (hold === null) return;
+  const hold: Hold = await client.holds.get({ externalId: 'booking-1' });
   const status: HoldStatus = hold.status;
   const settled: boolean = status === 'captured' || status === 'released';
   void [status === 'held', settled];
@@ -85,8 +85,18 @@ async function reconcile(): Promise<void> {
   const amountTiyin: number = hold.amountTiyin;
   const serviceId: string = hold.serviceId;
   void [status, unknownStatus, capturedAt, releasedAt, amountTiyin, serviceId];
-  // @ts-expect-error a hold can be missing, so get never returns a bare Hold
-  const bare: Hold = await client.holds.get({ transactionId: hold.transactionId });
-  void bare;
+  // @ts-expect-error a miss throws, so get never returns null
+  const missing: null = await client.holds.get({ transactionId: hold.transactionId });
+  void missing;
 }
 void reconcile;
+
+declare const read: Hold;
+declare const deadline: Date;
+const state = readHoldState({ hold: read, clientCaptureDeadline: deadline, now: deadline });
+void state;
+// @ts-expect-error a missing hold is a transaction_not_found error, never a null read
+void readHoldState({ hold: null, clientCaptureDeadline: deadline, now: deadline });
+const at = { clientCaptureDeadline: deadline, now: deadline };
+// @ts-expect-error the optional transaction read is never null
+void readHoldState({ hold: read, transaction: null, ...at });

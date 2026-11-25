@@ -42,7 +42,7 @@ fake.payments.pay.fail('insufficient_funds', { httpStatus: 400 });
 fake.payments.pay.fail('a_future_gateway_code');
 fake.gateway.getStatus.disconnect();
 fake.gateway.getStatus.hang();
-fake.holds.get.reply(null, { persist: true });
+fake.holds.get.fail('transaction_not_found', {}, { persist: true });
 fake.holds.get.fail('server_error', { httpStatus: 500 }, { persist: true });
 fake.holds.get.disconnect({ persist: true });
 fake.holds.get.hang({ persist: false });
@@ -51,6 +51,8 @@ fake.holds.get.hang({ persist: false });
 fake.payments.create.reply({ transactionId: 1 });
 // @ts-expect-error a non-nullable result has no `null` reply
 fake.cards.get.reply(null);
+// @ts-expect-error a miss is a scripted failure, not a `null` reply
+fake.holds.get.reply(null);
 // @ts-expect-error every namespace mirrors the client; there is no `close` script
 void fake.payments.close;
 // @ts-expect-error the client's `close` is not an I/O method script
@@ -122,7 +124,13 @@ const grants: readonly ('password' | 'refresh_token')[] = fake.token.requests;
 void grants;
 
 const request: WebhookInput = createWebhookRequest(
-  { kind: 'card.bind', token: 't', userId: 'u', status: 'confirmed', cardId: 'c' },
+  {
+    kind: 'transaction.cancel',
+    transactionId: 't',
+    account: {},
+    amountTiyin: 100,
+    cancelledAt: new Date(0),
+  },
   { login: 'EXAMPLE-LOGIN', password: 'EXAMPLE-PASSWORD' },
 );
 void request;

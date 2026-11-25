@@ -3,7 +3,6 @@
 import type {
   PaylovClient,
   CreatePaymentParams,
-  OtpSmsSettings,
   PanPaymentStarted,
   PaymentRefunded,
   StartPanPaymentParams,
@@ -59,11 +58,8 @@ void phone;
 void client.payments.startPanPayment({ ...startParams, extId: 'order-1' });
 // @ts-expect-error the PAN payment result carries no extId
 void started.extId;
-const sms: OtpSmsSettings = { hash: 'app-hash', templateId: 1 };
-void client.payments.startPanPayment({ ...startParams, sms });
+// @ts-expect-error the SDK sends no OTP SMS settings
 void client.payments.confirmPanPayment({ transactionId, otp: otpFromUser, sms: {} });
-// @ts-expect-error hash is a string
-void client.payments.confirmPanPayment({ transactionId, otp: otpFromUser, sms: { hash: 7 } });
 
 const confirmed: Promise<TransactionReference> = client.payments.confirmPanPayment({
   transactionId: started.transactionId,

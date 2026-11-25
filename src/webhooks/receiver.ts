@@ -59,22 +59,15 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
 }
 
 /**
- * Authenticates and decodes Paylov webhooks: checkout `transaction.check` and
- * `transaction.perform`, the `transaction.cancel` and `merchant.deposit` notifications, and the
- * Card Bind notification. Moves no money and keeps no state.
+ * Authenticates and decodes Paylov webhooks: the `transaction.cancel` notification. Moves no money and keeps no state.
  *
  * `receive` never throws for anything a request carries. It checks `POST` and HTTP Basic
  * credentials against every configured pair in constant time, then returns a decoded event with
  * the `credentialIndex` of the pair that matched, or `{ kind: 'invalid', reason }`. List several
  * pairs to rotate credentials without downtime.
  * The caller owns everything after:
- * - answer check and perform with HTTP 200 and `createWebhookResponse(event, decision)`;
- * - acknowledge `transaction.cancel`, `merchant.deposit` and `card.bind` with any 2xx once
- *   handled;
- * - deduplicate: `transaction.perform` and `transaction.cancel` on `transactionId`,
- *   `merchant.deposit` on `depositId`, `card.bind` on `token`. Paylov retries cancel and deposit
- *   up to 3 times at 60 s intervals. It documents no retry of check and perform, and the SDK
- *   assumes none and that only an `accept` answer to perform completes the payment;
+ * - acknowledge each event with any 2xx once handled;
+ * - deduplicate on `transactionId`: Paylov retries up to 3 times at 60 s intervals;
  * - choose the HTTP response for invalid input; Paylov documents none.
  *
  * @example
@@ -83,10 +76,8 @@ function decodeBasicCredentials(header: unknown): readonly [string, string] | un
  * });
  * const event = receiver.receive({ method: req.method, headers: req.headers, body: rawBody });
  * switch (event.kind) {
- *   case 'transaction.check':
- *     return reply(200, createWebhookResponse(event, await decideCheck(event)));
- *   case 'merchant.deposit':
- *     await recordDepositOnce(event.depositId, event.amountTiyin);
+ *   case 'transaction.cancel':
+ *     await markCancelledOnce(event.transactionId);
  *     return reply(200);
  *   case 'invalid':
  *     return reply(event.reason === 'unauthorized' ? 401 : 400);

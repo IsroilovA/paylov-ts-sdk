@@ -1,0 +1,46 @@
+{
+  "capture": "1697",
+  "status": 200,
+  "body": {
+    "result": {
+      "totalTransaction": 1,
+      "transactions": [
+        {
+          "id": "5eed0000-0000-4000-8000-000000000013",
+          "external_id": null,
+          "userId": "user-example-5",
+          "card_id": "5eed0000-0000-4000-8000-000000000014",
+          "cardNumber": "860000******0000",
+          "owner": "EXAMPLE-CARD-OWNER-NOT-A-REAL-PERSON",
+          "amount": 1000,
+          "amount_in_tiyin": 100000,
+          "status": "cancel",
+          "account": {},
+          "cancel_time": "2026-11-25 11:28:28",
+          "error_message": null,
+          "date": "2026-11-25 11:28:21",
+          "is_split": false,
+          "is_hold": false,
+          "is_a2c": false,
+          "transaction_type": "To'lov",
+          "via_link": null,
+          "ofd": [
+            {
+              "receipt_id": 4172,
+              "qr_code_url": "https://ofd.soliq.uz/epi?t=EZ000000000001&r=4172&c=20261125112821&s=100000000002",
+              "date_time": "2026-11-25 06:28:21",
+              "is_refund": false
+            },
+            {
+              "receipt_id": 4173,
+              "qr_code_url": "https://ofd.soliq.uz/epi?t=EZ000000000001&r=4173&c=20261125112828&s=100000000003",
+              "date_time": "2026-11-25 06:28:28",
+              "is_refund": true
+            }
+          ]
+        }
+      ]
+    },
+    "error": null
+  }
+}

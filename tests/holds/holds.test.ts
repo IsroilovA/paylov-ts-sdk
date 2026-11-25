@@ -15,6 +15,7 @@ import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 // Expectations come from docs/paylov/holds.md.
 const HOLD_ID = '5eed0000-0000-4000-8000-000000000001';
 const RELEASED_HOLD_ID = '5eed0000-0000-4000-8000-000000000002';
+const DECLINED_HOLD_ID = '5eed0000-0000-4000-8000-000000000004';
 const CARD_ID = '5eed0000-0000-4000-8000-000000000003';
 const SERVICE_ID = '5eed0000-0000-4000-8000-0000000000aa';
 const EXTERNAL_ID = 'EXAMPLE-ORDER-REF-NOT-A-REAL-ORDER';
@@ -308,17 +309,28 @@ describe('holds.get', () => {
     });
   });
 
-  it('returns null for transaction_not_found', async () => {
-    const { resource, fetchImpl } = setup([wireResponse('holds/get.notFound.wire.json')]);
+  it('reports the record a declined create leaves as declined, with the requested amount', async () => {
+    const { resource } = setup([wireResponse('holds/get.declined.wire.json')]);
 
-    await expect(resource.get({ externalId: EXTERNAL_ID })).resolves.toBeNull();
-    expect(fetchImpl.calls).toHaveLength(1);
+    const hold = await resource.get({ externalId: EXTERNAL_ID });
+
+    expect(hold).toEqual({
+      transactionId: DECLINED_HOLD_ID,
+      status: 'declined',
+      amountTiyin: 10_000,
+      capturedAt: null,
+      releasedAt: null,
+      serviceId: SERVICE_ID,
+    });
   });
 
-  it('throws any other gateway error instead of returning null', async () => {
-    const { resource } = setup([wireResponse('holds/get.missingIdentifier.wire.json')]);
+  it('throws transaction_not_found for an unknown hold', async () => {
+    const { resource, fetchImpl } = setup([wireResponse('holds/get.notFound.wire.json')]);
 
-    await expectApiError(resource.get({ transactionId: HOLD_ID }), { code: 'validation_error' });
+    await expectApiError(resource.get({ externalId: EXTERNAL_ID }), {
+      code: 'transaction_not_found',
+    });
+    expect(fetchImpl.calls).toHaveLength(1);
   });
 
   it.each([

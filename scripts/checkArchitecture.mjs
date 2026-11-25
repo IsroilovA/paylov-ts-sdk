@@ -36,13 +36,6 @@ const requiredPaths = {
       ],
     ]),
   ),
-  checkout: [
-    'src/checkout/link.ts',
-    'tests/checkout/link.test.ts',
-    'tests/fixtures/checkout',
-    'docs/paylov/checkout.md',
-    'docs/usage/checkout.md',
-  ],
   onboarding: [
     'src/onboarding/client.ts',
     'tests/onboarding/onboarding.test.ts',
@@ -101,8 +94,7 @@ const pureLayer = { core: pureCore, folders: [] };
 const layerRules = {
   core: { core: 'all', folders: [] },
   shared: pureLayer,
-  checkout: { core: ['types', 'errors', 'money', 'params'], folders: ['shared'] },
-  webhooks: { core: pureCore, folders: ['shared'] },
+  webhooks: { core: pureCore, folders: [] },
   ...Object.fromEntries(
     Object.keys(features).map((feature) => [feature, { core: resourceCore, folders: ['shared'] }]),
   ),

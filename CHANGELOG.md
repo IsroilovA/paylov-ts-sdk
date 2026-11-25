@@ -5,12 +5,89 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Behavior:** no lookup resolves `null` for "not found" any more; a miss throws `PaylovApiError`.
+  Catch the code instead of comparing with `null`; right after an ambiguous call the miss still does
+  not prove the call did not run.
+  - `holds.get` resolves `Hold` instead of `Hold | null` and throws Paylov's
+    `transaction_not_found`.
+  - `transactions.get` resolves `Transaction` instead of `Transaction | null`. Paylov answers an
+    unknown id with an empty list, which the SDK throws as `transaction_not_found`, the code
+    `holds.get` throws, with the answer's HTTP status (200); it is definitive, never unsettled.
+  - `splits.get` resolves `Split` and throws Paylov's `split_not_found` for a transaction without a
+    split.
+  - `readHoldState` takes a non-null `hold`, and its optional `transaction` is no longer nullable;
+    `readRefundState` takes a non-null `transaction`. `null` is rejected with `sdk_invalid_input`.
+  - `/testing`: `holds.get`, `transactions.get` and `splits.get` no longer take `reply(null)`;
+    script a miss with `fail('transaction_not_found')` or `fail('split_not_found')`. The simulated
+    gateway answers an unknown hold or transaction with `transaction_not_found`.
+- `splits.get` resolves `Split` instead of `readonly SplitShare[]`: `Split` holds the recipient
+  `shares` and the split's fiscal `receipt` (`FiscalReceipt | null`), which Paylov sends as an extra
+  entry of the status result that previously failed decoding with `sdk_malformed_response`.
+- `SplitShare.createdAtRaw` (text) is replaced by `createdAt`, a `Date` decoded as Tashkent time,
+  the zone Paylov's test environment uses. The `/testing` fake takes and encodes `Split`.
+- `CreateSplitParams.resendOfd` is removed: resubmitting a split's receipt lines to the OFD is the
+  new `splits.resendReceipt(ResendSplitReceiptParams)`, which takes the split's recipients with
+  their items (`SplitReceiptRecipient`), splits nothing, moves no money, and resolves
+  `SplitReceiptResent` (`transactionId`, `status`, `lastOfdError`). It is scripted as
+  `fake.splits.resendReceipt`.
+- **Behavior:** `processing_error` from `payments.pay` is now an unknown outcome like on the other
+  money-moving methods: `isPaylovOutcomeUnknown` and `PaylovApiError.isUnsettled` return `true`.
+  Read the transaction before paying again.
+- **Behavior:** `holds.get` reports the record a declined `holds.create` leaves as `declined`
+  instead of passing Paylov's `check` through. `readHoldState` takes an optional `transaction`, the
+  `transactions.get` read of the hold, and answers `{ kind: 'declined' }` instead of `unknown` when
+  that transaction reads `failed`: nothing is reserved and the `externalId` is used up, so a new
+  attempt needs a new `externalId`. A `declined` hold without it stays `unknown`. `HoldStatus` and
+  `HoldState` gain `declined`; an exhaustive switch over `HoldState` needs the new case.
+- The `merchant.deposit` webhook is no longer supported: `PaylovWebhookReceiver` and
+  `createWebhookRequest` handle only `transaction.cancel`. Removed: `MerchantDepositEvent`;
+  `WebhookEvent` is `TransactionCancelEvent`, and a `merchant.deposit` body is
+  `{ kind: 'invalid', reason: 'unknown_method' }`.
+- Hosted checkout is no longer supported. Removed: `createCheckoutUrl`, `CreateCheckoutUrlParams`,
+  `CheckoutAmount`, `CheckoutCurrency`, `createWebhookResponse`, `WebhookDecision`,
+  `WebhookResponseStatus`, `WebhookResponseBody`, `WebhookCallbackId`, `TransactionCheckEvent`,
+  `TransactionPerformEvent` and `Transaction.isCheckout`. A `transaction.check` or
+  `transaction.perform` body is `{ kind: 'invalid', reason: 'unknown_method' }`.
+- Hosted card binding (Card Bind) is no longer supported; bind cards with `cards.startPanBinding`
+  and `cards.confirmPanBinding`. Removed: `cards.createBindLink`, `cards.getBindSession` (also from
+  the `/testing` fake), `CreateBindLinkParams`, `CardBindLinkCreated`, `GetBindSessionParams`,
+  `CardBindStatus`, `BoundCardBindSession`, `PendingCardBindSession`, `CardBindSession`,
+  `CardBindEvent`, and `link_expired` and `link_already_used` from `PaylovKnownErrorCode`.
+  `PaylovWebhookReceiver` and `createWebhookRequest` no longer handle the Card Bind webhook; a Card
+  Bind body is `{ kind: 'invalid', reason: 'invalid_request' }`.
+- `OtpSmsSettings` and the `sms` parameter of `cards.startPanBinding`, `payments.startPanPayment`
+  and `payments.confirmPanPayment` are removed; the SDK no longer sends `sms`.
+- Cash-sale fiscalization is removed: `fiscalization.registerReceipt` and `fiscalization.getReceipt`
+  take a card payment's `transactionId` only, and no longer send `externalId` or `phoneNumber`.
+  Removed: `RegisterCardFiscalReceiptParams` and `RegisterCashFiscalReceiptParams`;
+  `RegisterFiscalReceiptParams` and `GetFiscalReceiptParams` are plain `transactionId` types.
+  `getReceipt` no longer resolves `null` for Paylov's `ofd_check_not_found`.
+- `fiscalization.attachReceipt` (Paylov's set-receipt) and `AttachFiscalReceiptParams` are removed,
+  also from the `/testing` fake.
+- `FiscalReceiptSummary.issuedAtRaw` (text) is replaced by `issuedAt`, a `Date` decoded as UTC, the
+  zone Paylov's test environment uses: the payment time for a sale receipt, the refund time for a
+  refund receipt. The `/testing` fake takes and encodes `issuedAt`.
+
 ### Changed
 
+- `FiscalReceipt` and `FiscalReceiptRegistered` are now shared types; their shape is unchanged.
+  `PaylovKnownErrorCode` gains `ofd_comitent_not_provided`, which `splits.create` answers for an
+  item without `tin` or `pinfl`.
+- Splits JSDoc and usage docs describe the observed contract: recipient ids are UUIDs; an unpaid
+  transaction answers `receipt_not_available_for_split`; `resendReceipt` answers `split_not_found`
+  without a split and `ofd_check_already_generated` once a receipt exists; `payments.refund` of a
+  split transaction cancels every share. The README no longer claims splits to sub-merchants.
+- Fiscalization JSDoc and usage docs describe the observed receipt lifecycle: `payments.refund`
+  registers a fiscalized payment's refund receipt seconds to minutes later; `refundReceipt` answers
+  `receipt_not_available_for_operation` before the refund and `ofd_check_already_generated` once a
+  refund receipt exists; `getReceipt` without `isRefund` returns the refund receipt once one exists;
+  `registerReceipt` can fail with `transaction_not_found`, and an `ofd_error` for a rejected item,
+  such as a `packageCode` the tax classifier does not list for its `code`, registers nothing.
 - `/testing`: the simulated `PaylovFakeGateway` answers `transactions.get` of a hold released by
-  `holds.release` before it expired: `refunded` with `isHold: true` and the release time as
-  `cancelledAt`, as Paylov reports it. A hold released after it expired still answers
-  `fake_unsimulated`.
+  `holds.release`, before or after it expired: `refunded` with `isHold: true` and the release time
+  as `cancelledAt`, as Paylov reports it.
 
 ## [0.0.4] - 2026-11-23
 

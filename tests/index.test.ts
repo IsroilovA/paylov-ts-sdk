@@ -13,8 +13,6 @@ const PUBLIC_EXPORTS = [
   'PaylovOnboarding',
   'PaylovProtocolError',
   'PaylovWebhookReceiver',
-  'createCheckoutUrl',
-  'createWebhookResponse',
   'formatSum',
   'isPaylovApiError',
   'isPaylovError',

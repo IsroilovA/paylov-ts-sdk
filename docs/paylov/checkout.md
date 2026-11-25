@@ -62,7 +62,8 @@ Configured with Paylov, not through the API. Besides the callback registration, 
 applicability is unverified:
 
 - Organization name, merchant name, merchant category, merchant logo (PNG).
-- Accepted amount limits: minimum 500 SUM, maximum 100,000,000 SUM.
+- Accepted amount limits: minimum 500 SUM, maximum 100,000,000 SUM. DEV check creation does not
+  enforce them ([create](#internalcheckoutcreate)).
 - Merchant requisites: fields shown on the customer's receipt (for example an `order_id` label).
 
 ## Link
@@ -208,12 +209,14 @@ A plain UZS create returns `visaMasterLink: null`, `check.isExpired: false` and 
 USD check succeeds (W c793–c798, c1402–c1404). Which currencies and conversions a merchant gets is
 merchant setup with Paylov (M 2026-11-15). After a conversion the check and perform callbacks still
 carry their own `currency` and `amount_tiyin` (D); with `convert_to` "the transaction will be
-generated in the specified currency" (D), so they carry that currency at the converted amount (M
-2026-11-15), not a verified callback observation.
+generated in the specified currency" (D), but which currency and amount the callbacks then carry is
+neither documented nor observed.
 
 Codes: `merchant_not_found` (W c348), `invalid_amount` (W c350), `currency_not_supported` (W c793),
-`server_error` (W c795). Behavior below or above the merchant's amount limits was not observed; 500
-SUM succeeded (W c347).
+`server_error` (W c795). DEV does not enforce the merchant-configuration amount limits on create: 1,
+499 and 100,000,001 SUM each created a check, `state: 0`, whose `amount` and `totalAmount` read in
+tiyin (100, 49900, 10000000100) (W c1595–c1597), as 500 SUM did (W c347). Whether payment of such a
+check or production creation enforces them is unobserved.
 
 The `account` reads back as `{}` although keys were sent, in the create response, `getCheck` and
 REST reads alike (W c346, c1159–c1165). `getCheck` reports `canCancel: true` although

@@ -2,13 +2,14 @@ import type { PaylovJsonObject } from '../core/types.js';
 import type { TransactionLookup, TransactionReference } from '../shared/transactions.js';
 
 /**
- * `held` (reserved), `captured` or `released`. `held` means what it means in `TransactionStatus`,
- * where a captured hold reads `paid` and an expired hold Paylov released has read `refunded`. An
- * expired hold can still read `held`, so `held` alone does not prove the hold can be captured.
- * Paylov also documents `created`, which has not been observed. Other values pass through
- * unchanged.
+ * `held` (reserved), `captured`, `released` or `declined`. `held` means what it means in
+ * `TransactionStatus`, where a captured hold reads `paid` and a released one `refunded`. An expired
+ * hold can still read `held`, so `held` alone does not prove the hold can be captured. `declined`
+ * is Paylov's undocumented `check`, seen on the record a declined `holds.create` leaves, whose
+ * transaction reads `failed`; `readHoldState` confirms a decline with that transaction. Paylov
+ * also documents `created`, which has not been observed. Other values pass through unchanged.
  */
-export type HoldStatus = 'held' | 'captured' | 'released' | 'created' | (string & {});
+export type HoldStatus = 'held' | 'captured' | 'released' | 'declined' | 'created' | (string & {});
 
 /** Parameters for `holds.create`. */
 export interface CreateHoldParams {
@@ -29,7 +30,8 @@ export interface CreateHoldParams {
   /**
    * Your reference for this hold, unique per merchant; Paylov answers `validation_error` above
    * 64 characters. It is the key that finds the hold again with `holds.get({ externalId })` after
-   * an ambiguous failure.
+   * an ambiguous failure. Every create that reaches Paylov uses it up, a declined one too: a new
+   * attempt after a decline or release needs a new `externalId`.
    */
   readonly externalId: string;
   /** Merchant data sent with the hold. */
@@ -86,8 +88,9 @@ export interface Hold {
   readonly transactionId: string;
   readonly status: HoldStatus;
   /**
-   * The held amount while `held` or `released`; the captured amount once `captured`. Keep the
-   * original held amount yourself: after a partial capture it is no longer reported.
+   * The held amount while `held` or `released`; the captured amount once `captured`; the requested
+   * amount, never reserved, when `declined`. Keep the original held amount yourself: after a
+   * partial capture it is no longer reported.
    */
   readonly amountTiyin: number;
   /** When the hold was captured (sent in UTC); `null` until then. */
@@ -102,14 +105,26 @@ export interface Hold {
   readonly serviceId: string;
 }
 
+/** The fields of a `transactions.get` result that settle a `declined` hold. */
+export interface HoldTransactionRead {
+  readonly transactionId: string;
+  readonly status: string;
+  readonly isHold: boolean;
+}
+
 /** Parameters for `readHoldState`. */
 export interface ReadHoldStateParams {
-  /** A `holds.get` result; `null` when the gateway knew no such hold. */
-  readonly hold: Hold | null;
+  /** A `holds.get` result. */
+  readonly hold: Hold;
   /** The `clientCaptureDeadline` that `holds.create` returned for this hold. */
   readonly clientCaptureDeadline: Date;
   /** The time to judge the deadline at, usually now. */
   readonly now: Date;
+  /**
+   * The `transactions.get` read of `hold.transactionId`, needed only to settle a `declined` hold:
+   * it reads as declined only when this transaction reads `failed`. Omit it otherwise.
+   */
+  readonly transaction?: HoldTransactionRead;
 }
 
 /**
@@ -120,12 +135,15 @@ export interface ReadHoldStateParams {
  * - `released`: Paylov reports the hold released; nothing is left to capture or release.
  * - `possibly_expired`: still reads `held`, but the deadline has passed. A capture may fail with
  *   `hold_time_expired`; release it if you will not capture. Not proof of release.
- * - `unknown`: the read proves nothing (no hold found, an unobserved status, or fields that
- *   disagree with the status). Read again later; never act on it.
+ * - `declined`: the hold reads `declined` and its transaction `failed`: the create was declined and
+ *   reserved nothing. The `externalId` stays taken: create again only with a new one.
+ * - `unknown`: the read proves nothing (an unobserved status, fields that disagree with the status,
+ *   or a `declined` hold without its `failed` transaction). Read again later; never act on it.
  */
 export type HoldState =
   | { readonly kind: 'open' }
   | { readonly kind: 'captured'; readonly amountTiyin: number; readonly capturedAt: Date }
   | { readonly kind: 'released'; readonly releasedAt: Date }
   | { readonly kind: 'possibly_expired' }
+  | { readonly kind: 'declined' }
   | { readonly kind: 'unknown' };

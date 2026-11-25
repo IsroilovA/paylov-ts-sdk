@@ -1,28 +1,56 @@
+import type { FiscalReceipt } from '../shared/fiscalReceipts.js';
 import type { FiscalReceiptItem } from '../shared/receiptItems.js';
 
 /** Parameters for `splits.create`. */
 export interface CreateSplitParams {
-  /** The paid Paylov transaction to split (UUID). */
+  /**
+   * The paid Paylov transaction to split (UUID); Paylov answers `receipt_not_available_for_split`
+   * for an unpaid one.
+   */
   readonly transactionId: string;
   /**
    * The amounts must add up to the transaction amount, else `invalid_amount`; Paylov answers
    * `validation_error` for an empty list.
    */
   readonly recipients: readonly SplitRecipient[];
-  /**
-   * Sent as Paylov's `resendOFD`: resend the split to the fiscal system. Paylov says to resend when
-   * the response lacks fiscal data, without saying where that data appears.
-   */
-  readonly resendOfd?: boolean;
 }
 
 export interface SplitRecipient {
-  /** Opaque recipient id issued by Paylov. */
+  /** Recipient id issued by Paylov (UUID); Paylov answers `validation_error` for another shape. */
   readonly recipientId: string;
   /** Integer tiyin. */
   readonly amountTiyin: number;
-  /** Receipt lines for this recipient's share; sending them starts OFD fiscalization. */
+  /**
+   * Receipt lines for this recipient's share. Paylov registers them with the OFD in the background,
+   * seconds after the split; `splits.get` reports the result as `receipt`. Paylov answers
+   * `ofd_comitent_not_provided` for an item without `tin` or `pinfl`.
+   */
   readonly items?: readonly FiscalReceiptItem[];
+}
+
+/** Parameters for `splits.resendReceipt`. */
+export interface ResendSplitReceiptParams {
+  /** The split transaction (UUID). */
+  readonly transactionId: string;
+  /** The split's recipients and amounts, each with the corrected receipt lines for its share. */
+  readonly recipients: readonly SplitReceiptRecipient[];
+}
+
+/** A split recipient whose receipt lines are resent. */
+export interface SplitReceiptRecipient extends SplitRecipient {
+  readonly items: readonly FiscalReceiptItem[];
+}
+
+/** The resubmission status Paylov reports. Open: Paylov may add values. */
+export type SplitReceiptStatus = 'sent_to_ofd' | (string & {});
+
+/** Paylov accepted a split's receipt lines for another OFD submission. */
+export interface SplitReceiptResent {
+  /** The split transaction. */
+  readonly transactionId: string;
+  readonly status: SplitReceiptStatus;
+  /** The OFD's answer to the previous submission, verbatim text, such as a rejected item code. */
+  readonly lastOfdError: string;
 }
 
 /** Parameters for `splits.get`. */
@@ -31,7 +59,10 @@ export interface GetSplitParams {
   readonly transactionId: string;
 }
 
-/** A recipient's sub-transaction status. Open: Paylov may add values. */
+/**
+ * A recipient's sub-transaction status: `paid` once split, `cancelled` once the parent transaction
+ * is refunded. Open: Paylov also lists `check`, without a meaning.
+ */
 export type SplitRecipientStatus = 'paid' | 'cancelled' | 'check' | (string & {});
 
 /** One recipient's share of a split transaction. */
@@ -40,6 +71,18 @@ export interface SplitShare {
   /** Integer tiyin. */
   readonly amountTiyin: number;
   readonly status: SplitRecipientStatus;
-  /** `YYYY-MM-DD HH:MM:SS` verbatim; the time zone is undocumented. */
-  readonly createdAtRaw: string;
+  /** Read in Tashkent time (fixed UTC+05:00), the zone Paylov's test environment uses. */
+  readonly createdAt: Date;
+}
+
+/** A split transaction: its shares and its fiscal receipt. */
+export interface Split {
+  /** One entry per recipient sent to `splits.create`. */
+  readonly shares: readonly SplitShare[];
+  /**
+   * The split's current fiscal receipt: the sale receipt seconds after a split with items, the
+   * refund receipt seconds after the parent transaction is refunded. `null` without items, while
+   * the OFD has not registered a receipt, and when registration failed.
+   */
+  readonly receipt: FiscalReceipt | null;
 }

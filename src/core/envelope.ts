@@ -41,8 +41,7 @@ function unusableBody(context: ResponseContext): PaylovProtocolError {
 }
 
 function isUnsettledCode(code: string, endpoint: ResponseEndpoint): boolean {
-  const isDefinitive = (endpoint.definitiveCodes ?? []).some((definitive) => definitive === code);
-  return endpoint.movesMoney === true && UNSETTLED_FAILURE_CODES.has(code) && !isDefinitive;
+  return endpoint.movesMoney === true && UNSETTLED_FAILURE_CODES.has(code);
 }
 
 function apiError(
@@ -78,7 +77,7 @@ function successPayload(body: unknown, context: ResponseContext, shape: Response
 }
 
 /** What the normalizer needs of the declared endpoint. */
-export type ResponseEndpoint = Pick<Endpoint, 'shape' | 'movesMoney' | 'definitiveCodes'>;
+export type ResponseEndpoint = Pick<Endpoint, 'shape' | 'movesMoney'>;
 
 /**
  * Returns the success payload as `unknown` for the owning decoder, or throws: `PaylovApiError`

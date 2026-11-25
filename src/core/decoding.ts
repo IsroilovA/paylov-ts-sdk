@@ -4,15 +4,11 @@
  * Rejected values never enter errors: only the path does.
  */
 
-import { malformedResponse } from './errors.js';
+import type { PaylovKnownErrorCode } from './errorCodes.js';
+import { malformedResponse, synthesizedMiss } from './errors.js';
 import { wireSumToTiyin } from './money.js';
 import { isNonNegativeSafeInteger } from './numbers.js';
-import {
-  fromUnixSeconds,
-  parseIsoDateTime,
-  parseTashkentDateTime,
-  parseUtcDateTime,
-} from './time.js';
+import { fromUnixSeconds, parseTashkentDateTime, parseUtcDateTime } from './time.js';
 import type { HttpResponse, PaylovJsonObject, PaylovJsonValue } from './types.js';
 
 export type Decoder<T> = (value: unknown, path: string) => T;
@@ -28,14 +24,29 @@ export class DecodeFailure extends Error {
 }
 
 /**
+ * A success payload that means the record does not exist, which the gateway reports without an
+ * error code. Internal: {@link decodePayload} turns it into the gateway's not-found `code`.
+ */
+export class DecodedMiss extends Error {
+  readonly code: PaylovKnownErrorCode;
+
+  constructor(code: PaylovKnownErrorCode) {
+    super(`decoded a ${code} miss`);
+    this.code = code;
+  }
+}
+
+/**
  * Decodes a response payload from `root` (`result` or `body`); a failure becomes
- * `sdk_malformed_response` at its path, with the response's endpoint and status.
+ * `sdk_malformed_response` at its path, with the response's endpoint and status, and a
+ * {@link DecodedMiss} a `PaylovApiError` with its code.
  */
 export function decodePayload<T>(response: HttpResponse, root: string, decode: Decoder<T>): T {
   try {
     return decode(response.payload, root);
   } catch (error) {
     if (error instanceof DecodeFailure) throw malformedResponse(response.context, error.path);
+    if (error instanceof DecodedMiss) throw synthesizedMiss(response.context, error.code);
     throw error;
   }
 }
@@ -198,8 +209,6 @@ function dateDecoder(parse: (value: string) => Date | undefined): Decoder<Date> 
 export const asTashkentDateTime: Decoder<Date> = dateDecoder(parseTashkentDateTime);
 /** `YYYY-MM-DD HH:mm:ss` in UTC. */
 export const asUtcDateTime: Decoder<Date> = dateDecoder(parseUtcDateTime);
-/** ISO 8601 with an explicit offset. */
-export const asIsoDateTime: Decoder<Date> = dateDecoder(parseIsoDateTime);
 
 /** Non-negative integer Unix seconds, as a JSON number. */
 export const asUnixDateTime: Decoder<Date> = (value, path) => {
