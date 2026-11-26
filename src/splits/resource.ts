@@ -1,4 +1,5 @@
 import { readCall, send } from '../core/call.js';
+import { invalidInput } from '../core/errors.js';
 import type { Params } from '../core/params.js';
 import type { HttpClient, PaylovCallOptions } from '../core/types.js';
 import { readReceiptItem, type WireReceiptItem } from '../shared/receiptItems.js';
@@ -69,17 +70,17 @@ export interface SplitsResource {
    * submission is still pending registers twice, so resend only once `splits.get` has shown no
    * receipt for a while.
    *
-   * Send every recipient of the split with its amount and its items: the SDK requires items on
-   * every recipient, because Paylov's acceptance of a recipient without items alongside others is
-   * not established.
+   * Send every recipient of the split with its amount, and the receipt lines on the recipients
+   * whose share carries them: a recipient without items is allowed, but at least one recipient
+   * must carry items, since Paylov answers a resend without any with `field_required`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get`. A receipt there shows that
    * a receipt exists, not which submission registered it: the original one or a later refund can
    * produce it too, and its `isRefund` tells a refund receipt from a sale receipt.
    * `ofd_check_already_generated` on a repeated call means a receipt exists.
    *
-   * @throws {@link PaylovInputError} `sdk_invalid_input` for a recipient without `items` or an item
-   * without exactly one of `tin` or `pinfl`, before anything is sent.
+   * @throws {@link PaylovInputError} `sdk_invalid_input` when no recipient carries `items`, or for an
+   * item without exactly one of `tin` or `pinfl`, before anything is sent.
    * @throws {@link PaylovApiError} `ofd_check_already_generated` (the split has a receipt),
    * `split_not_found` (the transaction has no split), `permission_denied`.
    *
@@ -87,7 +88,7 @@ export interface SplitsResource {
    * const { status } = await paylov.splits.resendReceipt({
    *   transactionId,
    *   recipients: [
-   *     { recipientId: platformRecipientId, amountTiyin: 150_000, items: platformItems },
+   *     { recipientId: platformRecipientId, amountTiyin: 150_000 },
    *     { recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedSellerItems },
    *   ],
    * });
@@ -126,8 +127,8 @@ function readRecipient(recipient: Params): WireSplitRecipient {
   };
 }
 
-function readReceiptRecipient(recipient: Params): WireSplitRecipient {
-  return { ...readRecipient(recipient), items: recipient.array('items', readReceiptItem) };
+function hasItems(recipient: WireSplitRecipient): boolean {
+  return recipient.items !== undefined && recipient.items.length > 0;
 }
 
 export function createSplitsResource(http: HttpClient): SplitsResource {
@@ -145,11 +146,17 @@ export function createSplitsResource(http: HttpClient): SplitsResource {
     async resendReceipt(params, options) {
       const method = 'splits.resendReceipt';
       const { input, signal } = readCall(params, options, method);
-      const body = {
-        transactionId: input.string('transactionId'),
-        recipients: input.array('recipients', readReceiptRecipient),
-        resendOFD: true,
-      };
+      const transactionId = input.string('transactionId');
+      const recipients = input.array('recipients', readRecipient);
+      // A resend without items answers `field_required` (docs/paylov/splits.md#resend-to-the-ofd).
+      if (!recipients.some(hasItems)) {
+        throw invalidInput(
+          `${method}: recipients must carry items on at least one recipient`,
+          'recipients',
+          'required',
+        );
+      }
+      const body = { transactionId, recipients, resendOFD: true };
       return send(http, ENDPOINTS.resendReceipt, { body, signal }, decodeSplitReceiptResent);
     },
 

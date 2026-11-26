@@ -124,9 +124,10 @@ each (W c1764, c1765).
 - Once a receipt exists, a resend answers `ofd_check_already_generated` (W c1784, c1809).
 - Without a split, also with items, it answers `split_not_found` and creates no split (W c1823,
   c1825).
-- Without items it answers `field_required` with `data` `{"field": "items"}` (W c1744). Both
-  observed resends had a single recipient; a resend mixing recipients with and without items is
-  unobserved [OPEN Q111].
+- Without items on any recipient it answers `field_required` with `data` `{"field": "items"}` (W
+  c1744). A recipient without items beside one with items is the documented recipient list: the
+  create example, which carries `resendOFD`, sends one of each (D). Both observed resends had a
+  single recipient, so a mixed resend was not observed (W c1744, c1806).
 - Without `resendOFD`, a create for a split transaction answers `split_already_done`, also after a
   failed registration (W c1805).
 

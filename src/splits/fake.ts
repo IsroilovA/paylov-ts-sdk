@@ -16,7 +16,6 @@ import type {
   GetSplitParams,
   ResendSplitReceiptParams,
   Split,
-  SplitReceiptRecipient,
   SplitReceiptResent,
   SplitRecipient,
 } from './types.js';
@@ -46,13 +45,6 @@ function encodeSplitReceiptResent(resent: SplitReceiptResent): unknown {
   return { transactionId: resent.transactionId, status: resent.status };
 }
 
-function decodeReceiptRecipient(recipient: Params): SplitReceiptRecipient {
-  return {
-    ...decodeRecipient(recipient),
-    items: recipient.array('items', decodeReceiptItem),
-  };
-}
-
 function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
   return {
     transactionId: body.string('transactionId'),
@@ -63,7 +55,7 @@ function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
 function decodeResendReceiptRequest({ body }: FakeRequest): ResendSplitReceiptParams {
   return {
     transactionId: body.string('transactionId'),
-    recipients: body.array('recipients', decodeReceiptRecipient),
+    recipients: body.array('recipients', decodeRecipient),
   };
 }
 

@@ -44,12 +44,14 @@ const split = await paylov.splits.get({ transactionId });
   the refund receipt seconds after a refund.
 - A rejected item leaves `receipt` `null` and reports nothing. Resubmit corrected items with
   `splits.resendReceipt`: it splits nothing, moves no money, and returns the resubmission `status`.
-  Send every recipient of the split with its original amount and its items; the SDK rejects a
-  recipient without items locally as `sdk_invalid_input`. `ofd_check_already_generated` means a
-  receipt already exists. A receipt in `splits.get` afterwards shows that a receipt exists, not that
-  the resend registered it: the original submission or a refund can produce it too, and `isRefund`
-  tells a refund receipt from a sale receipt. Paylov does not say whether a resend while the first
-  submission is still pending registers twice, so wait before resending.
+  Send every recipient of the split with its original amount, and items on the recipients whose
+  share carries receipt lines; a recipient without items is allowed. At least one recipient must
+  carry items: the SDK rejects a resend without any as `sdk_invalid_input`, which Paylov answers
+  with `field_required`. `ofd_check_already_generated` means a receipt already exists. A receipt in
+  `splits.get` afterwards shows that a receipt exists, not that the resend registered it: the
+  original submission or a refund can produce it too, and `isRefund` tells a refund receipt from a
+  sale receipt. Paylov does not say whether a resend while the first submission is still pending
+  registers twice, so wait before resending.
 
 ```ts
 const split = await paylov.splits.get({ transactionId });
@@ -57,7 +59,7 @@ if (split.receipt === null && Date.now() - splitAt.getTime() > 60_000) {
   const { status } = await paylov.splits.resendReceipt({
     transactionId,
     recipients: [
-      { recipientId: platformRecipientId, amountTiyin: 150_000, items: platformItems },
+      { recipientId: platformRecipientId, amountTiyin: 150_000 },
       { recipientId: sellerRecipientId, amountTiyin: 850_000, items: correctedSellerItems },
     ],
   });

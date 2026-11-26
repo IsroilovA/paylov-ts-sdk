@@ -15,6 +15,7 @@ import { BASE_URL, setupResource } from '../helpers/testHttp.js';
 const TRANSACTION_ID = '5eed0000-0000-4000-8000-000000000001';
 const PINFL = '88888888888888';
 const RECIPIENT = '5eed0000-0000-4000-8000-000000000101';
+const PLATFORM_RECIPIENT = '5eed0000-0000-4000-8000-000000000102';
 const UNKNOWN_RECIPIENT = '5eed0000-0000-4000-8000-00000000dead';
 const ITEM = {
   title: 'Delivery',
@@ -148,15 +149,54 @@ describe('splits.resendReceipt', () => {
     expectNoSecretLeak(resent, [String(diagnostic)]);
   });
 
-  it('rejects a recipient without items before any request', async () => {
+  it('sends a recipient without items beside one with items', async () => {
+    const { resource, fetchImpl } = setup(wireResponse('splits/resendReceipt.success.wire.json'));
+
+    await resource.resendReceipt({
+      transactionId: TRANSACTION_ID,
+      recipients: [
+        { recipientId: PLATFORM_RECIPIENT, amountTiyin: 150_000 },
+        { recipientId: RECIPIENT, amountTiyin: 850_000, items: [ITEM] },
+      ],
+    });
+
+    expect(recordOf(fetchImpl.calls[0]?.body)['recipients']).toEqual([
+      { recipientId: PLATFORM_RECIPIENT, amount: 150_000 },
+      expect.objectContaining({
+        recipientId: RECIPIENT,
+        items: [expect.objectContaining({ price: 850_000 })],
+      }),
+    ]);
+  });
+
+  it.each([
+    ['no recipient carries items', [{ recipientId: RECIPIENT, amountTiyin: 850_000 }]],
+    ['the only items are empty', [{ recipientId: RECIPIENT, amountTiyin: 850_000, items: [] }]],
+    ['there are no recipients', []],
+  ])('rejects a resend where %s before any request', async (_case, recipients) => {
     const { resource, fetchImpl } = setup();
+
+    await expectInputError(resource.resendReceipt({ transactionId: TRANSACTION_ID, recipients }), {
+      code: 'sdk_invalid_input',
+      field: 'recipients',
+      rule: 'required',
+    });
+    expect(fetchImpl.calls).toHaveLength(0);
+  });
+
+  it('still rejects an item without exactly one of tin or pinfl', async () => {
+    const { resource, fetchImpl } = setup();
+    const withBoth = { ...ITEM, tin: '123456789' };
 
     await expectInputError(
       resource.resendReceipt({
         transactionId: TRANSACTION_ID,
-        recipients: [{ recipientId: RECIPIENT, amountTiyin: 850_000 }],
-      } as never),
-      { field: 'recipients[0].items', rule: 'required' },
+        recipients: [
+          { recipientId: PLATFORM_RECIPIENT, amountTiyin: 150_000 },
+          { recipientId: RECIPIENT, amountTiyin: 850_000, items: [withBoth] as never },
+        ],
+      }),
+      { field: 'recipients[1].items[0]', rule: 'exclusive' },
     );
     expect(fetchImpl.calls).toHaveLength(0);
   });

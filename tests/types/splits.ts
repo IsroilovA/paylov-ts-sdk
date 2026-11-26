@@ -40,8 +40,11 @@ void client.splits.resendReceipt(resendParams).then((resent: SplitReceiptResent)
   // @ts-expect-error the OFD's raw diagnostic text is not exposed
   void resent.lastOfdError;
 });
-// @ts-expect-error a resend carries every recipient's items
-void client.splits.resendReceipt({ transactionId, recipients: [recipient] });
+// A recipient without items may stand beside one with items.
+void client.splits.resendReceipt({
+  transactionId,
+  recipients: [recipient, { ...recipient, items }],
+});
 
 const split: Promise<Split> = client.splits.get({ transactionId });
 void split.then((found) => {

@@ -32,13 +32,12 @@ export interface SplitRecipient {
 export interface ResendSplitReceiptParams {
   /** The split transaction (UUID). */
   readonly transactionId: string;
-  /** The split's recipients and amounts, each with the corrected receipt lines for its share. */
-  readonly recipients: readonly SplitReceiptRecipient[];
-}
-
-/** A split recipient whose receipt lines are resent. */
-export interface SplitReceiptRecipient extends SplitRecipient {
-  readonly items: readonly FiscalReceiptItem[];
+  /**
+   * The split's recipients and amounts, with the corrected receipt lines on the recipients whose
+   * share carries them. At least one recipient must carry items; the SDK rejects a list without any
+   * as `sdk_invalid_input`.
+   */
+  readonly recipients: readonly SplitRecipient[];
 }
 
 /** The resubmission status Paylov reports. Open: Paylov may add values. */

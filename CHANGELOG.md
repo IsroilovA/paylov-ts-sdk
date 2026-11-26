@@ -3,6 +3,19 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Behavior:** `splits.resendReceipt` accepts recipients without `items`, as Paylov's split example
+  sends; at least one recipient must carry items, else `sdk_invalid_input` before sending. Each item
+  still needs exactly one of `tin` or `pinfl`.
+
+### Changed (breaking)
+
+- `SplitReceiptRecipient` is removed: `ResendSplitReceiptParams.recipients` is
+  `readonly SplitRecipient[]`.
+
 ## [0.0.6] - 2026-11-26
 
 ### Added

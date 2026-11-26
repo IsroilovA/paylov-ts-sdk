@@ -14,12 +14,3 @@ Which ids besides the merchant's own can be split recipients (sub-merchants, oth
 
 On DEV the merchant's own id is the only recipient that succeeded; an unknown UUID answers
 `recipient_not_found` (W c1722, c1724, c1740). Page: [Splits](splits.md#flow).
-
-## Q111
-
-May a split resend carry a recipient without items beside recipients with items?
-
-A resend whose sole recipient had no items answered `field_required` with `data`
-`{"field": "items"}` (W c1744); a resend whose sole recipient had items succeeded (W c1806). Mixed
-recipients were not tried. The SDK requires items on every resent recipient. Page:
-[Splits](splits.md#resend-to-the-ofd).
