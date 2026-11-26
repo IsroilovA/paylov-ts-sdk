@@ -159,7 +159,10 @@ Success (W c025, c029):
   sandbox bundle `+998901234***`. The mask is not a contract (W c025, c029; D; S).
 - `code` is undocumented and `null` in every capture, with or without `sms` (W c025, c029, c1353,
   c1356, c1359).
-- The same PAN may be bound under another `userId`, and re-bound after a delete (W c040, c332).
+- Starting for another `userId` while the PAN is confirmed for the first user returns HTTP 200 with
+  a new `cid`. The PAN can also be re-bound after a delete (W c040, c332, c2056).
+- A `card_exists` response has `result: null` and only `code` and `message` in `error`. It carries
+  no existing card id (W c030, c2055).
 
 **Who sends the OTP (D).** The card's processing center (Uzcard or Humo) sends the OTP, not Paylov
 or the merchant, to the phone linked to the card. The SMS sender is `UZCARD` or `HUMO` and the text
@@ -219,7 +222,8 @@ Observed on DEV; production may use other numbers. Times run from the create res
   c845, c847) and returned `otp_expired` at 91.6 and 106.6 s and at 2, 5 and 10 minutes (W c788,
   c791, c462, c519, c718).
 - A wrong code, a PINFL mismatch and validation failures leave the OTP usable (W c026–c029,
-  c045–c051). After success the same OTP returns `card_is_already_activated` (W c028).
+  c045–c051). After success the same OTP returns HTTP 404 `card_is_already_activated` (W c028,
+  c2054).
 - Resend: `createUserCard/` for the same user and PAN returns `otp_code_already_sent` while the OTP
   is valid, at 5, 25, 61.7 and 80.6 s (W c741, c744, c839, c844). After expiry, at 96.6 and 130 s,
   it succeeds with the **same `cid`** and a new OTP that confirms (W c855, c857, c810, c811); that
@@ -274,15 +278,21 @@ Returns `{"result": {"card": <card>}}` with a refreshed balance, a nested `statu
 `"is_cached": false` (W c052). An inactive card is a success with `is_active: false` and the reason
 in `status_message` (D).
 
+For the `cid` of a binding that has never confirmed, the read answers HTTP 400 `card_not_found`
+without card or processing status. The same read answered this immediately after start, after one
+`invalid_otp`, and 100 s after start when its OTP had lapsed (W c2018, c2019, c2021, c2022, c2040).
+After a successful confirm, the same id returned HTTP 200 with `is_active: true`,
+`status_message: "active"` and `is_cached: false` at 18 ms and again at 5 s (W c2049, c2050, c2052).
+
 A read right after `deleteUserCard/` still returned the deleted card, with `"is_cached": true` (W
 c1074); 30 s later it answered `card_not_found` (W c1076). `getAllUserCards/` caches the same way,
 but for less time (see [Get user's cards](#get-users-cards)).
 
-| Code                                                                                                                                                 | HTTP | Trigger                                                                              | Grade          |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------ | -------------- |
-| `card_not_found`                                                                                                                                     | 400  | Unknown or deleted id                                                                | W (c053, c326) |
-| `validation_error`                                                                                                                                   | 400  | Non-UUID id; the data key is `card_id`                                               | W (c054)       |
-| `card_not_found_in_processing_center` (message `card_not_found`), `card_is_blocked_in_processing_center`, `card_is_blocked`, `balance_refresh_error` | 400  | As named; uz merges the two blocked rows into `card_is_blocked_in_processing_center` | D              |
+| Code                                                                                                                                                 | HTTP | Trigger                                                                              | Grade                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------ | --------------------- |
+| `card_not_found`                                                                                                                                     | 400  | Unknown, unconfirmed or deleted id                                                   | W (c053, c326, c2019) |
+| `validation_error`                                                                                                                                   | 400  | Non-UUID id; the data key is `card_id`                                               | W (c054)              |
+| `card_not_found_in_processing_center` (message `card_not_found`), `card_is_blocked_in_processing_center`, `card_is_blocked`, `balance_refresh_error` | 400  | As named; uz merges the two blocked rows into `card_is_blocked_in_processing_center` | D                     |
 
 ### Get user's cards
 
@@ -291,6 +301,16 @@ but for less time (see [Get user's cards](#get-users-cards)).
 Returns `{"result": {"cards": [<card>, …]}}` with nested statuses (W c055); an unknown user returns
 `{"cards": []}` (W c056). A missing `userId` is `validation_error` (W c057). The docs list no
 errors.
+
+A user whose only binding is unconfirmed has `cards: []` with HTTP 200, including after one wrong
+OTP and after the OTP lapses. The first empty response had `is_cached: false`; the two later ones
+had `is_cached: true` (W c2020, c2023, c2041).
+
+A list first read after confirmation contained the active card at 32 ms (W c2065, c2066). A list
+read immediately before confirmation still returned its cached empty `cards` at 37 ms and contained
+the active card at 5.1 s in one run (W c2048, c2049, c2051, c2053). In another it was still empty at
+7.5 s and contained the card at 10.0 s (W c2068–c2080). When the empty list was cached 8 s before
+confirmation, it stayed empty at 1.0 s afterward and contained the card at 1.6 s (W c2082–c2088).
 
 Right after `deleteUserCard/` the list still contained the deleted card, with `"is_cached": true`,
 for at least 5.6 s (W c1084–c1087). By 8.2 s it was empty, with `"is_cached": false` (W c1088). An
@@ -305,8 +325,11 @@ unknown card returns 404 `card_not_found` (W c325); a missing or non-UUID `userC
 `validation_error` (W c329, c330). After a delete, payments and holds with the card return
 `card_not_found` (W c327, c328, c1909, c1927), while its open holds still charge and dismiss (W
 c1903, c1906, c1921, c1924). `getCard/` also returns `card_not_found` (W c326), subject to the
-[read cache](#get-single-card). A card that was never confirmed can be deleted, also after its OTP
-expired (W c719–c721).
+[read cache](#get-single-card). Deleting an unconfirmed binding returns the same success while its
+OTP is valid or after it expires (W c719–c721, c2026, c2042). An immediate `getCard/` answers 400
+`card_not_found`, the list stays empty, and repeat delete and confirm answer 404 `card_not_found` (W
+c2027–c2030). Starting the same binding again immediately answers 400 `otp_code_already_sent` (W
+c2031, c2039). At 100 s from the original start it succeeds with a new `cid` (W c2033, c2043).
 
 ## Ownership checks
 
@@ -367,7 +390,10 @@ DEV live runs 2026-11-12 and 2026-11-14; no numbered capture.
   microseconds and `+05:00`, not `+00:00` without a fraction (W c082).
 - `createUserCard/` returns an undocumented `result.code: null` (W c025); `getCard/` and
   `getAllUserCards/` an undocumented top-level `is_cached`, `true` when the answer comes from a
-  cache that still holds a deleted card (W c052, c055, c1074, c1085).
+  cache that still holds a deleted card or omits a newly confirmed card (W c052, c055, c1074, c1085,
+  c2051).
+- The docs omit reads and deletion before confirmation, including the resend cooldown that outlasts
+  a pending binding's deletion (W c2019, c2020, c2026, c2039, c2043).
 - The docs' `validation_error` example `{"cardNumber": ["invalid_card_number"]}` was not reproduced:
   an invalid PAN is `card_not_found` (W c034).
 - The
