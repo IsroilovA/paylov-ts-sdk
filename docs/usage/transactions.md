@@ -39,15 +39,20 @@ try {
 ```ts
 import { readRefundState } from '@isroilov_an/paylov';
 
-const state = readRefundState({ transaction: await paylov.transactions.get({ transactionId }) });
-if (state.kind === 'refunded') await orders.markRefunded(orderId, state.refundedAt);
-else if (state.kind === 'unknown') await jobs.reconcileLater(orderId);
+const transaction = await paylov.transactions.get({ transactionId });
+// `isCaptured: true` only for a hold this order captured with `paylov.holds.capture`.
+const state = readRefundState({ transaction, isCaptured: order.holdCapturedAt !== null });
+if (state.kind === 'refunded') await orders.markRefunded(order.id, state.refundedAt);
+else if (state.kind === 'unknown') await jobs.reconcileLater(order.id);
 ```
 
 - `refunded` needs a sale (`isHold` false) reading `refunded` with a valid `cancelledAt`;
   `not_refunded` needs `paid` with no `cancelledAt`, a captured hold included. Everything else is
-  `unknown`: other statuses, and every hold reading `refunded`, which reads the same after a release
-  as after a refund. Confirm the refund of a captured hold in the Paylov business panel.
+  `unknown`: other statuses, and a hold reading `refunded`, which reads the same after a release as
+  after a refund.
+- `isCaptured: true` asserts that you captured the hold, which also means it was never released: a
+  hold then reading `refunded` with a valid `cancelledAt` is `refunded`. Pass it only from your own
+  record of a successful `holds.capture`; the read itself cannot tell a capture from a release.
 - `not_refunded` is a reading at one moment: after an ambiguous refund, read again with backoff
   before repeating it ([errors.md](errors.md#recovery-after-an-ambiguous-failure)).
 

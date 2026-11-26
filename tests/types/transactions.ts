@@ -65,5 +65,8 @@ const rrn: string = await client.transactions.getRrn({ transactionId });
 void rrn;
 
 void readRefundState({ transaction });
+void readRefundState({ transaction, isCaptured: true });
+// @ts-expect-error the capture assertion is a boolean
+void readRefundState({ transaction, isCaptured: 'yes' });
 // @ts-expect-error a missing transaction is a transaction_not_found error, never a null read
 void readRefundState({ transaction: null });

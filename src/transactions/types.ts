@@ -98,17 +98,25 @@ export interface TransactionPage {
 export interface ReadRefundStateParams {
   /** A `transactions.get` result for a sale or a captured hold. */
   readonly transaction: Transaction;
+  /**
+   * `true` asserts that this caller captured the hold with `holds.capture`, which also means it was
+   * never released. A hold then reading `refunded` with its refund time is `refunded`. Without it,
+   * a hold reading `refunded` is `unknown`, because a release reads the same. Ignored for a sale.
+   */
+  readonly isCaptured?: boolean;
 }
 
 /**
  * What a `transactions.get` read establishes about the refund of a paid transaction, from
  * `readRefundState`:
- * - `refunded`: a sale (`isHold` false) reads `refunded`, with the refund time.
+ * - `refunded`: a sale (`isHold` false) reads `refunded`, with the refund time; so does a hold
+ *   the caller asserted with `isCaptured: true`.
  * - `not_refunded`: the transaction, a sale or a captured hold, still reads `paid` without a
  *   refund time: not refunded at the time of the read.
- * - `unknown`: the read proves nothing: any hold reading `refunded` (a release reads the same as
- *   a refund), a transaction that was never paid, an unobserved status, or a refund without a
- *   time. Read again later or check the Paylov business panel; never refund again on it.
+ * - `unknown`: the read proves nothing: a hold reading `refunded` without `isCaptured: true` (a
+ *   release reads the same as a refund), a transaction that was never paid, an unobserved status,
+ *   or a refund without a time. Read again later or check the Paylov business panel; never refund
+ *   again on it.
  */
 export type RefundState =
   | { readonly kind: 'refunded'; readonly refundedAt: Date }

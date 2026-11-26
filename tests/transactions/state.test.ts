@@ -56,6 +56,32 @@ describe('readRefundState', () => {
     expect(readRefundState({ transaction })).toEqual({ kind: 'unknown' });
   });
 
+  it('reads a refunded hold the caller asserts it captured as refunded', () => {
+    const transaction: Transaction = {
+      ...PAID_SALE,
+      status: 'refunded',
+      isHold: true,
+      cancelledAt: CANCELLED_AT,
+    };
+    expect(readRefundState({ transaction, isCaptured: true })).toEqual({
+      kind: 'refunded',
+      refundedAt: CANCELLED_AT,
+    });
+    expect(readRefundState({ transaction, isCaptured: false })).toEqual({ kind: 'unknown' });
+  });
+
+  it.each<[string, Transaction]>([
+    ['a captured hold without a refund time', { ...PAID_SALE, status: 'refunded', isHold: true }],
+    ['an uncaptured hold', { ...PAID_SALE, status: 'held', isHold: true }],
+  ])('never guesses on the capture assertion: %s is unknown', (_case, transaction) => {
+    expect(readRefundState({ transaction, isCaptured: true })).toEqual({ kind: 'unknown' });
+  });
+
+  it('keeps a captured hold that still reads paid not refunded', () => {
+    const transaction: Transaction = { ...PAID_SALE, isHold: true };
+    expect(readRefundState({ transaction, isCaptured: true })).toEqual({ kind: 'not_refunded' });
+  });
+
   it('decides from the one read of the transaction it validated', () => {
     let reads = 0;
     const params = {
@@ -96,6 +122,12 @@ describe('readRefundState', () => {
     ['an inherited transaction', INHERITED, 'transaction', 'required'],
     ['a null transaction', { transaction: null }, 'transaction', 'type'],
     ['a string transaction', { transaction: 'paid' }, 'transaction', 'type'],
+    [
+      'a non-boolean capture assertion',
+      { transaction: PAID_SALE, isCaptured: 'yes' },
+      'isCaptured',
+      'type',
+    ],
   ] as const)('rejects %s', async (_case, params, field, rule) => {
     // @ts-expect-error malformed JavaScript input
     await expectInputError(() => readRefundState(params), {

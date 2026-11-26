@@ -92,22 +92,22 @@ export interface PaymentsResource {
    * seconds to minutes; read it with `fiscalization.getReceipt`. Release an uncaptured hold with
    * `holds.release` instead.
    *
-   * Paylov states that saved-card and PAN payments and captured holds are refundable, but its test
-   * environment refused PAN payments and captured holds. If a refund is refused, refund from the
-   * Paylov business panel or through Paylov support, and confirm with `paylov.transactions.get`.
+   * Paylov states that saved-card and PAN payments and captured holds are refundable through this
+   * call, within a refund window Paylov agrees with each merchant. Its test environment refused PAN
+   * payments and captured holds. Past the window, refund from the Paylov business panel or through
+   * Paylov support, and confirm with `paylov.transactions.get`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `paylov.transactions.get` and pass the
-   * result to `readRefundState`; never refund again on an `unknown` state. For a sale, `refunded`
-   * means the refund took effect and `not_refunded` that it had not at the time of the read. A
-   * captured hold (`isHold` true) still reading `paid` is `not_refunded` at the time of the read;
-   * one reading `refunded` is `unknown`, because a released hold reads the same: confirm it in the
-   * Paylov business panel. A repeated refund fails with `transaction_not_available_for_cancel`.
+   * result to `readRefundState`; never refund again on an `unknown` state. `refunded` means the
+   * refund took effect and `not_refunded` that it had not at the time of the read. For a hold you
+   * captured (`isHold` true) pass `isCaptured: true`: without it a hold reading `refunded` is
+   * `unknown`, because a released hold reads the same. A repeated refund fails with
+   * `transaction_not_available_for_cancel`.
    *
-   * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded or
-   * never paid; Paylov's test environment also answers it for a PAN payment), `processing_error`
-   * (an unknown outcome; Paylov's test environment answers it for a captured hold and the
-   * transaction then still reads `paid`: refund through the Paylov business panel, not by
-   * repeating the call), `transaction_not_found`, `permission_denied`.
+   * @throws {@link PaylovApiError} `transaction_not_available_for_cancel` (already refunded, never
+   * paid, or past the refund window; Paylov's test environment also answers it for a PAN payment),
+   * `processing_error` (an unknown outcome; Paylov's test environment answers it for a captured
+   * hold, which then still reads `paid`), `transaction_not_found`, `permission_denied`.
    *
    * @example
    * const { refundedAt } = await paylov.payments.refund({ transactionId });

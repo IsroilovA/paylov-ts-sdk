@@ -5,11 +5,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `readRefundState` takes an optional `isCaptured`: `true` asserts that the caller captured the hold
+  with `holds.capture`, so a hold reading `refunded` with its refund time is `refunded` instead of
+  `unknown`. Without it, behavior is unchanged.
+
 ### Changed
 
 - **Behavior:** `splits.resendReceipt` accepts recipients without `items`, as Paylov's split example
   sends; at least one recipient must carry items, else `sdk_invalid_input` before sending. Each item
   still needs exactly one of `tin` or `pinfl`.
+- `payments.refund` JSDoc and the payments, holds, transactions and errors usage guides describe
+  captured holds as refundable through the API, per Paylov, and settle their refund with
+  `readRefundState({ transaction, isCaptured: true })` instead of the business panel.
 
 ### Changed (breaking)
 

@@ -109,8 +109,8 @@ the replay after the gateway rejected the token, which it does before running th
 - A read that throws `transaction_not_found` (or `split_not_found` for a split), or still shows
   `created`, is not proof that the call did not run: read again with backoff before repeating.
 - After `payments.refund`, settle the read with `readRefundState`. A hold reads `refunded` after a
-  release too, so a captured hold reading `refunded` is `unknown`: confirm its refund in the Paylov
-  business panel.
+  release too, so for a hold you captured pass `isCaptured: true`; without it a hold reading
+  `refunded` is `unknown`.
 - After `payments.pay`, keep reading while the status is `transfer`, `pending` or `held`; `failed`
   needs a new transaction. A status that stays `created` across those reads means, by the SDK's
   assumption, that the pay did not take effect (Paylov does not document it): pay again with the
@@ -121,7 +121,7 @@ the replay after the gateway rejected the token, which it does before running th
 | Method                                        | Read next                                                                                                                            | Code on a repeated call                                                                                                                                     |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `payments.pay`                                | `transactions.get`                                                                                                                   | `transaction_already_payed`: already paid                                                                                                                   |
-| `payments.refund`                             | `transactions.get` through `readRefundState`: `refunded` for a sale                                                                  | `transaction_not_available_for_cancel`: already cancelled, never paid, or not refundable by API                                                             |
+| `payments.refund`                             | `transactions.get` through `readRefundState`: `refunded` for a sale, or a hold passed with `isCaptured: true`                        | `transaction_not_available_for_cancel`: already cancelled, never paid, or not refundable by API                                                             |
 | `payments.confirmPanPayment`                  | `transactions.get`                                                                                                                   | `otp_expired`: the first confirm may have succeeded                                                                                                         |
 | `holds.create`                                | `holds.get({ externalId })` ([holds.md](holds.md#recovery))                                                                          | `external_id_already_exists`: a record exists, possibly released or declined                                                                                |
 | `holds.capture`                               | `holds.get`: `captured`, and `amountTiyin` is the captured amount                                                                    | `transaction_not_available_for_payment`: already captured or released; `hold_time_expired`: the hold ran out                                                |

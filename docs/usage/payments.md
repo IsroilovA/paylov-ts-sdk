@@ -59,10 +59,9 @@ await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, 
 - Always the full amount. For a fiscalized payment Paylov registers the refund receipt within
   seconds to minutes ([fiscalization.md](fiscalization.md#refund-receipts)). The transaction then
   reads `refunded` and drops out of `transactions.list`.
-- Paylov states that saved-card and PAN payments and captured holds are all refundable through the
-  API, but its test environment refused PAN payments and captured holds. If a refund is refused,
-  refund from the Paylov business panel or through Paylov support, and confirm with
-  `transactions.get`. Before capture, release a hold instead.
+- Saved-card and PAN payments and captured holds are all refundable through `payments.refund`, per
+  Paylov. Its test environment refused PAN payments, and answered `processing_error` for captured
+  holds, which then still read `paid`. Before capture, release a hold instead.
 - Refund within your merchant's refund window: Paylov agrees it with each merchant. Its test
   environment refused saved-card payments about 11 days old with
   `transaction_not_available_for_cancel`, leaving them `paid`. Past the window, use the business
@@ -72,5 +71,6 @@ await paylov.payments.confirmPanPayment({ transactionId: started.transactionId, 
 After an ambiguous failure of `pay`, `confirmPanPayment` or `refund`, follow
 [errors.md](errors.md#recovery-after-an-ambiguous-failure). Settle a refund with `readRefundState`
 ([transactions.md](transactions.md#refund-state)), never with the status alone: a released hold also
-reads `refunded`. For a captured hold, `readRefundState` gives `not_refunded` while it still reads
-`paid` and `unknown` once it reads `refunded`; confirm that refund in the Paylov business panel.
+reads `refunded`. For a hold you captured, pass `isCaptured: true`: `readRefundState` then gives
+`not_refunded` while it still reads `paid` and `refunded` once it reads `refunded` with a refund
+time. Without it, a hold reading `refunded` is `unknown`.
