@@ -130,3 +130,12 @@ export async function respondWith(
   if (answer.kind === 'hang') return await neverAnswered(signal);
   return jsonResponse(answer.httpStatus, answer.body, answer.retryAfter);
 }
+
+/** Not a gateway or SDK code, so a state the simulation does not cover never reads as Paylov's. */
+export const UNSIMULATED_CODE = 'fake_unsimulated';
+
+/** The answer to a state the simulation does not cover; the message never carries a value. */
+export function unsimulatedAnswer(label: string, reason: string): Answer {
+  const message = `the simulation does not cover ${label}: ${reason}`;
+  return respond(FAKE_FAILURE_STATUS, errorBody({ code: UNSIMULATED_CODE, message }));
+}

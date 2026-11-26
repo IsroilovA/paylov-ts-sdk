@@ -83,6 +83,10 @@ export class Params {
     return value === undefined ? undefined : this.#checkInteger(key, value, range);
   }
 
+  boolean(key: string): boolean {
+    return this.#checkBoolean(key, this.#required(key));
+  }
+
   optionalBoolean(key: string): boolean | undefined {
     const value = this.#read(key);
     return value === undefined ? undefined : this.#checkBoolean(key, value);
@@ -142,6 +146,10 @@ export class Params {
   optionalRecord(key: string): Readonly<Record<string, unknown>> | undefined {
     const value = this.#read(key);
     return value === undefined ? undefined : this.#checkRecord(key, value);
+  }
+
+  object<T>(key: string, read: (params: Params) => T): T {
+    return read(this.#child(key, this.#required(key)));
   }
 
   optionalObject<T>(key: string, read: (params: Params) => T): T | undefined {

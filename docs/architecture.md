@@ -18,6 +18,14 @@ Consequential decisions and the rationale that prevents a wrong fix.
   the simulation. It records each request decoded back into the method's own params, so tests assert
   sent values in SDK units without wire names; it never keeps passwords and never puts requests in
   errors.
+- The `/testing` gateway simulator serves that simulation over HTTP for development environments
+  where several processes share one gateway, from the same simulator tables as the fake, so a method
+  is simulated in both or in neither. `baseUrl` stays `https`-only, also for the simulator: it
+  serves TLS with a supplied certificate or sits behind a TLS-terminating proxy, because a cleartext
+  escape hatch would ship in production code and could send credentials in the clear. It saves its
+  state before each response, so a client never acts on a change a restart loses, and names a
+  PAN-bound card by its masked number, so the state file holds no card data that card reads do not
+  return.
 - Consumer guides ship with the package, so integrators work from types, JSDoc and usage guides
   without the internal Paylov reference.
 

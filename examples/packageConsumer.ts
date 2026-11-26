@@ -8,7 +8,7 @@ import {
   sumToTiyin,
   type FetchLike,
 } from '../src/index.js';
-import { PaylovFakeGateway, createWebhookRequest } from '../src/testing.js';
+import { PaylovFakeGateway, createWebhookRequest, startGatewaySimulator } from '../src/testing.js';
 
 function check(condition: boolean, failure: string): void {
   if (!condition) throw new Error(failure);
@@ -87,6 +87,10 @@ const declined = await rejectionOf(() =>
 check(isPaylovError(declined) && declined.code === 'insufficient_funds', 'testing entry failed');
 await faked.close();
 fake.assertDone();
+
+const simulator = await startGatewaySimulator();
+check(simulator.url.startsWith('http://127.0.0.1:'), 'testing simulator failed');
+await simulator.close();
 
 const scripted = receiver.receive(createWebhookRequest(event, { login, password }));
 check(scripted.kind === 'transaction.cancel', 'testing webhook request failed');

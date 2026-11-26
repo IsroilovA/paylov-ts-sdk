@@ -18,7 +18,8 @@ Unofficial server-side TypeScript SDK for the [Paylov](https://paylov.uz) paymen
 - Integer tiyin money, typed errors with recovery guidance for ambiguous failures, GET-only retries,
   and metadata-only logging that never records credentials or card data.
 - A `@isroilov_an/paylov/testing` entry point with an in-memory gateway for application tests,
-  scripted per call or simulating the gateway state Paylov has shown.
+  scripted per call or simulating the gateway state Paylov has shown, and a persistent gateway
+  simulator server that development environments reach through `baseUrl`.
 
 ## Install
 
@@ -66,7 +67,8 @@ The guides ship in the package under `docs/usage/`. Method contracts are in the 
 - [Setup](docs/usage/setup.md): requirements, hosts, client lifecycle and a sandbox check.
 - [Errors](docs/usage/errors.md): branching on failures and recovery after an ambiguous one.
 - [Webhooks](docs/usage/webhooks.md): receiving and acknowledging Paylov callbacks.
-- [Testing](docs/usage/testing.md): the in-memory gateway and webhook requests.
+- [Testing](docs/usage/testing.md): the in-memory gateway, the gateway simulator and webhook
+  requests.
 - [Examples](https://github.com/IsroilovA/paylov-ts-sdk/tree/main/examples): runnable
   package-consumer and hold-capture flows.
 

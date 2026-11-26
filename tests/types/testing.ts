@@ -17,7 +17,12 @@ import type {
 } from '../../src/index.js';
 import {
   createWebhookRequest,
+  PAYLOV_FAKE_OTP,
   PaylovFakeGateway,
+  startGatewaySimulator,
+  type PaylovFakePanCard,
+  type PaylovSimulator,
+  type PaylovSimulatorStore,
   type PaylovFakeCardOptions,
   type PaylovFakeMethod,
   type PaylovFakeSurface,
@@ -142,6 +147,38 @@ fake.token.fail('rate_limit_exceeded', { retryAfterSeconds: 48 }, { persist: tru
 fake.token.fail('invalid_grant', { grant: 'client_credentials' });
 const grants: readonly ('password' | 'refresh_token')[] = fake.token.requests;
 void grants;
+
+const panCard: PaylovFakePanCard = {
+  cardNumber: 'PAN-FROM-SECURE-INPUT',
+  cardExpiry: '9912',
+  otp: PAYLOV_FAKE_OTP,
+  details: { vendor: 'Humo', bankName: null },
+};
+refundingFake.addPanCard(panCard);
+// @ts-expect-error a PAN card's spending allowance is integer tiyin
+refundingFake.addPanCard({ ...panCard, spendableTiyin: '100000' });
+// @ts-expect-error the card id comes from the binding, never from the PAN card
+refundingFake.addPanCard({ ...panCard, details: { cardId: 'c' } });
+const delayingFake = new PaylovFakeGateway({ simulate: true, refundReceiptDelaySeconds: 15 });
+void delayingFake;
+
+const store: PaylovSimulatorStore = {
+  load: () => Promise.resolve(undefined),
+  save: () => Promise.resolve(),
+};
+const simulator: Promise<PaylovSimulator> = startGatewaySimulator({
+  port: 4010,
+  store,
+  panCards: [panCard],
+  onProblem: (problem: string) => void problem,
+});
+// @ts-expect-error the certificate and key are PEM text
+void startGatewaySimulator({ tls: { cert: 1, key: 'KEY' } });
+declare const running: PaylovSimulator;
+// @ts-expect-error a simulator has no scripts; script calls on PaylovFakeGateway
+void running.payments;
+const simulatorUrl: Promise<string> = simulator.then(({ url }) => url);
+void simulatorUrl;
 
 const request: WebhookInput = createWebhookRequest(
   {

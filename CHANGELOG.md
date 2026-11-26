@@ -5,6 +5,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `/testing`: `startGatewaySimulator(options)` serves the gateway simulation over HTTP, so several
+  processes reach one simulated gateway through `baseUrl`. It persists its state to `stateFile` or a
+  `PaylovSimulatorStore` after every change, never storing a full card number or an OTP, serves
+  HTTPS with a supplied `tls` certificate or plain HTTP behind a TLS-terminating proxy, takes a
+  controllable `now`, and reports every unsimulated request through `onProblem`. The SDK's
+  `https`-only `baseUrl` rule is unchanged.
+- `/testing`: the simulation binds cards by PAN. `fake.addPanCard(card)` (or the simulator's
+  `panCards`) makes a card known; `cards.startPanBinding` and `cards.confirmPanBinding` bind it with
+  `PAYLOV_FAKE_OTP` or the card's `otp`, answering the OTP, expiry, phone and PINFL refusals
+  Paylov's test environment shows.
+- `/testing`: the simulation registers fiscal receipts: `fiscalization.registerReceipt`,
+  `getReceipt` and `refundReceipt` for paid payments and captured holds (for the captured amount;
+  items for the held amount answer `invalid_amount`), with `ofd_check_already_generated` on a
+  repeat, the receipts in `transactions.get`, and the refund receipt a `payments.refund` registers
+  `refundReceiptDelaySeconds` later.
+
 ### Changed
 
 - `cards.delete` JSDoc and the holds usage guide state that deleting a card does not release its

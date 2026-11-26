@@ -14,13 +14,9 @@ import {
   type IoMethodOf,
   type PaylovFakeMethod,
   type PaylovFakeSurface,
-  type ReplyOf,
   type RequestMatcher,
-  type RequestOf,
 } from '../core/fake.js';
 import { isTiyin } from '../core/money.js';
-import { isNonNegativeSafeInteger } from '../core/numbers.js';
-import { isClock, systemClock } from '../core/time.js';
 import type { Endpoint, FetchLike } from '../core/types.js';
 import { FISCALIZATION_FAKES } from '../fiscalization/fake.js';
 import type { FiscalizationResource } from '../fiscalization/resource.js';
@@ -46,23 +42,32 @@ import {
   isRetryableAnswer,
   jsonResponse,
   methodFailureAnswer,
-  respond,
   respondWith,
   successAnswer,
+  unsimulatedAnswer,
   type Answer,
 } from './answers.js';
+import { readPanCard, type PaylovFakePanCard } from './panCards.js';
 import { isRouteOf, parseBody, requestFor } from './requests.js';
 import { GatewaySimulation, type SimulatedOutcome } from './simulation.js';
+import {
+  CARD_SIMULATORS,
+  FISCALIZATION_SIMULATORS,
+  HOLD_SIMULATORS,
+  PAYMENT_SIMULATORS,
+  readSimulationSettings,
+  simulatedAnswer,
+  TRANSACTION_SIMULATORS,
+  type PaylovSimulationOptions,
+  type Simulator,
+  type SimulatorTable,
+} from './simulators.js';
 import { FakeTokenEndpoint, type PaylovFakeTokenEndpoint } from './token.js';
 
 const BASE_URL = 'https://gateway.example';
 /** Not SDK or gateway codes, so a request the script cannot serve never reads as a real failure. */
 const UNSCRIPTED_CODE = 'fake_unscripted';
 const UNREADABLE_CODE = 'fake_unreadable_request';
-const UNSIMULATED_CODE = 'fake_unsimulated';
-
-/** Answers the params of one request from the simulation's state. */
-type Simulator<T, P> = (simulation: GatewaySimulation, params: P) => SimulatedOutcome<T>;
 
 /** A request the fake received, before any route read it. */
 interface ReceivedRequest {
@@ -97,25 +102,14 @@ type ReadOutcome =
     };
 
 /** Options of `PaylovFakeGateway`. */
-export interface PaylovFakeGatewayOptions {
+export interface PaylovFakeGatewayOptions extends PaylovSimulationOptions {
   /**
-   * Keep bound cards, payments, transactions and holds in memory, and answer requests that no
-   * scripted answer takes from that state. Default `false`: every request must be scripted.
+   * Keep bound cards, PAN bindings, payments, transactions, holds and fiscal receipts in memory,
+   * and answer requests that no scripted answer takes from that state. Default `false`: every
+   * request must be scripted, and `refundWindowMinutes` and `refundReceiptDelaySeconds` are
+   * refused.
    */
   readonly simulate?: boolean;
-  /**
-   * The clock of the simulation, also set as `clientConfig.now` so hold deadlines use it.
-   * Defaults to the system clock.
-   */
-  readonly now?: () => Date;
-  /**
-   * How long after a saved-card payment the simulation refunds it, in whole minutes, measured
-   * between the whole-second times the gateway reports; a later refund answers
-   * `transaction_not_available_for_cancel` and the payment stays paid. Paylov agrees the refund
-   * cut-off with each merchant, so set yours; unset, every refund of a paid payment answers
-   * `fake_unsimulated`. A non-negative safe integer; needs `simulate: true`.
-   */
-  readonly refundWindowMinutes?: number;
 }
 
 /** What `addCard` assumes about a card beyond what `cards.get` reports. */
@@ -128,17 +122,6 @@ export interface PaylovFakeCardOptions {
    * integer.
    */
   readonly spendableTiyin?: number;
-}
-
-/** The simulation clock, failing loudly on a value the wire cannot carry. */
-function checkedClock(now: () => Date): () => Date {
-  return () => {
-    const date: unknown = now();
-    if (!(date instanceof Date) || !Number.isFinite(date.getTime())) {
-      throw new TypeError('PaylovFakeGateway: now() must return a valid Date');
-    }
-    return date;
-  };
 }
 
 /** A request the SDK sends after a retryable answer to the same GET is likely its retry. */
@@ -212,19 +195,16 @@ export class PaylovFakeGateway {
   #lastServed: ServedRequest | undefined;
 
   constructor(options: PaylovFakeGatewayOptions = {}) {
-    const { simulate = false, now, refundWindowMinutes } = options;
+    const { simulate = false, now } = options;
     if (typeof simulate !== 'boolean') throw new TypeError('simulate must be a boolean');
-    if (now !== undefined && !isClock(now)) throw new TypeError('now must be a function');
-    if (refundWindowMinutes !== undefined && !isNonNegativeSafeInteger(refundWindowMinutes)) {
-      throw new TypeError('refundWindowMinutes must be a non-negative safe integer');
+    const settings = readSimulationSettings(options, 'PaylovFakeGateway');
+    for (const name of ['refundWindowMinutes', 'refundReceiptDelaySeconds'] as const) {
+      if (settings[name] !== undefined && !simulate) {
+        throw new TypeError(`${name} needs simulate: true`);
+      }
     }
-    if (refundWindowMinutes !== undefined && !simulate) {
-      throw new TypeError('refundWindowMinutes needs simulate: true');
-    }
-    const clock = checkedClock(now ?? systemClock);
-    this.#simulation = simulate
-      ? new GatewaySimulation({ now: clock, refundWindowMinutes })
-      : undefined;
+    const clock = settings.now;
+    this.#simulation = simulate ? new GatewaySimulation(settings) : undefined;
     this.token = this.#token;
 
     // Each surface lists its methods once; the spec, label and simulator follow from the key.
@@ -233,35 +213,35 @@ export class PaylovFakeGateway {
       getStatus: gateway('getStatus'),
       listBanks: gateway('listBanks'),
     };
-    const cards = this.#surface('cards', CARD_FAKES);
+    const cards = this.#surface('cards', CARD_FAKES, CARD_SIMULATORS);
     this.cards = {
       startPanBinding: cards('startPanBinding'),
       confirmPanBinding: cards('confirmPanBinding'),
-      get: cards('get', (simulation, params) => simulation.getCard(params)),
-      list: cards('list', (simulation, params) => simulation.listCards(params)),
-      delete: cards('delete', (simulation, params) => simulation.deleteCard(params)),
+      get: cards('get'),
+      list: cards('list'),
+      delete: cards('delete'),
       checkPhone: cards('checkPhone'),
     };
-    const payments = this.#surface('payments', PAYMENT_FAKES);
+    const payments = this.#surface('payments', PAYMENT_FAKES, PAYMENT_SIMULATORS);
     this.payments = {
-      create: payments('create', (simulation, params) => simulation.createPayment(params)),
-      pay: payments('pay', (simulation, params) => simulation.pay(params)),
-      refund: payments('refund', (simulation, params) => simulation.refund(params)),
+      create: payments('create'),
+      pay: payments('pay'),
+      refund: payments('refund'),
       startPanPayment: payments('startPanPayment'),
       confirmPanPayment: payments('confirmPanPayment'),
     };
-    const transactions = this.#surface('transactions', TRANSACTION_FAKES);
+    const transactions = this.#surface('transactions', TRANSACTION_FAKES, TRANSACTION_SIMULATORS);
     this.transactions = {
-      get: transactions('get', (simulation, params) => simulation.getTransaction(params)),
-      list: transactions('list', (simulation, params) => simulation.listTransactions(params)),
+      get: transactions('get'),
+      list: transactions('list'),
       getRrn: transactions('getRrn'),
     };
-    const holds = this.#surface('holds', HOLD_FAKES);
+    const holds = this.#surface('holds', HOLD_FAKES, HOLD_SIMULATORS);
     this.holds = {
-      create: holds('create', (simulation, params) => simulation.createHold(params)),
-      capture: holds('capture', (simulation, params) => simulation.capture(params)),
-      release: holds('release', (simulation, params) => simulation.release(params)),
-      get: holds('get', (simulation, params) => simulation.getHold(params)),
+      create: holds('create'),
+      capture: holds('capture'),
+      release: holds('release'),
+      get: holds('get'),
     };
     const splits = this.#surface('splits', SPLIT_FAKES);
     this.splits = {
@@ -269,7 +249,11 @@ export class PaylovFakeGateway {
       resendReceipt: splits('resendReceipt'),
       get: splits('get'),
     };
-    const fiscalization = this.#surface('fiscalization', FISCALIZATION_FAKES);
+    const fiscalization = this.#surface(
+      'fiscalization',
+      FISCALIZATION_FAKES,
+      FISCALIZATION_SIMULATORS,
+    );
     this.fiscalization = {
       registerReceipt: fiscalization('registerReceipt'),
       getReceipt: fiscalization('getReceipt'),
@@ -324,6 +308,25 @@ export class PaylovFakeGateway {
   }
 
   /**
+   * Lets the simulated processing center know a card, so `cards.startPanBinding` with its number
+   * and expiry and `cards.confirmPanBinding` with its OTP (default {@link PAYLOV_FAKE_OTP}) bind
+   * it; payments and holds then approve up to its `spendableTiyin` in total. Throws `TypeError`
+   * without `simulate: true`, for an invalid card, or for a card whose masked number another card
+   * already has.
+   *
+   * @example
+   * fake.addPanCard({ cardNumber: testCardNumber, cardExpiry: '3012', phoneNumber: testPhone });
+   */
+  addPanCard(card: PaylovFakePanCard): void {
+    if (this.#simulation === undefined) {
+      throw new TypeError(
+        'PaylovFakeGateway: addPanCard() needs new PaylovFakeGateway({ simulate: true })',
+      );
+    }
+    this.#simulation.addPanCard(readPanCard(card));
+  }
+
+  /**
    * Throws when a request arrived unscripted or unreadable, the simulation met a state it does
    * not simulate, or a scripted answer (token answers included) was never served.
    *
@@ -340,12 +343,13 @@ export class PaylovFakeGateway {
   }
 
   /** Scripts the methods of `namespace` from its spec table, one key at a time. */
-  #surface<R, Replies>(namespace: string, table: FakeSpecTable<R, Replies>) {
-    return <K extends IoMethodOf<R> & string>(
-      method: K,
-      simulate?: Simulator<ReplyOf<R, K, Replies>, RequestOf<R[K]>>,
-    ): PaylovFakeSurface<R, Replies>[K] =>
-      this.#script(`${namespace}.${method}`, table[method], simulate);
+  #surface<R, Replies>(
+    namespace: string,
+    table: FakeSpecTable<R, Replies>,
+    simulators: SimulatorTable<R, Replies> = {},
+  ) {
+    return <K extends IoMethodOf<R> & string>(method: K): PaylovFakeSurface<R, Replies>[K] =>
+      this.#script(`${namespace}.${method}`, table[method], simulators[method]);
   }
 
   #script<T, P>(
@@ -459,15 +463,15 @@ export class PaylovFakeGateway {
     spec: FakeMethodSpec<T, unknown>,
     outcome: SimulatedOutcome<T>,
   ): Answer {
-    if (outcome.kind === 'result') return successAnswer(spec, outcome.value);
-    if (outcome.kind === 'error') return methodFailureAnswer(spec, outcome.code, outcome.failure);
-    return this.#unsimulated(label, outcome.reason);
+    const simulated = simulatedAnswer(spec, outcome);
+    return simulated.kind === 'answer'
+      ? simulated.answer
+      : this.#unsimulated(label, simulated.reason);
   }
 
   #unsimulated(label: string, reason: string): Answer {
     this.#unserved.push(`unsimulated ${label}: ${reason}; script this call`);
-    const message = `the simulation does not cover ${label}: ${reason}`;
-    return respond(FAKE_FAILURE_STATUS, errorBody({ code: UNSIMULATED_CODE, message }));
+    return unsimulatedAnswer(label, reason);
   }
 
   #answerUnreadable(endpoint: string, route: MethodRoute | undefined): Response {

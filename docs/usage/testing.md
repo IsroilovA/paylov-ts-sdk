@@ -1,10 +1,13 @@
 # Testing
 
-Two doubles, imported only from tests:
+Two doubles, imported only from tests, and a simulator for development environments:
 
 - A narrow interface you fake yourself, for business logic that only needs results.
 - `PaylovFakeGateway` from `@isroilov_an/paylov/testing`, for code that meets SDK behavior: errors,
   `isPaylovOutcomeUnknown`, retries, timeouts, the token lifecycle and logger events.
+- `startGatewaySimulator` from `@isroilov_an/paylov/testing`, a persistent simulated gateway that
+  several processes reach over HTTPS through `baseUrl`
+  ([Run a gateway simulator](#run-a-gateway-simulator)).
 
 ## Stub the client
 
@@ -128,8 +131,9 @@ to 400. An unserved token answer fails `assertDone()`.
 
 ## Simulate gateway state
 
-`new PaylovFakeGateway({ simulate: true })` keeps cards, payments, transactions and holds in memory
-and answers unscripted calls from that state, so a test can run a whole flow:
+`new PaylovFakeGateway({ simulate: true })` keeps cards, PAN bindings, payments, transactions, holds
+and fiscal receipts in memory and answers unscripted calls from that state, so a test can run a
+whole flow:
 
 ```ts
 import { PaylovClient } from '@isroilov_an/paylov';
@@ -150,9 +154,10 @@ await expect(
 fake.assertDone();
 ```
 
-- It covers `cards.get`, `cards.list`, `cards.delete`, `payments.create`, `payments.pay`,
-  `payments.refund`, `transactions.get`, `transactions.list` (and so `iterate`) and the four hold
-  methods. Others still need a script.
+- It covers `cards.startPanBinding`, `cards.confirmPanBinding`, `cards.get`, `cards.list`,
+  `cards.delete`, `payments.create`, `payments.pay`, `payments.refund`, `transactions.get`,
+  `transactions.list` (and so `iterate`), the four hold methods, and
+  `fiscalization.registerReceipt`, `getReceipt` and `refundReceipt`. Others still need a script.
 - It reproduces only what Paylov's test environment and documentation show: one capture per hold, a
   partial capture ends the hold and charges only the captured amount, a dismiss before expiry makes
   the held funds available to the card again, an expired hold still reads `held`, capture after
@@ -205,6 +210,89 @@ fake.assertDone();
   script the `holds.get` and `transactions.get` that follow too.
 - Generated ids are `00000000-0000-4000-a000-…`; times are whole seconds from `now`. An id that only
   a scripted reply returned is unknown to the simulation.
+
+### PAN binding
+
+`fake.addPanCard({ cardNumber, cardExpiry })` makes a card known to the simulated processing center;
+`cards.startPanBinding` and `cards.confirmPanBinding` then bind it with the OTP `PAYLOV_FAKE_OTP`
+(`'111111'`, or the card's own `otp`), and pays and holds approve up to its `spendableTiyin`
+(default 1 000 000 000 SUM) in total. Use test card numbers with a valid Luhn digit; no two cards
+may share their first six and last four digits.
+
+- Answered as Paylov's test environment does: an expiry that is not `YYMM` (`validation_error` on
+  `expireDate`), a bad Luhn digit (`card_not_found`, HTTP 404), another expiry (`card_not_match`),
+  another `phoneNumber` than the card's (`phone_not_match`), a card already bound to the user
+  (`card_exists`), a repeat while the OTP is valid (`otp_code_already_sent`) and a new OTP under the
+  same `cardId` after it expired, a wrong code (`invalid_otp`, up to three, the OTP staying usable),
+  another `pinfl` than the card's (`pinfl_not_match`), the OTP after 91.6 seconds (`otp_expired`), a
+  second confirm (`card_is_already_activated`, HTTP 404) and an unknown `cardId` (`card_not_found`,
+  HTTP 404). The same card binds under another user, and again after a delete, with a new `cardId`.
+- Unsimulated: a card number it was not given or under 16 characters, the OTP between 89.6 and 91.6
+  seconds, a repeat between 80.6 and 96.6 seconds or after a wrong code, the 4th wrong code (Paylov
+  blocks the card for minutes), a phone or PINFL for a card given without one, two wrong values at
+  once, and reads or deletes of an unconfirmed binding.
+
+### Fiscal receipts
+
+The simulated merchant registers its own receipts. `registerReceipt` registers a paid payment or a
+captured hold whose items total its amount (for a hold, the captured amount), as
+`(priceTiyin - discountTiyin) * count`; the receipt carries the payment time and appears in
+`getReceipt` and in the transaction's `fiscalReceipts`. It does not check items against the OFD
+catalogue.
+
+- Answered as Paylov does: a second register (`ofd_check_already_generated`), items for the held
+  amount of a partly captured hold (`invalid_amount`), no receipt (`null`) for a paid transaction,
+  an unknown transaction (`transaction_not_found`), and a `refundReceipt` of an unknown receipt
+  (`ofd_check_not_found`), of a sale not refunded (`receipt_not_available_for_operation`) or after
+  the refund receipt shows (`ofd_check_already_generated`).
+- `payments.refund` of a fiscalized payment registers its refund receipt, carrying the refund time,
+  `refundReceiptDelaySeconds` later: until then `getReceipt({ isRefund: true })` answers `null`.
+  Without the option, reads of that payment's refund receipt and `transactions.get` are unsimulated.
+- Unsimulated: other items that do not total the amount (Paylov answers `invalid_amount` by a rule
+  it does not document), a register of an unpaid or refunded transaction, and `refundReceipt` of a
+  captured hold or before the refund receipt shows. `checkActivityType` needs a script.
+
+## Run a gateway simulator
+
+`startGatewaySimulator(options)` serves the simulation over HTTP, so an API and its workers share
+one state, kept in `stateFile` across restarts. It answers what the simulated fake answers
+unscripted; token requests succeed for any credentials. Run it only in development and test
+environments:
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { startGatewaySimulator } from '@isroilov_an/paylov/testing';
+
+const simulator = await startGatewaySimulator({
+  port: 4010,
+  host: 'localhost',
+  tls: { cert: await readFile(certFile, 'utf8'), key: await readFile(keyFile, 'utf8') },
+  stateFile: '.paylov-simulator.json',
+  refundWindowMinutes: 24 * 60,
+  refundReceiptDelaySeconds: 15,
+  panCards: [{ cardNumber: testCardNumber, cardExpiry: testCardExpiry }],
+  onProblem: (problem) => console.warn(`paylov simulator: ${problem}`),
+});
+```
+
+Each process then builds its client with `baseUrl: 'https://localhost:4010'` and its usual named
+credential variables. The SDK accepts only an `https` `baseUrl`, so the simulator either serves TLS
+itself or sits behind a TLS-terminating proxy:
+
+- With `tls`, pass a certificate for the host in `baseUrl`, such as one `mkcert localhost` issues,
+  and start each client process with `NODE_EXTRA_CA_CERTS` naming the issuing CA.
+- Without `tls` it serves plain HTTP on `host` and `port`; put a proxy that terminates TLS in front
+  of it and point `baseUrl` at the proxy.
+
+- The state file holds bound cards, transactions, holds and receipts, never a full card number or an
+  OTP. Every change is saved before its response is sent; a failed save answers
+  `fake_state_not_saved` (HTTP 501), an unknown outcome for a write. The PAN cards come from
+  `panCards` at every start.
+- `now` defaults to the system clock; pass a controllable clock in tests. Holds expire by it, so a
+  stopped simulator does not stop their clocks.
+- What it does not simulate answers `fake_unsimulated` (HTTP 501). The SDK withholds the gateway's
+  message, so read the reason from `onProblem`.
+- `store` replaces `stateFile` with your own `load` and `save` of one JSON text.
 
 ## Logger events
 

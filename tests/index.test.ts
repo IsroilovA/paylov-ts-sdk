@@ -28,6 +28,11 @@ describe('package entry points', () => {
   });
 
   it('exports exactly the supported testing surface', () => {
-    expect(Object.keys(testing).toSorted()).toEqual(['PaylovFakeGateway', 'createWebhookRequest']);
+    expect(Object.keys(testing).toSorted()).toEqual([
+      'PAYLOV_FAKE_OTP',
+      'PaylovFakeGateway',
+      'createWebhookRequest',
+      'startGatewaySimulator',
+    ]);
   });
 });
