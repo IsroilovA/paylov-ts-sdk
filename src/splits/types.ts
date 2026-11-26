@@ -21,9 +21,11 @@ export interface SplitRecipient {
   /** Integer tiyin. */
   readonly amountTiyin: number;
   /**
-   * Receipt lines for this recipient's share. Paylov registers them with the OFD in the background,
-   * seconds after the split; `splits.get` reports the result as `receipt`. Each item needs exactly
-   * one of `tin` or `pinfl`; the SDK rejects any other item as `sdk_invalid_input`.
+   * Receipt lines carried on this recipient's share. Paylov registers one receipt for the whole
+   * transaction with the OFD in the background, seconds after the split; `splits.get` reports it as
+   * `receipt`. The items of all recipients must total the transaction amount, not this share's
+   * amount: one recipient may carry every line. Each item needs exactly one of `tin` or `pinfl`; the
+   * SDK rejects any other item as `sdk_invalid_input`.
    */
   readonly items?: readonly FiscalReceiptItem[];
 }

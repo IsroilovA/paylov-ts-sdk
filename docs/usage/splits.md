@@ -24,7 +24,7 @@ const split = await paylov.splits.get({ transactionId });
 
 - Splitting moves money to the recipients; the recipient amounts must add up to the transaction
   amount (`invalid_amount` otherwise), and the transaction must be paid
-  (`receipt_not_available_for_split` otherwise). Item prices need not match a recipient's amount.
+  (`receipt_not_available_for_split` otherwise).
 - Read the split back with the paid transaction's id. `splits.get` throws `split_not_found` for a
   transaction without a split and `transaction_not_found` for an unknown one. Right after an
   ambiguous `splits.create`, `split_not_found` proves nothing: read again after a backoff before
@@ -38,10 +38,13 @@ const split = await paylov.splits.get({ transactionId });
 ## Fiscal receipts
 
 - A recipient's `items` ([fiscalization.md](fiscalization.md)) are registered with the OFD in the
-  background. Each item needs exactly one of `tin` or `pinfl`; the SDK rejects an item with neither
-  or both as `sdk_invalid_input` before sending, in `splits.create` and `splits.resendReceipt`. An
-  item whose `tin` or `pinfl` has no active OFD contract fails `splits.create` with
-  `ofd_commitent_or_subcommission_not_active`.
+  background, as one receipt for the whole transaction. The items of all recipients must total the
+  transaction amount, not each share: one recipient may carry every line, beside recipients without
+  items. In Paylov's test environment, items totalling only their share's amount were never
+  registered, and `splits.create` still succeeded. Each item needs exactly one of `tin` or `pinfl`;
+  the SDK rejects an item with neither or both as `sdk_invalid_input` before sending, in
+  `splits.create` and `splits.resendReceipt`. An item whose `tin` or `pinfl` has no active OFD
+  contract fails `splits.create` with `ofd_commitent_or_subcommission_not_active`.
 - Poll `splits.get`: `receipt` turns from `null` to the sale receipt seconds after the split, and to
   the refund receipt seconds after a refund.
 - A rejected item leaves `receipt` `null` and reports nothing. Resubmit corrected items with

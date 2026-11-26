@@ -59,8 +59,19 @@ The item object is the OFD register item: the validator requires the same six fi
 alone (D). Unlike [register](fiscalization.md#item-object), the split validator accepts an item
 without `tin` and `pinfl`; the create then fails with `ofd_comitent_not_provided` (W c1739). An item
 with `tin` `123654987` registered (W c1777, c1780). The create does not compare items with the
-share: one item of `price` 50000 for a share of 100000 split successfully; its registration outcome
-was not observed, because the payment was refunded at once (W c1759, c1760).
+share: one item of `price` 50000 for a share of 100000 split successfully, and so did one of `price`
+100000 for a share of 50000 (W c1759, c1760, c1956).
+
+The split has one receipt for the whole parent transaction, so registration compares the items of
+all recipients with the transaction amount, not with each share. Of a 100000 transaction split into
+two shares of 50000, one with items and one without:
+
+- Items totalling 50000 on the share with items failed registration; the next resend's
+  `lastOfdError` read
+  `failed to validate receipt math: difference 50000 between 50000 and 100000 is larger than 10000`
+  (W c1940, c1942, c1958, c1960). The limit of 10000 in the message was not tested.
+- Items totalling 100000 on that one share registered within 5 s, the share without items beside it
+  (W c1960, c1961).
 
 ```json
 {
@@ -128,9 +139,9 @@ each (W c1764, c1765).
 - Without a split, also with items, it answers `split_not_found` and creates no split (W c1823,
   c1825).
 - Without items on any recipient it answers `field_required` with `data` `{"field": "items"}` (W
-  c1744). A recipient without items beside one with items is the documented recipient list: the
-  create example, which carries `resendOFD`, sends one of each (D). Both observed resends had a
-  single recipient, so a mixed resend was not observed (W c1744, c1806).
+  c1744). A recipient without items beside one with items is accepted, as in the create example,
+  which carries `resendOFD` (D): such resends answered `sent_to_ofd`, and one whose items totalled
+  the transaction registered (W c1942, c1958, c1960, c1961).
 - Without `resendOFD`, a create for a split transaction answers `split_already_done`, also after a
   failed registration (W c1805).
 
