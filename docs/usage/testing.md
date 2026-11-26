@@ -170,7 +170,8 @@ fake.assertDone();
   `transaction_not_available_for_cancel` and the payment stays paid, as Paylov answers once its
   per-merchant cut-off passed.
 - A deleted card stays deleted: `addCard` with its id throws `TypeError`, so bind a new card with a
-  fresh `cardId`.
+  fresh `cardId`. Its open holds still capture in full and release before they expire, as in
+  Paylov's test environment; new pays and holds with it answer `card_not_found`.
 - A state it does not simulate answers `fake_unsimulated` (HTTP 501) and fails `assertDone()`:
   script that call instead.
 - Paylov has a known answer, which the fake leaves to a script, for:
@@ -187,9 +188,9 @@ fake.assertDone();
     `invalid_amount` from a bound it does not state;
   - a hold with another user's card, a pay or hold with an inactive card, a pay by another user than
     the payment was created for, and a hold with a `serviceId`;
-  - a capture or release after the card was deleted; a capture both expired and above the held
-    amount; a capture after a hold released after it expired; a second capture after
-    `hold_time_expired`;
+  - a partial capture after the card was deleted, and a capture or release of an expired hold after
+    the card was deleted; a capture both expired and above the held amount; a capture after a hold
+    released after it expired; a second capture after `hold_time_expired`;
   - a release of an unknown or non-hold transaction, `holds.get` of a sale, a `payments.pay` of a
     hold, and a `payments.refund` of a hold that is not captured;
   - a transaction id in another UUID spelling, and a capture or `holds.get` by an id that is not a

@@ -2,8 +2,9 @@
  * Sandbox fiscalization: receipt lookups, activity-type checks for the sandbox test PINFL, and a
  * receipt registered for a paid payment, which (`PAYLOV_LIVE_REFUND=1`) is refunded right away:
  * the test environment refuses refunds a few minutes after payment. The refund registers the refund
- * receipt in the background, seconds to minutes later. The item uses a public tax-classifier code
- * with one of its package codes and the vendor docs' example TIN.
+ * receipt in the background, seconds to minutes later. A partly captured hold is fiscalized for
+ * its captured amount; the test environment refuses its refund, so it is kept minimal. The items
+ * use a public tax-classifier code with one of its package codes and the vendor docs' example TIN.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -29,6 +30,8 @@ const testCard = writes ? await uzcardTestCard() : undefined;
 const testPinfl = gate.enabled ? await sandboxTestPinfl() : undefined;
 
 const PAYMENT_TIYIN = 100_000; // 1 000 SUM
+const HOLD_TIYIN = 2_000; // 20 SUM; Paylov's test environment refuses refunds of captured holds
+const CAPTURE_TIYIN = 1_000; // 10 SUM, the smallest capture
 /** The receipt time and the transaction time are the same instant, each sent in whole seconds. */
 const SAME_INSTANT_MS = 5_000;
 /** Waits between refund-receipt reads: about 6 minutes in all, past the 3.5 minutes observed. */
@@ -182,6 +185,51 @@ describe.skipIf(!writes || testCard?.ok !== true)('fiscalization writes', () => 
       SAME_INSTANT_MS,
     );
     expectRecent('transactions.get.fiscalReceipt.issuedAt', summary?.issuedAt ?? null);
+  });
+
+  it('registerReceipt of a partly captured hold takes the captured total, not the held one', async () => {
+    if (bound === undefined) throw new Error('the fiscalization lane has no card');
+    const { userId, card: holder } = bound;
+    const { transactionId } = await client.holds.create({
+      userId,
+      cardId: holder.cardId,
+      amountTiyin: HOLD_TIYIN,
+      durationMinutes: 10,
+      externalId: externalId('fiscal-hold'),
+    });
+    cleanup.add(
+      'fiscalization.cleanup.release',
+      () => client.holds.release({ transactionId }),
+      'hold_not_found',
+    );
+    await client.holds.capture({ transactionId, amountTiyin: CAPTURE_TIYIN });
+    const item = {
+      title: 'SDK live suite item',
+      count: 1,
+      code: '10305008003000000',
+      vatPercent: 12,
+      packageCode: '1546532',
+      tin: '123654987',
+    };
+
+    const held = await refused(
+      'fiscalization.registerReceipt.held-total',
+      client.fiscalization.registerReceipt({
+        transactionId,
+        items: [{ ...item, priceTiyin: HOLD_TIYIN }],
+      }),
+    );
+    expect(held).toMatchObject({ kind: 'api', code: 'invalid_amount' });
+
+    const registered = await client.fiscalization.registerReceipt({
+      transactionId,
+      items: [{ ...item, priceTiyin: CAPTURE_TIYIN }],
+    });
+    const read = await client.fiscalization.getReceipt({ transactionId, isRefund: false });
+    observe('fiscalization.getReceipt.captured-hold', { found: read !== null });
+    expect(read?.receiptId === registered.receiptId, 'getReceipt reads the hold receipt').toBe(
+      true,
+    );
   });
 
   it.skipIf(!config.refund)(

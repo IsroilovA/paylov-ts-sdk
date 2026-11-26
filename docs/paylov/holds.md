@@ -27,9 +27,13 @@ reads `waiting`, then `payed`, or `cancel` once dismissed, before or after expir
 c1526, c1544; [transactions](transactions.md#fields-of-transactions)). A declined create still
 leaves a hold record, status `check`, and consumes its `externalId` ([create](#create)).
 
-Charge captures once, possibly partially ([charge](#charge)). Refunding a captured hold failed on
-DEV ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the
-transaction `payed` (W c561, c887, c1529, c1530).
+Charge captures once, possibly partially ([charge](#charge)). Deleting the card does not end its
+holds: after [`deleteUserCard/`](cards.md#delete-user-card) an open hold still read `hold`, charged
+and dismissed, also 30 seconds after the delete, when `getCard/` already answered `card_not_found`
+(W c1901–c1908, c1918–c1926). A captured hold is fiscalized for its captured amount
+([register](fiscalization.md#register-fiscal-receipt)). Refunding a captured hold failed on DEV
+([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the transaction
+`payed` (W c561, c887, c1529, c1530).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
 only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. The
@@ -142,6 +146,7 @@ Tashkent time (W c194, c346):
 | `amount` below 10, or missing             | `validation_error`                                                                                                                                  | W (c189, c190, c191)                                                                      |
 | Unknown transaction                       | `transaction_not_found`                                                                                                                             | W (c192)                                                                                  |
 | Not a hold, already charged, or dismissed | `transaction_not_available_for_payment`                                                                                                             | W (c193, c196, c201)                                                                      |
+| The card was deleted after create         | None: the charge succeeds, status reads `paid` and the transaction `payed`                                                                          | W (c1903–c1905, c1921–c1923)                                                              |
 | Expired hold                              | `hold_time_expired`. The hold then read `cancelled` with a new `cancelTime` and `payedAt: null`, and the transaction `refunded` ([Status](#status)) | D; W (c1276, c1277, c1280); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |
 
 ## Dismiss
@@ -172,6 +177,7 @@ Success (W c198); the response carries no time, status then carries `cancelTime`
 
 | Trigger                                                   | Code                                                                                                                                                                                                                                        | Grade                                                                          |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| The card was deleted after create                         | None: the dismiss succeeds, status reads `cancelled` and the transaction `cancel`                                                                                                                                                           | W (c1906–c1908, c1924–c1926)                                                   |
 | Already dismissed                                         | `hold_not_found`                                                                                                                                                                                                                            | W (c200)                                                                       |
 | After a full or partial charge                            | `hold_not_found`                                                                                                                                                                                                                            | W (c197)                                                                       |
 | Expired hold, after a charge answered `hold_time_expired` | `hold_not_found`; status stays `cancelled`                                                                                                                                                                                                  | W (c1276–c1279); live run 2026-11-12 ([Observed behavior](#observed-behavior)) |

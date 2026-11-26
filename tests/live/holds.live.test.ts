@@ -1,7 +1,7 @@
 /**
  * Sandbox holds: create with an `externalId`, read back by it, capture in part, release a second
- * hold, the duplicate `externalId` refusal, and (`PAYLOV_LIVE_SLOW=1`) a hold after its time runs
- * out.
+ * hold, capture and release after the card is deleted, the duplicate `externalId` refusal, and
+ * (`PAYLOV_LIVE_SLOW=1`) a hold after its time runs out.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -27,6 +27,8 @@ const testCard = writes ? await uzcardTestCard() : undefined;
 
 const HOLD_TIYIN = 100_000; // 1 000 SUM
 const CAPTURE_TIYIN = 40_000; // 400 SUM
+/** 10 SUM, the smallest hold and capture: the test environment refuses refunds of captured holds. */
+const MIN_HOLD_TIYIN = 1_000;
 const EXPIRY_WAIT_MS = 150_000;
 
 function observeHold(label: string, hold: Hold): void {
@@ -164,6 +166,53 @@ describe.skipIf(!writes || testCard?.ok !== true)('holds writes', () => {
       client.holds.release({ transactionId: created.transactionId }),
     );
     expect(again.code).toBe('hold_not_found');
+  });
+
+  it('a deleted card keeps its open holds capturable and releasable; pay is card_not_found', async () => {
+    const own = await bindTestCard(client, card, 'holds-deleted', cleanup);
+    const { userId } = own;
+    const cardId = own.card.cardId;
+    const holdOnce = async (label: string): Promise<string> => {
+      const { transactionId } = await client.holds.create({
+        userId,
+        cardId,
+        amountTiyin: MIN_HOLD_TIYIN,
+        durationMinutes: 10,
+        externalId: externalId(label),
+      });
+      cleanup.add(
+        'holds.cleanup.release',
+        () => client.holds.release({ transactionId }),
+        'hold_not_found',
+      );
+      return transactionId;
+    };
+    const toCapture = await holdOnce('deleted-capture');
+    const toRelease = await holdOnce('deleted-release');
+    const payment = await client.payments.create({
+      amountTiyin: MIN_HOLD_TIYIN,
+      account: { order_id: externalId('deleted-pay') },
+      userId,
+    });
+    await client.cards.delete({ cardId });
+
+    await client.holds.capture({ transactionId: toCapture, amountTiyin: MIN_HOLD_TIYIN });
+    const captured = await readHold(toCapture);
+    observeHold('holds.get.captured-after-delete', captured);
+    expect(captured).toMatchObject({ status: 'captured', amountTiyin: MIN_HOLD_TIYIN });
+
+    await client.holds.release({ transactionId: toRelease });
+    const released = await readHold(toRelease);
+    observeHold('holds.get.released-after-delete', released);
+    expect(released).toMatchObject({ status: 'released', capturedAt: null });
+
+    const pay = await refused(
+      'payments.pay.deleted-card',
+      client.payments.pay({ transactionId: payment.transactionId, cardId, userId }),
+    );
+    expect(pay.code).toBe('card_not_found');
+    const unpaid = await client.transactions.get({ transactionId: payment.transactionId });
+    expect(unpaid.status).toBe('created');
   });
 
   it('a create reusing an externalId is external_id_already_exists', async () => {

@@ -145,6 +145,8 @@ export interface CardsResource {
   /**
    * Unbinds a card. Moves no money. A repeated delete answers `card_not_found`, which means the
    * card is already gone. `cards.list` and `cards.get` can still return it for a short time.
+   * Deleting does not release the card's holds: Paylov's test environment still captured and
+   * released holds created before the delete, so release every hold you will not capture.
    *
    * @throws {@link PaylovApiError} `card_not_found`.
    *

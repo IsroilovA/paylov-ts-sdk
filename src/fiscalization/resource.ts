@@ -69,7 +69,8 @@ export interface FiscalizationResource {
    * Has Paylov register a fiscal receipt with the OFD for a paid card payment. Moves no money.
    * Item prices are integer tiyin. Paylov rejects items whose total does not match the transaction
    * amount; it does not state how lines total, and the SDK reads each line as
-   * `(priceTiyin - discountTiyin) * count`, the lines summing to the transaction amount.
+   * `(priceTiyin - discountTiyin) * count`, the lines summing to the transaction amount. For a
+   * captured hold that amount is the captured one, not the held one.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `getReceipt` before registering again;
    * `null` means nothing is registered yet. `ofd_check_already_generated` on a repeated call

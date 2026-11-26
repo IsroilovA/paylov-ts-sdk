@@ -186,6 +186,27 @@ describe('the simulated gateway: sales', () => {
     fake.assertDone();
   });
 
+  it('captures in full and releases open holds after their card was deleted', async () => {
+    const { fake, paylov } = simulated();
+    const toCapture = await paylov.holds.create(HOLD);
+    const toRelease = await paylov.holds.create({ ...HOLD, externalId: 'booking-2' });
+    await paylov.cards.delete({ cardId: CARD.cardId });
+
+    await paylov.holds.capture({ ...toCapture, amountTiyin: HOLD.amountTiyin });
+    expect(await paylov.holds.get(toCapture)).toMatchObject({
+      status: 'captured',
+      amountTiyin: HOLD.amountTiyin,
+    });
+    expect(await paylov.transactions.get(toCapture)).toMatchObject({ status: 'paid' });
+    await paylov.holds.release(toRelease);
+    expect(await paylov.holds.get(toRelease)).toMatchObject({ status: 'released' });
+    expect(await paylov.transactions.get(toRelease)).toMatchObject({ status: 'refunded' });
+    await expectApiError(paylov.holds.create({ ...HOLD, externalId: 'booking-3' }), {
+      code: 'card_not_found',
+    });
+    fake.assertDone();
+  });
+
   it('approves no pay or hold on a card added without a spending allowance', async () => {
     const { fake, paylov } = simulated();
     fake.addCard(REPORTED_ONLY_CARD);
@@ -669,10 +690,20 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'payments.refund',
     ],
     [
-      'a capture after the card was deleted',
+      'a partial capture after the card was deleted',
       async ({ paylov }: Simulated) => {
         const created = await paylov.holds.create(HOLD);
         await paylov.cards.delete({ cardId: CARD.cardId });
+        return paylov.holds.capture({ ...created, amountTiyin: 40_000 });
+      },
+      'holds.capture',
+    ],
+    [
+      'a capture of an expired hold after the card was deleted',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
+        await paylov.cards.delete({ cardId: CARD.cardId });
+        advance(2);
         return paylov.holds.capture({ ...created, amountTiyin: 100_000 });
       },
       'holds.capture',
@@ -895,10 +926,11 @@ describe('the simulated gateway: scripted overrides and limits', () => {
       'holds.release',
     ],
     [
-      'a release after the card was deleted',
-      async ({ paylov }: Simulated) => {
-        const created = await paylov.holds.create(HOLD);
+      'a release of an expired hold after the card was deleted',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
         await paylov.cards.delete({ cardId: CARD.cardId });
+        advance(2);
         return paylov.holds.release(created);
       },
       'holds.release',

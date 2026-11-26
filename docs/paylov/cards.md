@@ -37,8 +37,9 @@ The merchant chooses one of two paths (D):
    [OTP rules](#otp-behavior) (W c026–c029, c788, c937, c940).
 
 [Card reads](#read-and-remove) expose issuer status and balance
-([unit](README.md#amount-units-by-operation)). Deletion stops payments at once, but cached reads
-return the card for a few seconds (W c327, c328, c1074, c1084–c1088).
+([unit](README.md#amount-units-by-operation)). Deletion stops new payments and holds at once, but
+cached reads return the card for a few seconds (W c327, c328, c1074, c1084–c1088, c1909); holds
+created before the delete stay chargeable and releasable ([holds](holds.md#flow), W c1903, c1906).
 
 ## Card Bind
 
@@ -301,8 +302,9 @@ earlier list made after the delete was already empty (W c1075).
 
 Success is `{"result": true, "error": null}` (W c324); `false` was never observed. A deleted or
 unknown card returns 404 `card_not_found` (W c325); a missing or non-UUID `userCardId` is
-`validation_error` (W c329, c330). After a delete, payments with the card return `card_not_found` (W
-c327, c328). `getCard/` also returns `card_not_found` (W c326), subject to the
+`validation_error` (W c329, c330). After a delete, payments and holds with the card return
+`card_not_found` (W c327, c328, c1909, c1927), while its open holds still charge and dismiss (W
+c1903, c1906, c1921, c1924). `getCard/` also returns `card_not_found` (W c326), subject to the
 [read cache](#get-single-card). A card that was never confirmed can be deleted, also after its OTP
 expired (W c719–c721).
 

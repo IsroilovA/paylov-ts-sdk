@@ -502,12 +502,13 @@ export class GatewaySimulation {
     const hold = this.#holds.get(transactionId);
     if (hold === undefined) return error('transaction_not_available_for_payment'); // W c193
     if (hold.settlement.kind !== 'held') return captureOfSettled(hold);
-    if (!this.#cards.has(hold.cardId)) {
-      return unsimulated('holds.capture after the card was deleted');
-    }
     // `validation_error` below 10 SUM (W c189); its error data is not simulated.
     if (amountTiyin < MIN_HOLD_AMOUNT_TIYIN) return unsimulated('holds.capture below 10 SUM');
     const isExpired = this.#now().getTime() >= hold.expiresAtMs;
+    // A deleted card's open hold captured in full (W c1903, c1921); nothing else was tried.
+    if (!this.#cards.has(hold.cardId) && (isExpired || amountTiyin !== hold.heldAmountTiyin)) {
+      return unsimulated('holds.capture after the card was deleted, expired or not in full');
+    }
     if (isExpired && amountTiyin > hold.heldAmountTiyin) {
       return unsimulated('holds.capture of an expired hold above the held amount');
     }
@@ -539,11 +540,13 @@ export class GatewaySimulation {
       return unsimulated('holds.release of an unknown or non-hold transaction');
     // After a capture (W c197), a release (W c200), or an expired capture's release (W c1278).
     if (hold.settlement.kind !== 'held') return error('hold_not_found');
-    if (!this.#cards.has(hold.cardId))
-      return unsimulated('holds.release after the card was deleted');
     // Also after the duration ran out, without a capture attempt (W c198, c199, c1036, c1037). The
     // docs make the funds available after a dismiss (D), but say nothing about an expired hold.
     const isExpired = this.#now().getTime() >= hold.expiresAtMs;
+    // A deleted card's open hold released before it expired (W c1906, c1924).
+    if (!this.#cards.has(hold.cardId) && isExpired) {
+      return unsimulated('holds.release of an expired hold after the card was deleted');
+    }
     this.#giveBack(hold.cardId, hold.heldAmountTiyin, isExpired ? 'unobserved' : 'now');
     this.#writeHold({
       ...hold,

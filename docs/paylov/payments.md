@@ -133,6 +133,7 @@ On DEV the HUMO test card paid 1, 2, 5 and 20 SUM and declined 50 and 1000 SUM w
 | Unknown `transactionId`           | `transaction_not_found`                                                                                              | W (c106)                |
 | Non-UUID `transactionId`          | `validation_error` `{transactionId: ["must be a valid UUID"]}`                                                       | W (c107)                |
 | Unknown `cardId`                  | `card_not_found`                                                                                                     | W (c108)                |
+| Deleted `cardId`; stays `created` | `card_not_found`                                                                                                     | W (c1909, c1910, c1927) |
 | Card of another `userId`          | `card_is_not_for_this_check`                                                                                         | W (c109)                |
 | No `userId`                       | `field_required`, message `field_required: userId`, no `data`                                                        | W (c110)                |
 | Processing decline                | `processing_error`, or an issuer code such as `insufficient_funds`, `card_expired`, `do_not_honor`, `limit_exceeded` | W (c134, c615, c630); D |
@@ -270,19 +271,20 @@ A [split](splits.md) payment refunds the same way: the parent reads `cancel` wit
 every share reads `cancelled`, and a fiscalized split gets its refund receipt seconds later (W
 c1746–c1749, c1810–c1813).
 
-| Trigger                                                                                                                   | Code                                                           | Grade                  |
-| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------- |
-| Already cancelled (replay)                                                                                                | `transaction_not_available_for_cancel`                         | W (c112)               |
-| Not paid (`created`); the receipt stays `created`                                                                         | `transaction_not_available_for_cancel`                         | W (c114, c1272, c1273) |
-| Checkout transaction (`via_link: true`)                                                                                   | `transaction_not_available_for_cancel`                         | W (c358)               |
-| Paid PWR payment                                                                                                          | `transaction_not_available_for_cancel`                         | W (c565)               |
-| Saved-card payment about 11 days old                                                                                      | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1563, c1567)       |
-| Fiscalized saved-card payment whose register first failed with `ofd_error` three times, 1.5 and 7.5 minutes after payment | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1633, c1698)       |
-| Unfiscalized, unsplit saved-card payment 3.7 minutes after payment                                                        | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1831, c1834)       |
-| Captured hold, on DEV                                                                                                     | `processing_error`                                             | W (c559, c887)         |
-| Unknown                                                                                                                   | `transaction_not_found`                                        | W (c115)               |
-| Non-UUID                                                                                                                  | `validation_error` `{transactionId: ["must be a valid UUID"]}` | W (c116)               |
-| Not permitted for the merchant                                                                                            | `permission_denied`                                            | D                      |
+| Trigger                                                                                                                   | Code                                                           | Grade                               |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------- |
+| Already cancelled (replay)                                                                                                | `transaction_not_available_for_cancel`                         | W (c112)                            |
+| Not paid (`created`); the receipt stays `created`                                                                         | `transaction_not_available_for_cancel`                         | W (c114, c1272, c1273)              |
+| Checkout transaction (`via_link: true`)                                                                                   | `transaction_not_available_for_cancel`                         | W (c358)                            |
+| Paid PWR payment                                                                                                          | `transaction_not_available_for_cancel`                         | W (c565)                            |
+| Saved-card payment about 11 days old                                                                                      | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1563, c1567)                    |
+| Fiscalized saved-card payment whose register first failed with `ofd_error` three times, 1.5 and 7.5 minutes after payment | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1633, c1698)                    |
+| Unfiscalized, unsplit saved-card payment 3.7 minutes after payment                                                        | `transaction_not_available_for_cancel`; it stays `payed`       | W (c1831, c1834)                    |
+| Captured hold, on DEV, also fiscalized or partly captured; it stays `payed`                                               | `processing_error`                                             | W (c559, c887, c1863, c1864, c1877) |
+| Captured hold whose card was deleted before the capture, on DEV                                                           | `transaction_not_available_for_cancel`                         | W (c1911, c1929)                    |
+| Unknown                                                                                                                   | `transaction_not_found`                                        | W (c115)                            |
+| Non-UUID                                                                                                                  | `validation_error` `{transactionId: ["must be a valid UUID"]}` | W (c116)                            |
+| Not permitted for the merchant                                                                                            | `permission_denied`                                            | D                                   |
 
 ## Observed behavior
 

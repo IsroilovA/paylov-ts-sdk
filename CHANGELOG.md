@@ -3,6 +3,19 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `cards.delete` JSDoc and the holds usage guide state that deleting a card does not release its
+  holds: Paylov's test environment still captured and released holds created before the delete.
+- `fiscalization.registerReceipt` JSDoc and the fiscalization usage guide state that a captured
+  hold's items total its captured amount; items for the held amount fail with `invalid_amount`.
+- **Behavior:** `/testing`: the simulated gateway captures in full and releases an open hold after
+  its card was deleted, as Paylov's test environment does, instead of answering `fake_unsimulated`.
+  A partial capture after the delete, and a capture or release of an expired hold after it, stay
+  unsimulated.
+
 ## [0.0.5] - 2026-11-26
 
 ### Changed (breaking)

@@ -39,6 +39,8 @@ try {
   `(priceTiyin - discountTiyin) * count`; the lines must add up to the transaction amount, else
   `invalid_amount`. Paylov documents no formula or discount unit: this is the SDK's reading, and the
   SDK sends tiyin.
+- A captured hold is registered by its `transactionId` like a payment, and its items total the
+  captured amount: after a partial capture, items for the held amount fail with `invalid_amount`.
 - Paylov does not document which payments it fiscalizes itself; agree it with Paylov as part of your
   merchant setup. The SDK cannot tell whether Paylov fiscalizes automatically: read `getReceipt`
   before registering.

@@ -48,6 +48,9 @@ if (booking.visited) {
   happens to it; the SDK assumes Paylov and the card's bank release it to the cardholder, on their
   schedule.
 - **Keep the held amount yourself.** `holds.get` reports the captured amount after capture.
+- **Deleting a card does not release its holds.** In Paylov's test environment, holds created before
+  `cards.delete` still captured and released afterwards, while new payments with the card failed
+  with `card_not_found`. Release every hold you will not capture before or after deleting the card.
 - **Release before capture; refund after.** After a capture only `payments.refund` (full) remains,
   which Paylov states works for captured holds; its test environment refused them with
   `processing_error`. The SDK reports that as an unknown outcome. Pass the `transactions.get` read
