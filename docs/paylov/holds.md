@@ -31,7 +31,9 @@ Charge captures once, possibly partially ([charge](#charge)). Deleting the card 
 holds: after [`deleteUserCard/`](cards.md#delete-user-card) an open hold still read `hold`, charged
 and dismissed, also 30 seconds after the delete, when `getCard/` already answered `card_not_found`
 (W c1901–c1908, c1918–c1926). A captured hold is fiscalized for its captured amount
-([register](fiscalization.md#register-fiscal-receipt)). Refunding a captured hold failed on DEV
+([register](fiscalization.md#register-fiscal-receipt)). The API refunds a captured hold and a
+captured hold can be [split](splits.md#flow), per the Paylov team (answers relayed by the
+maintainer, 2026-11-25 and 2026-11-26). Refunding a captured hold failed on DEV
 ([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the transaction
 `payed` (W c561, c887, c1529, c1530).
 

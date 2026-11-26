@@ -32,6 +32,8 @@ const split = await paylov.splits.get({ transactionId });
 - Recipients are ids Paylov issues. Paylov's test environment accepted only the merchant's own id
   (the `serviceId` a hold reports); whether sub-merchant ids are recipients is undocumented.
 - `payments.refund` of the paid transaction refunds the split: every share reads `cancelled`.
+- Paylov states that a captured hold can be split like a paid payment; its test environment was not
+  tried with one.
 
 ## Fiscal receipts
 

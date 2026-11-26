@@ -231,18 +231,20 @@ uncaptured hold with [dismiss](holds.md#dismiss) instead.
 
 The API refunds saved-card and PWR payments and captured holds, per the Paylov team (answer relayed
 by the maintainer, 2026-11-25: "Refunds of both are possible. Refunds of holds are possible too",
-translated from Russian); the docs do not say which kinds it refunds (D). DEV refunded only
-saved-card payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and
-stayed `payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid
-checkout (W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Saved-card
-payments also have an unknown API refund cut-off: two paid on 2026-11-13, about 11 days old,
-answered `transaction_not_available_for_cancel` and stayed `payed` (W c1562–c1564, c1566–c1568),
-while a same-day saved-card payment refunded (W c1579, c1580); the cut-off is agreed with each
-merchant, per the Paylov team (answer relayed by the maintainer, 2026-11-25: "agreed with each one
-separately", translated from Russian). The sandbox API Reference describes the cancel as "Cancel a
-payment that hasn't been settled yet" (S), which suggests the cut-off is the merchant settlement;
-neither the DEV window nor the production one is known. Production was not tried. The other
-documented cancel paths are the Paylov business panel and Paylov staff, which emit
+translated from Russian; captured holds confirmed again in an answer relayed 2026-11-26); the docs
+do not say which kinds it refunds (D). How a refunded captured hold reads in
+[`getTransactions`](transactions.md#get-one-transaction) is unobserved. DEV refunded only saved-card
+payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and stayed
+`payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid checkout
+(W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Saved-card payments
+also have an unknown API refund cut-off: two paid on 2026-11-13, about 11 days old, answered
+`transaction_not_available_for_cancel` and stayed `payed` (W c1562–c1564, c1566–c1568), while a
+same-day saved-card payment refunded (W c1579, c1580); the cut-off is agreed with each merchant, per
+the Paylov team (answer relayed by the maintainer, 2026-11-25: "agreed with each one separately",
+translated from Russian). The sandbox API Reference describes the cancel as "Cancel a payment that
+hasn't been settled yet" (S), which suggests the cut-off is the merchant settlement; neither the DEV
+window nor the production one is known. Production was not tried. The other documented cancel paths
+are the Paylov business panel and Paylov staff, which emit
 [`transaction.cancel`](callbacks.md#transactioncancel) (D); whether an API cancel emits it is
 undocumented, so confirm a refund with a [transaction read](transactions.md#get-one-transaction).
 

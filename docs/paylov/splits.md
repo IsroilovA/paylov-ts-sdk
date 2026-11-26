@@ -28,6 +28,9 @@ Allocates a paid transaction among Paylov recipients (D). Vendor contracts:
    split gets its refund receipt seconds later (W c1746–c1749, c1766, c1767, c1810–c1813). `check`
    was never observed; it passes through as an open value (M 2026-11-25).
 
+A captured card hold can be split, per the Paylov team (answer relayed by the maintainer,
+2026-11-26); the docs name only a paid transaction (D). No split of a hold was tried on DEV.
+
 On DEV the merchant's own id, the `serviceId` a hold reports ([holds](holds.md#status), W c1714), is
 accepted as a recipient; it is the only recipient that succeeded, so no sub-merchant or third-party
 recipient was observed (W c1724, c1740). Whether recipient ids are

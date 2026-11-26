@@ -19,6 +19,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `payments.refund` JSDoc and the payments, holds, transactions and errors usage guides describe
   captured holds as refundable through the API, per Paylov, and settle their refund with
   `readRefundState({ transaction, isCaptured: true })` instead of the business panel.
+- The splits usage guide states that Paylov allows splitting a captured hold.
 
 ### Changed (breaking)
 
