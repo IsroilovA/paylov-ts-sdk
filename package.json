@@ -1,6 +1,6 @@
 {
   "name": "@isroilov_an/paylov",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Unofficial server-side TypeScript SDK for the Paylov payment gateway (Uzbekistan). Not affiliated with Paylov.",
   "keywords": [
     "paylov",
