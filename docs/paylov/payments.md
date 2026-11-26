@@ -235,9 +235,11 @@ translated from Russian; captured holds confirmed again in an answer relayed 202
 do not say which kinds it refunds (D). How a refunded captured hold reads in
 [`getTransactions`](transactions.md#get-one-transaction) is unobserved. DEV refunded only saved-card
 payments: a fully captured hold answered `processing_error` twice, 10 minutes apart, and stayed
-`payed` (W c557, c559, c560, c887, c888); a confirmed PWR payment (W c564–c566) and a paid checkout
-(W c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Saved-card payments
-also have an unknown API refund cut-off: two paid on 2026-11-13, about 11 days old, answered
+`payed` (W c557, c559, c560, c887, c888); a [split](splits.md#flow) captured hold answered
+`processing_error`, then `transaction_not_available_for_cancel` about 10 minutes later, and stayed
+`payed` (W c1979, c1980, c2008, c2009); a confirmed PWR payment (W c564–c566) and a paid checkout (W
+c358) answered `transaction_not_available_for_cancel` and stayed `payed`. Saved-card payments also
+have an unknown API refund cut-off: two paid on 2026-11-13, about 11 days old, answered
 `transaction_not_available_for_cancel` and stayed `payed` (W c1562–c1564, c1566–c1568), while a
 same-day saved-card payment refunded (W c1579, c1580); the cut-off is agreed with each merchant, per
 the Paylov team (answer relayed by the maintainer, 2026-11-25: "agreed with each one separately",

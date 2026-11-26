@@ -19,7 +19,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `payments.refund` JSDoc and the payments, holds, transactions and errors usage guides describe
   captured holds as refundable through the API, per Paylov, and settle their refund with
   `readRefundState({ transaction, isCaptured: true })` instead of the business panel.
-- The splits usage guide states that Paylov allows splitting a captured hold.
+- `splits.create` JSDoc and the splits usage guide state that a captured hold, also a partially
+  captured one, splits like a paid payment, with shares totalling the captured amount, as Paylov's
+  test environment showed.
+- The holds usage guide records that Paylov's test environment refunded no captured hold, split or
+  not: a retry 10 minutes after `processing_error` answered `transaction_not_available_for_cancel`.
 - `SplitRecipient.items` JSDoc and the splits usage guide state that a split has one receipt for the
   whole transaction: the items of all recipients must total the transaction amount, and one
   recipient may carry every line. Items totalling only their share were never registered in Paylov's

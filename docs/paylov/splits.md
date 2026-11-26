@@ -29,7 +29,27 @@ Allocates a paid transaction among Paylov recipients (D). Vendor contracts:
    was never observed; it passes through as an open value (M 2026-11-25).
 
 A captured card hold can be split, per the Paylov team (answer relayed by the maintainer,
-2026-11-26); the docs name only a paid transaction (D). No split of a hold was tried on DEV.
+2026-11-26); the docs name only a paid transaction (D). DEV split captured holds by their
+transaction id like a paid payment, into two shares to the merchant's own id, one carrying an item
+priced at the captured amount and one without items:
+
+- A hold of 1000 SUM captured in full split into two shares of 50000 tiyin; status listed both
+  `paid` with the receipt 3 s after the create, `getTransactions` read the hold `payed` with
+  `is_hold: true`, `is_split: true` and the receipt in `ofd`, and the hold status stayed `paid`,
+  `amount` 1000 (W c1970–c1978).
+- A hold of 1000 SUM captured partially at 600 SUM split the captured amount, two shares of 30000
+  tiyin, with the same reads and the hold status `amount` 600 (W c1990–c1998). Shares therefore
+  total the captured amount, which `getTransactions` reports as `amount_in_tiyin`.
+
+Refunding a split captured hold failed like refunding an unsplit one
+([cancel](payments.md#cancel-refund-payment)): `payment/cancel` answered `processing_error`, and the
+shares stayed `paid`, the receipt unrefunded, the transaction `payed` and the hold `paid` (W
+c1979–c1984, c1999–c2004). Retried about 10 minutes after the first attempt, the cancel answered
+`transaction_not_available_for_cancel` for both holds, and the shares, receipts and transactions
+read unchanged (W c2008–c2013); an unsplit captured hold had answered `processing_error` again at
+that interval (W c887). So DEV did not refund a split captured hold, and whether the split or the
+earlier failed attempt changed the retry answer is unknown. The SDK's `readRefundState` read every
+one of these transactions `not_refunded`, with and without `isCaptured: true` (live run 2026-11-26).
 
 On DEV the merchant's own id, the `serviceId` a hold reports ([holds](holds.md#status), W c1714), is
 accepted as a recipient; it is the only recipient that succeeded, so no sub-merchant or third-party

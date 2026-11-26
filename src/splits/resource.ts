@@ -35,10 +35,10 @@ export const ENDPOINTS = {
  */
 export interface SplitsResource {
   /**
-   * Splits a paid transaction: each recipient receives a sub-transaction with its amount. Moves
-   * money to the recipients. Recipient amounts are integer tiyin and must add up to the
-   * transaction amount. A recipient's `items` are registered with the OFD in the background; read
-   * the result with `splits.get`.
+   * Splits a paid transaction, such as a payment or a captured hold: each recipient receives a
+   * sub-transaction with its amount. Moves money to the recipients. Recipient amounts are integer
+   * tiyin and must add up to the transaction amount, for a hold the captured amount. A recipient's
+   * `items` are registered with the OFD in the background; read the result with `splits.get`.
    *
    * Recovery: when `isPaylovOutcomeUnknown(error)`, read `splits.get` before splitting again: its
    * shares mean the split exists. `split_not_found` right after the failure proves nothing: read

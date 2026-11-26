@@ -33,9 +33,10 @@ and dismissed, also 30 seconds after the delete, when `getCard/` already answere
 (W c1901–c1908, c1918–c1926). A captured hold is fiscalized for its captured amount
 ([register](fiscalization.md#register-fiscal-receipt)). The API refunds a captured hold and a
 captured hold can be [split](splits.md#flow), per the Paylov team (answers relayed by the
-maintainer, 2026-11-25 and 2026-11-26). Refunding a captured hold failed on DEV
-([cancel](payments.md#cancel-refund-payment)), and the hold status stayed `paid` and the transaction
-`payed` (W c561, c887, c1529, c1530).
+maintainer, 2026-11-25 and 2026-11-26). DEV split fully and partially captured holds for their
+captured amount (W c1975, c1976, c1995, c1996). Refunding a captured hold failed on DEV
+([cancel](payments.md#cancel-refund-payment)), split or not, and the hold status stayed `paid` and
+the transaction `payed` (W c561, c887, c1529, c1530, c1981, c2001, c2009, c2012).
 
 Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
 only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. The

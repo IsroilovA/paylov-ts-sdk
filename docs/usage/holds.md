@@ -53,10 +53,11 @@ if (booking.visited) {
   with `card_not_found`. Release every hold you will not capture before or after deleting the card.
 - **Release before capture; refund after.** After a capture only `payments.refund` (full) remains,
   which Paylov states works for captured holds; its test environment answered them
-  `processing_error`, an unknown outcome. Pass the `transactions.get` read to `readRefundState` with
-  `isCaptured: true`: a captured hold still reading `paid` is `not_refunded` at the time of the
-  read, and one reading `refunded` with a refund time is `refunded`. Capture only the final amount
-  so refunds stay rare.
+  `processing_error`, an unknown outcome, split or not, and a split one retried 10 minutes later
+  `transaction_not_available_for_cancel`; none was refunded. Pass the `transactions.get` read to
+  `readRefundState` with `isCaptured: true`: a captured hold still reading `paid` is `not_refunded`
+  at the time of the read, and one reading `refunded` with a refund time is `refunded`. Capture only
+  the final amount so refunds stay rare.
 - **Track the deadline yourself.** An expired hold can still read `held`; capture then fails with
   `hold_time_expired`, and release has been seen both to fail and to succeed. Stop capturing a hold
   at `clientCaptureDeadline`, and release every hold you will not capture, also after it expires.

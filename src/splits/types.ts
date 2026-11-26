@@ -4,8 +4,8 @@ import type { FiscalReceiptItem } from '../shared/receiptItems.js';
 /** Parameters for `splits.create`. */
 export interface CreateSplitParams {
   /**
-   * The paid Paylov transaction to split (UUID); Paylov answers `receipt_not_available_for_split`
-   * for an unpaid one.
+   * The paid Paylov transaction to split (UUID), such as a payment or a captured hold; Paylov
+   * answers `receipt_not_available_for_split` for an unpaid one.
    */
   readonly transactionId: string;
   /**
