@@ -118,6 +118,44 @@ describe('the simulated gateway: PAN binding', () => {
     }).toThrow(/about 90 s/);
   });
 
+  it('hides a pending binding from reads before and after a wrong or expired OTP', async () => {
+    const { fake, paylov, advance } = simulated();
+    const { cardId } = await paylov.cards.startPanBinding(START_BINDING);
+    const expectPending = async (): Promise<void> => {
+      await expectApiError(paylov.cards.get({ cardId }), {
+        code: 'card_not_found',
+        httpStatus: 400,
+      });
+      await expect(paylov.cards.list({ userId: USER })).resolves.toEqual([]);
+    };
+
+    await expectPending();
+    await expectApiError(paylov.cards.confirmPanBinding({ cardId, otp: 'WRONG-OTP' }), {
+      code: 'invalid_otp',
+    });
+    await expectPending();
+    advance(100);
+    await expectPending();
+    fake.assertDone();
+  });
+
+  it('gets a confirmed card immediately while the warmed list still omits it', async () => {
+    const { fake, paylov, advance } = simulated();
+    const { cardId } = await paylov.cards.startPanBinding(START_BINDING);
+    await expect(paylov.cards.list({ userId: USER })).resolves.toEqual([]);
+
+    advance(8);
+    const confirmed = await paylov.cards.confirmPanBinding({ cardId, otp: PAYLOV_FAKE_OTP });
+    await expect(paylov.cards.get({ cardId })).resolves.toEqual(confirmed);
+    await expect(paylov.cards.list({ userId: USER })).resolves.toEqual([]);
+
+    advance(1);
+    await expect(paylov.cards.list({ userId: USER })).resolves.toEqual([]);
+    advance(1);
+    await expect(paylov.cards.list({ userId: USER })).resolves.toEqual([confirmed]);
+    fake.assertDone();
+  });
+
   it('refuses a repeat while the OTP is valid and reissues it under the same card id', async () => {
     const { fake, paylov, advance } = simulated();
     const { cardId } = await paylov.cards.startPanBinding(START_BINDING);
@@ -146,6 +184,28 @@ describe('the simulated gateway: PAN binding', () => {
 
     const second = await paylov.cards.startPanBinding(START_BINDING);
     expect(second.cardId).not.toBe(first.cardId);
+    fake.assertDone();
+  });
+
+  it('deletes a pending binding but keeps the resend cooldown', async () => {
+    const { fake, paylov, advance } = simulated();
+    const { cardId } = await paylov.cards.startPanBinding(START_BINDING);
+
+    await expect(paylov.cards.delete({ cardId })).resolves.toBeUndefined();
+    await expectApiError(paylov.cards.delete({ cardId }), {
+      code: 'card_not_found',
+      httpStatus: 404,
+    });
+    await expectApiError(paylov.cards.confirmPanBinding({ cardId, otp: PAYLOV_FAKE_OTP }), {
+      code: 'card_not_found',
+      httpStatus: 404,
+    });
+    await expectApiError(paylov.cards.startPanBinding(START_BINDING), {
+      code: 'otp_code_already_sent',
+    });
+    advance(100);
+    const fresh = await paylov.cards.startPanBinding(START_BINDING);
+    expect(fresh.cardId).not.toBe(cardId);
     fake.assertDone();
   });
 
@@ -180,7 +240,7 @@ describe('the simulated gateway: PAN binding', () => {
     fake.assertDone();
   });
 
-  it('leaves unknown cards, the card block and unconfirmed bindings unsimulated', async () => {
+  it('leaves unknown cards, missing card details and the card block unsimulated', async () => {
     const { fake, paylov } = simulated({ cardNumber: CARD_NUMBER, cardExpiry: '9912' });
 
     const unknown = { ...START_BINDING, cardNumber: testCardNumber('860000000000002') };
@@ -195,10 +255,6 @@ describe('the simulated gateway: PAN binding', () => {
     });
     const { cardId } = await paylov.cards.startPanBinding(START_BINDING);
     await expectApiError(paylov.cards.confirmPanBinding({ cardId, otp: '0', pinfl: PINFL }), {
-      code: 'fake_unsimulated',
-      httpStatus: 501,
-    });
-    await expectApiError(paylov.cards.get({ cardId }), {
       code: 'fake_unsimulated',
       httpStatus: 501,
     });

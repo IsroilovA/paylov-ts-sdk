@@ -34,6 +34,13 @@ export interface SimulatedCard {
   readonly isDeleted: boolean;
 }
 
+/** Which cards a user's last fresh list saw. Confirmation leaves that list cached. */
+export interface CachedCardList {
+  readonly userId: string;
+  readonly expiresAtMs: number;
+  readonly cardIds: ReadonlySet<string>;
+}
+
 /** A payment created with `payments.create`. */
 export interface SimulatedSale {
   readonly transactionId: string;
@@ -81,6 +88,8 @@ export interface PanBinding {
   readonly otpSentAt: Date;
   readonly wrongOtps: number;
   readonly isConfirmed: boolean;
+  /** A deleted pending binding still has a live resend cooldown (W c2034, c2039). */
+  readonly isDeleted: boolean;
 }
 
 /** A fiscal receipt the simulated OFD registered. */
@@ -110,6 +119,7 @@ export interface SimulationState {
   nextId: number;
   nextReceiptId: number;
   readonly cards: Map<string, SimulatedCard>;
+  readonly cardLists: Map<string, CachedCardList>;
   readonly sales: Map<string, SimulatedSale>;
   readonly holds: Map<string, SimulatedHold>;
   /** Keyed by the binding's `cardId`. */
@@ -123,6 +133,7 @@ export function emptySimulationState(): SimulationState {
     nextId: 1,
     nextReceiptId: 1,
     cards: new Map(),
+    cardLists: new Map(),
     sales: new Map(),
     holds: new Map(),
     bindings: new Map(),
@@ -150,6 +161,10 @@ function encodeCard({ cardName, bankName, ...card }: Card): unknown {
 
 function encodeSimulatedCard({ card, spendableTiyin, ledger, isDeleted }: SimulatedCard): unknown {
   return { card: encodeCard(card), spendableTiyin, ledger, isDeleted };
+}
+
+function encodeCachedCardList({ userId, expiresAtMs, cardIds }: CachedCardList): unknown {
+  return { userId, expiresAtMs, cards: [...cardIds].map((cardId) => ({ cardId })) };
 }
 
 function encodeSale(sale: SimulatedSale): unknown {
@@ -219,6 +234,7 @@ export function encodeSimulationState(state: SimulationState): unknown {
     nextId: state.nextId,
     nextReceiptId: state.nextReceiptId,
     cards: [...state.cards.values()].map(encodeSimulatedCard),
+    cardLists: [...state.cardLists.values()].map(encodeCachedCardList),
     sales: [...state.sales.values()].map(encodeSale),
     holds: [...state.holds.values()].map(encodeHold),
     bindings: [...state.bindings.values()].map(encodeBinding),
@@ -321,6 +337,15 @@ function decodeBinding(params: Params): PanBinding {
     otpSentAt: dateAt(params, 'otpSentAt'),
     wrongOtps: params.integer('wrongOtps'),
     isConfirmed: params.boolean('isConfirmed'),
+    isDeleted: params.optionalBoolean('isDeleted') ?? false,
+  };
+}
+
+function decodeCachedCardList(params: Params): CachedCardList {
+  return {
+    userId: params.string('userId'),
+    expiresAtMs: params.integer('expiresAtMs'),
+    cardIds: new Set(params.array('cards', (card) => card.string('cardId'))),
   };
 }
 
@@ -366,6 +391,10 @@ export function decodeSimulationState(value: unknown): SimulationState {
     nextId: state.integer('nextId'),
     nextReceiptId: state.integer('nextReceiptId'),
     cards: byKey(state.array('cards', decodeSimulatedCard), ({ card }) => card.cardId),
+    cardLists: byKey(
+      state.optionalArray('cardLists', decodeCachedCardList) ?? [],
+      (list) => list.userId,
+    ),
     sales: byKey(state.array('sales', decodeSale), (sale) => sale.transactionId),
     holds: byKey(state.array('holds', decodeHold), (hold) => hold.transactionId),
     bindings: byKey(state.array('bindings', decodeBinding), (binding) => binding.cardId),

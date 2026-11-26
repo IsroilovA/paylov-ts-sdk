@@ -1,11 +1,11 @@
 {
-  "capture": "056",
+  "capture": "2051",
   "status": 200,
   "body": {
     "result": {
       "cards": []
     },
     "error": null,
-    "is_cached": false
+    "is_cached": true
   }
 }

@@ -36,7 +36,11 @@ function busyState(): SimulationState {
   const binding = { userId: USER, cardNumber: CARD_NUMBER, cardExpiry: '9912' };
   const { cardId } = resultOf(simulation.startPanBinding(binding));
   resultOf(simulation.confirmPanBinding({ cardId, otp: PAYLOV_FAKE_OTP, cardName: 'Main' }));
+  resultOf(simulation.listCards({ userId: USER }));
   resultOf(simulation.startPanBinding({ ...binding, userId: 'user-43' }));
+  const pending = resultOf(simulation.startPanBinding({ ...binding, userId: 'user-45' }));
+  if (simulation.deleteCard({ cardId: pending.cardId }).kind !== 'result')
+    throw new Error('pending binding not deleted');
   const other = resultOf(simulation.startPanBinding({ ...binding, userId: 'user-44' }));
   resultOf(simulation.confirmPanBinding({ cardId: other.cardId, otp: PAYLOV_FAKE_OTP }));
   if (simulation.deleteCard({ cardId: other.cardId }).kind !== 'result')

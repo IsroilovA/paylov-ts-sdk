@@ -32,6 +32,15 @@ describe('cards.get', () => {
     });
   });
 
+  it('surfaces card_not_found with HTTP 400 for an unconfirmed binding', async () => {
+    const { cards } = setup([wireResponse('cards/get.cardNotFound.wire.json')]);
+
+    await expectApiError(cards.get({ cardId: UZCARD_ID }), {
+      code: 'card_not_found',
+      httpStatus: 400,
+    });
+  });
+
   it('rejects the flat status layout', async () => {
     const flat = { is_active: true, status_message: 'active', sms_info: true };
     const { cards } = setup([withCard('cards/get.active.wire.json', { status: flat })]);
@@ -82,7 +91,7 @@ describe('cards.list', () => {
     });
   });
 
-  it('returns an empty list for a user without cards', async () => {
+  it('returns an empty list when a cached response omits a newly confirmed card', async () => {
     const { cards } = setup([wireResponse('cards/list.empty.wire.json')]);
 
     await expect(cards.list({ userId: 'user-without-cards' })).resolves.toEqual([]);

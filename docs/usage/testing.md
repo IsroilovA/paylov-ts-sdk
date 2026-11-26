@@ -227,10 +227,17 @@ may share their first six and last four digits.
   another `pinfl` than the card's (`pinfl_not_match`), the OTP after 91.6 seconds (`otp_expired`), a
   second confirm (`card_is_already_activated`, HTTP 404) and an unknown `cardId` (`card_not_found`,
   HTTP 404). The same card binds under another user, and again after a delete, with a new `cardId`.
+- Before confirmation, `cards.get` answers `card_not_found` (HTTP 400) and `cards.list` omits the
+  binding, including after a wrong OTP or expiry. A confirmed card appears immediately in
+  `cards.get` and in a fresh `cards.list`. The simulation caches each user's list for 10 seconds
+  from the last fresh read, so a list warmed before confirmation can still omit the new card.
+- `cards.delete` succeeds on a pending binding. A repeat delete or confirm then answers
+  `card_not_found` (HTTP 404). Starting again still waits for the OTP cooldown and returns a new
+  `cardId` once it elapses.
 - Unsimulated: a card number it was not given or under 16 characters, the OTP between 89.6 and 91.6
   seconds, a repeat between 80.6 and 96.6 seconds or after a wrong code, the 4th wrong code (Paylov
   blocks the card for minutes), a phone or PINFL for a card given without one, two wrong values at
-  once, and reads or deletes of an unconfirmed binding.
+  once.
 
 ### Fiscal receipts
 

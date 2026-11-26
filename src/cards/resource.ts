@@ -103,8 +103,9 @@ export interface CardsResource {
    * `retryAfterSeconds`. A card-number payment counts its own wrong OTPs. Stop prompting before
    * that. Moves no money.
    *
-   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `cards.get({ cardId })`. A repeated
-   * confirm answering `card_is_already_activated` means the card is already confirmed.
+   * Recovery: when `isPaylovOutcomeUnknown(error)`, read `cards.get({ cardId })`. Paylov's test
+   * environment answers `card_not_found` while the binding is unconfirmed, also after OTP expiry.
+   * A repeated confirm answering `card_is_already_activated` means the card is already confirmed.
    *
    * @throws {@link PaylovApiError} `invalid_otp`, `otp_expired`, `card_is_blocked`, `try_new_otp`,
    * `too_many_attempts`, `pinfl_not_match`, `card_is_already_activated`, `card_not_found`.
@@ -122,7 +123,7 @@ export interface CardsResource {
    * Reads one card with its balance and status. Paylov can answer from a cache: right after a
    * delete it has still returned the deleted card for a short time. Moves no money.
    *
-   * @throws {@link PaylovApiError} `card_not_found` (unknown or deleted),
+   * @throws {@link PaylovApiError} `card_not_found` (unknown, unconfirmed or deleted),
    * `card_not_found_in_processing_center`, `card_is_blocked`,
    * `card_is_blocked_in_processing_center`, `balance_refresh_error`.
    *
@@ -133,8 +134,9 @@ export interface CardsResource {
   get(params: GetCardParams, options?: PaylovCallOptions): Promise<Card>;
 
   /**
-   * Lists a merchant user's bound cards; an unknown user has none. One malformed card fails the
-   * whole call. Moves no money.
+   * Lists a merchant user's confirmed cards. Omits pending PAN bindings, including after their
+   * OTP expires. A cached list can still omit a newly confirmed card. Use `cards.get({ cardId })`
+   * to reconcile an unanswered confirm. One malformed card fails the whole call. Moves no money.
    *
    * @example
    * const cards = await paylov.cards.list({ userId: 'user-42' });
@@ -143,8 +145,9 @@ export interface CardsResource {
   list(params: ListCardsParams, options?: PaylovCallOptions): Promise<readonly Card[]>;
 
   /**
-   * Unbinds a card. Moves no money. A repeated delete answers `card_not_found`, which means the
-   * card is already gone. `cards.list` and `cards.get` can still return it for a short time.
+   * Unbinds a card or deletes a pending PAN binding. Moves no money. A repeated delete answers
+   * `card_not_found`, which means the card is already gone. `cards.list` and `cards.get` can still
+   * return a previously confirmed card for a short time.
    * Deleting does not release the card's holds: Paylov's test environment still captured and
    * released holds created before the delete, so release every hold you will not capture.
    *

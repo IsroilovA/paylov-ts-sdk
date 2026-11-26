@@ -3,6 +3,14 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `/testing` models pending PAN bindings. `cards.get` answers HTTP 400 `card_not_found` until
+  confirmation, a warmed `cards.list` can still omit a newly confirmed card, and `cards.delete`
+  removes a pending binding while preserving the OTP resend cooldown.
+
 ## [0.0.7] - 2026-11-26
 
 ### Added

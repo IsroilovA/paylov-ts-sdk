@@ -31,7 +31,17 @@ await userCards.save('user-42', card.cardId);
   `invalid_otp` three times before `card_is_blocked`.
 - While the OTP is valid, starting the binding again answers `otp_code_already_sent`; after it
   expires, about 90 seconds on Paylov's test environment, a new start returns the same `cardId` with
-  a new OTP.
+  a new OTP. You can delete a pending binding, but the resend cooldown still applies. A start after
+  the cooldown returns a new `cardId` if the old binding was deleted.
+
+### Recover an unanswered confirm
+
+Keep the `cardId` from `startPanBinding` and call `cards.get({ cardId })` after the binding
+session's deadline. A returned card confirms the binding. Check `isActive` separately before
+charging. On Paylov's test environment an unconfirmed binding answers HTTP 400 `card_not_found`,
+including after a wrong OTP or after expiry. `cards.list({ userId })` omits unconfirmed bindings and
+can still omit a newly confirmed card while serving a cached list. On DEV, `cards.get` saw the
+confirmed card immediately even when `cards.list` still returned its cached empty result.
 
 ## Saved cards
 

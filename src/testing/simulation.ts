@@ -101,6 +101,8 @@ const OTP_EXPIRED_FROM_MS = 91_600;
  */
 const OTP_RESEND_REFUSED_UNTIL_MS = 80_600;
 const OTP_RESEND_ALLOWED_FROM_MS = 96_600;
+/** The simulation's cache lifetime, from observed refreshes at about 5 to 10 s (W c2053, c2080, c2088). */
+const CARD_LIST_CACHE_MS = 10_000;
 /** Wrong OTPs 1 to 3 answer `invalid_otp`; the 4th blocks the card for minutes (W c934–c937). */
 const MAX_SIMULATED_WRONG_OTPS = 3;
 /** The receipt fields the simulated OFD fills in; not a real terminal. */
@@ -327,6 +329,7 @@ export class GatewaySimulation {
       ledger: undefined,
       isDeleted: false,
     });
+    this.state.cardLists.delete(card.userId);
   }
 
   addPanCard(panCard: PanCard): void {
@@ -363,16 +366,7 @@ export class GatewaySimulation {
     const otpSentPhone = maskPhone(panCard.phoneNumber);
     const pending = this.#pendingBinding(userId, panCard.maskedCardNumber);
     if (pending !== undefined) return this.#resendOtp(pending, otpSentPhone);
-    const cardId = this.#newId();
-    this.state.bindings.set(cardId, {
-      cardId,
-      userId,
-      maskedCardNumber: panCard.maskedCardNumber,
-      otpSentAt: this.#now(),
-      wrongOtps: 0,
-      isConfirmed: false,
-    });
-    return result({ cardId, otpSentPhone });
+    return this.#startBinding(userId, panCard.maskedCardNumber, otpSentPhone);
   }
 
   confirmPanBinding(params: ConfirmPanBindingParams): SimulatedOutcome<Card> {
@@ -381,10 +375,10 @@ export class GatewaySimulation {
       return unsimulated('cards.confirmPanBinding of a cardId that is not a UUID');
     }
     const binding = this.state.bindings.get(cardId);
-    if (binding === undefined) {
+    if (binding?.isDeleted !== false) {
       return this.state.cards.has(cardId)
         ? unsimulated('cards.confirmPanBinding of a card added without a PAN binding')
-        : error('card_not_found', { httpStatus: 404 }); // W c048
+        : error('card_not_found', { httpStatus: 404 }); // W c048, c2038
     }
     if (binding.isConfirmed) {
       return this.state.cards.get(cardId)?.isDeleted === true
@@ -444,6 +438,24 @@ export class GatewaySimulation {
     return undefined;
   }
 
+  #startBinding(
+    userId: string,
+    maskedCardNumber: string,
+    otpSentPhone: string,
+  ): SimulatedOutcome<PanBindingStarted> {
+    const cardId = this.#newId();
+    this.state.bindings.set(cardId, {
+      cardId,
+      userId,
+      maskedCardNumber,
+      otpSentAt: this.#now(),
+      wrongOtps: 0,
+      isConfirmed: false,
+      isDeleted: false,
+    });
+    return result({ cardId, otpSentPhone });
+  }
+
   /**
    * While the OTP is valid a repeat answers `otp_code_already_sent` (W c741, c744, c839, c844);
    * after it expired the same `cid` gets a new OTP (W c855, c857, c810, c811).
@@ -454,6 +466,10 @@ export class GatewaySimulation {
     if (elapsedMs <= OTP_RESEND_REFUSED_UNTIL_MS) return error('otp_code_already_sent');
     if (elapsedMs < OTP_RESEND_ALLOWED_FROM_MS) {
       return unsimulated('a repeated cards.startPanBinding between 80.6 and 96.6 s after the OTP');
+    }
+    if (pending.isDeleted) {
+      this.state.bindings.delete(pending.cardId);
+      return this.#startBinding(pending.userId, pending.maskedCardNumber, otpSentPhone); // W c2039, c2043
     }
     if (pending.wrongOtps > 0) {
       return unsimulated('a repeated cards.startPanBinding after a wrong OTP');
@@ -513,10 +529,6 @@ export class GatewaySimulation {
     );
   }
 
-  #isPendingBinding(cardId: string): boolean {
-    return this.state.bindings.get(cardId)?.isConfirmed === false;
-  }
-
   // Cards. Reads after a delete may still return the card for a while (W c1074–c1088), and
   // whether a read's balance reflects a charge, hold, release or refund is unobserved, so both stay
   // unsimulated.
@@ -525,8 +537,7 @@ export class GatewaySimulation {
     const known = this.state.cards.get(cardId);
     if (known?.isDeleted === true) return unsimulated('cards.get of a deleted card');
     if (known?.ledger !== undefined) return unsimulated('cards.get of a charged or held card');
-    if (this.#isPendingBinding(cardId)) return unsimulated('cards.get of an unconfirmed binding');
-    return known === undefined ? error('card_not_found') : result(known.card);
+    return known === undefined ? error('card_not_found') : result(known.card); // W c2019, c2022
   }
 
   listCards({ userId }: ListCardsParams): SimulatedOutcome<readonly Card[]> {
@@ -537,19 +548,30 @@ export class GatewaySimulation {
     if (owned.some(({ ledger }) => ledger !== undefined)) {
       return unsimulated('cards.list of a user with a charged or held card');
     }
-    return result(owned.map(({ card }) => card));
+    const cards = owned.map(({ card }) => card);
+    const nowMs = this.#now().getTime();
+    const cached = this.state.cardLists.get(userId);
+    if (cached !== undefined && nowMs < cached.expiresAtMs) {
+      return result(cards.filter(({ cardId }) => cached.cardIds.has(cardId)));
+    }
+    this.state.cardLists.set(userId, {
+      userId,
+      expiresAtMs: nowMs + CARD_LIST_CACHE_MS,
+      cardIds: new Set(cards.map(({ cardId }) => cardId)),
+    });
+    return result(cards);
   }
 
-  /**
-   * A repeated delete answers 404 `card_not_found` (W c324, c325). An unconfirmed binding can be
-   * deleted (W c719–c721), with an answer the captures do not show.
-   */
+  /** A repeated delete answers 404 `card_not_found` (W c324, c325, c2034, c2037). */
   deleteCard({ cardId }: DeleteCardParams): SimulatedOutcome<void> {
+    const binding = this.state.bindings.get(cardId);
+    if (binding?.isConfirmed === false && !binding.isDeleted) {
+      this.state.bindings.set(cardId, { ...binding, isDeleted: true });
+      return result(undefined);
+    }
     const known = this.state.cards.get(cardId);
     if (known === undefined || known.isDeleted) {
-      return this.#isPendingBinding(cardId)
-        ? unsimulated('cards.delete of an unconfirmed binding')
-        : error('card_not_found', { httpStatus: 404 });
+      return error('card_not_found', { httpStatus: 404 });
     }
     this.state.cards.set(cardId, { ...known, isDeleted: true });
     return result(undefined);
