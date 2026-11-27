@@ -1,8 +1,7 @@
 /**
  * The opt-in gateway state behind `PaylovFakeGateway({ simulate: true })` and the simulator
- * server. It encodes only transitions observed on Paylov's development gateway (capture ids in the
- * comments) or documented by Paylov; any other state answers `unsimulated`, which the gateway
- * reports instead of guessing.
+ * server. Its transitions follow Paylov documentation, DEV observations, and the test assumptions
+ * recorded in docs/usage/testing.md. Other states answer `unsimulated`.
  */
 
 import type {
@@ -41,6 +40,14 @@ import type {
 import type { FiscalReceipt, FiscalReceiptRegistered } from '../shared/fiscalReceipts.js';
 import type { FiscalReceiptItem } from '../shared/receiptItems.js';
 import type { TransactionReference } from '../shared/transactions.js';
+import type {
+  CreateSplitParams,
+  GetSplitParams,
+  ResendSplitReceiptParams,
+  Split,
+  SplitReceiptResent,
+  SplitRecipient,
+} from '../splits/types.js';
 import { withWireStatus } from '../transactions/fake.js';
 import type {
   FiscalReceiptSummary,
@@ -81,6 +88,8 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MIN_HOLD_AMOUNT_TIYIN = 1000;
 const MAX_HOLD_MINUTES = 40_320;
 const MAX_EXTERNAL_ID_LENGTH = 64;
+/** A split share below 10 tiyin fails validation on its `amount` (docs/paylov/splits.md). */
+const MIN_SPLIT_SHARE_TIYIN = 10;
 /**
  * `invalid_amount` starts somewhere above 10^9 SUM and at or below 5 × 10^10 SUM (W c606, c611),
  * so only holds up to 10^9 SUM have an evidenced answer.
@@ -189,6 +198,31 @@ function lineTotalTiyin(item: FiscalReceiptItem): number | undefined {
   return (item.priceTiyin - discountTiyin) * item.count;
 }
 
+function receiptTotalTiyin(items: readonly FiscalReceiptItem[]): number | undefined {
+  let totalTiyin = 0;
+  for (const item of items) {
+    const lineTiyin = lineTotalTiyin(item);
+    if (lineTiyin === undefined) return undefined;
+    totalTiyin += lineTiyin;
+  }
+  return totalTiyin;
+}
+
+function splitItems(recipients: readonly SplitRecipient[]): FiscalReceiptItem[] {
+  return recipients.flatMap(({ items }) => items ?? []);
+}
+
+function validateSplitRecipients(
+  recipients: readonly SplitRecipient[],
+): SimulatedOutcome<never> | undefined {
+  if (recipients.length === 0) return error('validation_error', { fields: ['recipients'] });
+  const fields = recipients.flatMap(({ recipientId, amountTiyin }, index) => [
+    ...(isUuid(recipientId) ? [] : [`recipients.${index}.recipientId`]),
+    ...(amountTiyin < MIN_SPLIT_SHARE_TIYIN ? [`recipients.${index}.amount`] : []),
+  ]);
+  return fields.length === 0 ? undefined : error('validation_error', { fields });
+}
+
 /**
  * The hold's transaction row: `waiting` with `is_hold` and the external id (W c187); a capture
  * reports the captured amount with `date` replaced by the capture time (W c194–c197, c346); a
@@ -199,21 +233,25 @@ function lineTotalTiyin(item: FiscalReceiptItem): number | undefined {
 function transactionOf(
   hold: SimulatedHold,
   fiscalReceipts: readonly FiscalReceiptSummary[],
+  isSplit: boolean,
 ): Transaction {
   const { settlement } = hold;
+  const captured = settlement.kind === 'captured' ? settlement : undefined;
+  const cancelledAt =
+    settlement.kind === 'released' ? settlement.at : (captured?.refundedAt ?? null);
   const transaction: Transaction = {
     transactionId: hold.transactionId,
     externalId: hold.externalId,
     userId: hold.userId,
     cardId: hold.cardId,
     maskedCardNumber: hold.maskedCardNumber,
-    amountTiyin: settlement.kind === 'captured' ? settlement.amountTiyin : hold.heldAmountTiyin,
-    status: { held: 'held', captured: 'paid', released: 'refunded' }[settlement.kind],
+    amountTiyin: captured?.amountTiyin ?? hold.heldAmountTiyin,
+    status: cancelledAt === null ? (captured === undefined ? 'held' : 'paid') : 'refunded',
     declineCode: null,
-    paidOrCreatedAt: settlement.kind === 'captured' ? settlement.at : hold.createdAt,
-    cancelledAt: settlement.kind === 'released' ? settlement.at : null,
+    paidOrCreatedAt: captured?.at ?? hold.createdAt,
+    cancelledAt,
     isHold: true,
-    isSplit: false,
+    isSplit,
     isA2c: false,
     fiscalReceipts,
   };
@@ -225,6 +263,7 @@ function transactionOf(
 function saleTransactionOf(
   sale: SimulatedSale,
   fiscalReceipts: readonly FiscalReceiptSummary[],
+  isSplit: boolean,
 ): Transaction {
   return {
     transactionId: sale.transactionId,
@@ -238,7 +277,7 @@ function saleTransactionOf(
     paidOrCreatedAt: sale.paidOrCreatedAt,
     cancelledAt: sale.refundedAt,
     isHold: false,
-    isSplit: false,
+    isSplit,
     isA2c: false,
     fiscalReceipts,
   };
@@ -284,10 +323,12 @@ function visibleRefund(
 /** The answers the test chooses, since Paylov's depend on the merchant or are not pinned down. */
 export interface SimulationSettings {
   readonly now: () => Date;
-  /** Unset: every refund of a paid sale is unsimulated. */
+  /** Unset: every otherwise eligible refund is unsimulated. */
   readonly refundWindowMinutes: number | undefined;
   /** Unset: every read of a refund receipt a refund registered is unsimulated. */
   readonly refundReceiptDelaySeconds: number | undefined;
+  /** The split recipients Paylov issued besides the merchant's own id. */
+  readonly splitRecipientIds: ReadonlySet<string>;
 }
 
 /** Each simulated SDK method takes the params its route decoded. */
@@ -297,6 +338,7 @@ export class GatewaySimulation {
   readonly #now: () => Date;
   readonly #refundWindowMinutes: number | undefined;
   readonly #refundReceiptDelaySeconds: number | undefined;
+  readonly #splitRecipientIds: ReadonlySet<string>;
   readonly #holdIdsByExternalId = new Map<string, string>();
   /** The cards PAN bindings can bind, by masked number; configuration, never state. */
   readonly #panCards = new Map<string, PanCard>();
@@ -305,6 +347,7 @@ export class GatewaySimulation {
     this.#now = settings.now;
     this.#refundWindowMinutes = settings.refundWindowMinutes;
     this.#refundReceiptDelaySeconds = settings.refundReceiptDelaySeconds;
+    this.#splitRecipientIds = settings.splitRecipientIds;
     this.state = state;
     for (const hold of state.holds.values()) {
       this.#holdIdsByExternalId.set(hold.externalId, hold.transactionId);
@@ -639,11 +682,8 @@ export class GatewaySimulation {
   }
 
   refund({ transactionId }: RefundPaymentParams): SimulatedOutcome<PaymentRefunded> {
-    const sale = this.state.sales.get(transactionId);
-    if (sale === undefined) {
-      if (this.state.holds.has(transactionId)) {
-        return unsimulated('payments.refund of a hold transaction');
-      }
+    const transaction = this.#transaction(transactionId);
+    if (transaction === undefined) {
       // W c115, c116
       return unknownTransaction(
         transactionId,
@@ -652,8 +692,15 @@ export class GatewaySimulation {
         true,
       );
     }
-    // Already refunded (W c112) or never paid (W c114, c1272).
-    if (sale.status !== 'paid') return error('transaction_not_available_for_cancel');
+    // Already refunded (W c112), never paid (W c114, c1272), or a hold on a deleted card
+    // (docs/paylov/payments.md#cancel-refund-payment, W c1911, c1929).
+    const { cardId, amountTiyin, paidOrCreatedAt } = transaction;
+    if (
+      transaction.status !== 'paid' ||
+      (transaction.isHold && cardId !== null && !this.#isCardBound(cardId))
+    ) {
+      return error('transaction_not_available_for_cancel');
+    }
     // The cut-off is agreed with each merchant, so the test sets it. A refund past it answers as
     // DEV refused late refunds, the sale staying paid (W c1563, c1567, c1834).
     const windowMinutes = this.#refundWindowMinutes;
@@ -661,14 +708,19 @@ export class GatewaySimulation {
       return unsimulated('payments.refund without refundWindowMinutes, a per-merchant cut-off');
     }
     const refundedAt = this.#wireNow();
-    const elapsedMs = refundedAt.getTime() - sale.paidOrCreatedAt.getTime();
+    const elapsedMs = refundedAt.getTime() - paidOrCreatedAt.getTime();
     if (elapsedMs >= windowMinutes * MINUTE_MS) {
       return error('transaction_not_available_for_cancel');
     }
-    // `cancel` with the refund time; `date` and the amount stay (W c111, c113). When the refunded
-    // money reaches the card is unobserved.
-    if (sale.cardId !== null) this.#giveBack(sale.cardId, sale.amountTiyin, 'unobserved');
-    this.state.sales.set(transactionId, { ...sale, status: 'refunded', refundedAt });
+    // Captured holds use the sale's cancellation model (docs/usage/testing.md#simulate-gateway-state).
+    if (cardId !== null) this.#giveBack(cardId, amountTiyin, 'unobserved');
+    const sale = this.state.sales.get(transactionId);
+    if (sale !== undefined)
+      this.state.sales.set(transactionId, { ...sale, status: 'refunded', refundedAt });
+    const hold = this.state.holds.get(transactionId);
+    if (hold?.settlement.kind === 'captured') {
+      this.#writeHold({ ...hold, settlement: { ...hold.settlement, refundedAt } });
+    }
     this.#registerRefundReceipt(transactionId, refundedAt);
     return result({ transactionId, refundedAt });
   }
@@ -696,7 +748,7 @@ export class GatewaySimulation {
    * non-UUID id is `validation_error` (W c143).
    */
   getTransaction({ transactionId }: GetTransactionParams): SimulatedOutcome<Transaction> {
-    const transaction = this.#transaction(transactionId);
+    const transaction = this.#transactionWithReceipts(transactionId);
     if (transaction === 'unknown') {
       return unsimulated('transactions.get of a refund whose refund receipt timing is unset');
     }
@@ -753,20 +805,28 @@ export class GatewaySimulation {
    * The transaction row with its receipts, `undefined` for an unknown id, or `unknown` when its
    * refund receipt's timing is unset.
    */
-  #transaction(transactionId: string): Transaction | 'unknown' | undefined {
+  #transactionWithReceipts(transactionId: string): Transaction | 'unknown' | undefined {
     const receipts = this.#receiptSummaries(transactionId);
     if (receipts === 'unknown') return 'unknown';
+    return this.#transaction(transactionId, receipts);
+  }
+
+  #transaction(
+    transactionId: string,
+    receipts: readonly FiscalReceiptSummary[] = [],
+  ): Transaction | undefined {
+    const isSplit = this.state.splits.has(transactionId);
     const hold = this.state.holds.get(transactionId);
-    if (hold !== undefined) return transactionOf(hold, receipts);
+    if (hold !== undefined) return transactionOf(hold, receipts, isSplit);
     const sale = this.state.sales.get(transactionId);
-    return sale === undefined ? undefined : saleTransactionOf(sale, receipts);
+    return sale === undefined ? undefined : saleTransactionOf(sale, receipts, isSplit);
   }
 
   /** Every transaction whose receipts are known. */
   #transactions(): Transaction[] {
     const ids = [...this.state.sales.keys(), ...this.state.holds.keys()];
     return ids.flatMap((id) => {
-      const transaction = this.#transaction(id);
+      const transaction = this.#transactionWithReceipts(id);
       return transaction === undefined || transaction === 'unknown' ? [] : [transaction];
     });
   }
@@ -865,7 +925,10 @@ export class GatewaySimulation {
     // their own schedule (M 2026-11-15).
     this.#giveBack(hold.cardId, hold.heldAmountTiyin - amountTiyin, 'unobserved');
     const capturedAt = this.#wireNow();
-    this.#writeHold({ ...hold, settlement: { kind: 'captured', amountTiyin, at: capturedAt } });
+    this.#writeHold({
+      ...hold,
+      settlement: { kind: 'captured', amountTiyin, at: capturedAt, refundedAt: null },
+    });
     return result({ transactionId, cardId: hold.cardId, capturedAt });
   }
 
@@ -913,6 +976,97 @@ export class GatewaySimulation {
     return this.state.cards.get(cardId)?.isDeleted === false;
   }
 
+  // Splits
+
+  createSplit({
+    transactionId,
+    recipients,
+  }: CreateSplitParams): SimulatedOutcome<TransactionReference> {
+    const invalid = validateSplitRecipients(recipients);
+    if (invalid !== undefined) return invalid;
+    const transaction = this.#transaction(transactionId);
+    if (transaction === undefined) {
+      return unknownTransaction(
+        transactionId,
+        'splits.create',
+        error('transaction_not_found'),
+        true,
+      );
+    }
+    if (transaction.isSplit) return error('split_already_done');
+    if (transaction.status !== 'paid') return error('receipt_not_available_for_split');
+    const shares = recipients.map(({ recipientId, amountTiyin }) => ({ recipientId, amountTiyin }));
+    const totalTiyin = shares.reduce((total, share) => total + share.amountTiyin, 0);
+    if (totalTiyin !== transaction.amountTiyin) return error('invalid_amount');
+    // Recipients are looked up after the total (W c1723, c1724); the ids are not reported.
+    if (!shares.every(({ recipientId }) => this.#isSplitRecipient(recipientId))) {
+      return error('recipient_not_found');
+    }
+    this.state.splits.set(transactionId, { transactionId, shares, createdAt: this.#wireNow() });
+    this.#registerSplitReceipt(transaction, splitItems(recipients));
+    return result({ transactionId });
+  }
+
+  resendSplitReceipt({
+    transactionId,
+    recipients,
+  }: ResendSplitReceiptParams): SimulatedOutcome<SplitReceiptResent> {
+    const invalid = validateSplitRecipients(recipients);
+    if (invalid !== undefined) return invalid;
+    const transaction = this.#transaction(transactionId);
+    if (transaction === undefined) {
+      return unknownTransaction(
+        transactionId,
+        'splits.resendReceipt',
+        error('split_not_found'),
+        true,
+      );
+    }
+    if (!transaction.isSplit) return error('split_not_found');
+    if (this.state.receipts.has(transactionId)) return error('ofd_check_already_generated');
+    const items = splitItems(recipients);
+    if (items.length === 0) return error('field_required', { fields: ['items'] });
+    if (transaction.status !== 'paid') {
+      return unsimulated('splits.resendReceipt of a refunded split without a fiscal receipt');
+    }
+    this.#registerSplitReceipt(transaction, items);
+    return result({ transactionId, status: 'sent_to_ofd' });
+  }
+
+  getSplit({ transactionId }: GetSplitParams): SimulatedOutcome<Split> {
+    const transaction = this.#transaction(transactionId);
+    if (transaction === undefined) {
+      return unknownTransaction(transactionId, 'splits.get', error('transaction_not_found'), false);
+    }
+    const split = this.state.splits.get(transactionId);
+    if (split === undefined) return error('split_not_found');
+    const isRefund = transaction.status === 'refunded';
+    const status = isRefund ? 'cancelled' : 'paid';
+    const shares = split.shares.map((share) => ({ ...share, status, createdAt: split.createdAt }));
+    const receipts = this.state.receipts.get(transactionId);
+    if (receipts === undefined) return result({ shares, receipt: null });
+    const receipt = isRefund ? visibleRefund(receipts, this.#now().getTime()) : receipts.sale;
+    if (receipt === 'unknown') {
+      return unsimulated('splits.get of a refund receipt whose timing is unset');
+    }
+    return result({
+      shares,
+      receipt: receipt === null ? null : fiscalReceiptOf(receipt, isRefund),
+    });
+  }
+
+  /** The merchant's own id and the ids Paylov issued to it (W c1740, c2102, c2112). */
+  #isSplitRecipient(recipientId: string): boolean {
+    return recipientId === SIMULATED_MERCHANT_ID || this.#splitRecipientIds.has(recipientId);
+  }
+
+  #registerSplitReceipt(transaction: Transaction, items: readonly FiscalReceiptItem[]): void {
+    // The OFD validates against the parent amount (W c1940, c1942, c1960, c1961).
+    if (items.length === 0 || receiptTotalTiyin(items) !== transaction.amountTiyin) return;
+    if (this.state.receipts.has(transaction.transactionId)) return;
+    this.#registerSaleReceipt(transaction);
+  }
+
   // Fiscalization. The simulated merchant registers its own receipts, as the DEV merchant does
   // (W c1629, c1601). The OFD's item checks (package codes, commitents) are not simulated: any
   // item registers.
@@ -931,7 +1085,7 @@ export class GatewaySimulation {
         false,
       );
     }
-    const isPaid = transaction !== 'unknown' && transaction.status === 'paid';
+    const isPaid = transaction.status === 'paid';
     if (this.state.receipts.has(transactionId)) {
       return isPaid
         ? error('ofd_check_already_generated') // W c1702
@@ -940,13 +1094,12 @@ export class GatewaySimulation {
     if (!isPaid) {
       return unsimulated('fiscalization.registerReceipt of a transaction that is not paid');
     }
-    const lineTotals = items.map(lineTotalTiyin);
-    if (lineTotals.length === 0 || lineTotals.includes(undefined)) {
+    const totalTiyin = receiptTotalTiyin(items);
+    if (items.length === 0 || totalTiyin === undefined) {
       return unsimulated(
         'fiscalization.registerReceipt without items or with a discount above the price',
       );
     }
-    const totalTiyin = lineTotals.reduce<number>((total, line) => total + (line ?? 0), 0);
     if (totalTiyin !== transaction.amountTiyin) {
       // A captured hold totals its captured amount; items for the held amount fail (W c1873).
       return totalTiyin === this.state.holds.get(transactionId)?.heldAmountTiyin
@@ -955,10 +1108,14 @@ export class GatewaySimulation {
             'fiscalization.registerReceipt with items that do not total the transaction amount',
           );
     }
-    // A captured hold registers like a payment, for its captured amount (W c1860, c1874). A sale receipt carries the payment time, not the registration time (W c1608, c1629).
+    return result(registeredOf(this.#registerSaleReceipt(transaction)));
+  }
+
+  #registerSaleReceipt(transaction: Transaction): IssuedReceipt {
+    // The receipt uses the payment time (W c1608, c1629).
     const sale = this.#issueReceipt(transaction.paidOrCreatedAt);
-    this.state.receipts.set(transactionId, { sale, refund: undefined });
-    return result(registeredOf(sale));
+    this.state.receipts.set(transaction.transactionId, { sale, refund: undefined });
+    return sale;
   }
 
   getReceipt({
@@ -978,7 +1135,7 @@ export class GatewaySimulation {
     const receipts = this.state.receipts.get(transactionId);
     if (receipts === undefined) {
       // A paid payment or captured hold without a receipt (W c274, c861, c1305–c1307).
-      return transaction !== 'unknown' && transaction.status === 'paid'
+      return transaction.status === 'paid'
         ? result(null)
         : unsimulated('fiscalization.getReceipt of an unfiscalized transaction that is not paid');
     }
@@ -1003,7 +1160,7 @@ export class GatewaySimulation {
     }
     const [transactionId, receipts] = found;
     // A paid payment is not refunded yet (W c1659, c1664).
-    if (this.state.sales.get(transactionId)?.status !== 'refunded') {
+    if (this.#transaction(transactionId)?.status !== 'refunded') {
       return this.state.holds.has(transactionId)
         ? unsimulated('fiscalization.refundReceipt of a captured hold')
         : error('receipt_not_available_for_operation');

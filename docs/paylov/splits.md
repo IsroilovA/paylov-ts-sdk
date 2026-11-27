@@ -13,8 +13,8 @@ Allocates a paid transaction among Paylov recipients (D). Vendor contracts:
 
 ## Flow
 
-1. Paylov supplies recipient ids. The merchant submits the paid parent transaction and one
-   allocation per recipient; allocations must total the transaction amount
+1. Paylov supplies recipient ids ([recipients](#recipients)). The merchant submits the paid parent
+   transaction and one allocation per recipient; allocations must total the transaction amount
    ([units](README.md#amount-units-by-operation), D, W c1719–c1721, c1740).
 2. Paylov creates a sub-transaction per recipient and marks the parent as split (D): the create
    answers at once, `splitPayment/status/` lists the shares `paid` right after, and
@@ -28,10 +28,9 @@ Allocates a paid transaction among Paylov recipients (D). Vendor contracts:
    split gets its refund receipt seconds later (W c1746–c1749, c1766, c1767, c1810–c1813). `check`
    was never observed; it passes through as an open value (M 2026-11-25).
 
-A captured card hold can be split, per the Paylov team (answer relayed by the maintainer,
-2026-11-26); the docs name only a paid transaction (D). DEV split captured holds by their
-transaction id like a paid payment, into two shares to the merchant's own id, one carrying an item
-priced at the captured amount and one without items:
+A captured card hold can be split (Paylov team, 2026-11-26); the docs name only a paid transaction
+(D). DEV split captured holds by their transaction id like a paid payment, into two shares to the
+merchant's own id, one carrying an item priced at the captured amount and one without items:
 
 - A hold of 1000 SUM captured in full split into two shares of 50000 tiyin; status listed both
   `paid` with the receipt 3 s after the create, `getTransactions` read the hold `payed` with
@@ -48,13 +47,36 @@ c1979–c1984, c1999–c2004). Retried about 10 minutes after the first attempt,
 `transaction_not_available_for_cancel` for both holds, and the shares, receipts and transactions
 read unchanged (W c2008–c2013); an unsplit captured hold had answered `processing_error` again at
 that interval (W c887). So DEV did not refund a split captured hold, and whether the split or the
-earlier failed attempt changed the retry answer is unknown. The SDK's `readRefundState` read every
-one of these transactions `not_refunded`, with and without `isCaptured: true` (live run 2026-11-26).
+earlier failed attempt changed the retry answer is unknown.
 
-On DEV the merchant's own id, the `serviceId` a hold reports ([holds](holds.md#status), W c1714), is
-accepted as a recipient; it is the only recipient that succeeded, so no sub-merchant or third-party
-recipient was observed (W c1724, c1740). Whether recipient ids are
-[sub-merchant ids](sub-merchants.md) is undocumented [OPEN Q108].
+## Recipients
+
+Two kinds of recipient ids were accepted on DEV:
+
+- The merchant's own id, the `serviceId` a hold reports ([holds](holds.md#status), W c1714, c1740).
+- A test recipient id Paylov issued for DEV splits (Paylov team, 2026-11-27).
+
+Unknown UUIDs answered `recipient_not_found` (W c1722, c1724). Whether the issued id belongs to a
+[sub-merchant](sub-merchants.md) or a separate merchant is undocumented. Whether a sub-merchant
+created through the API becomes a recipient is also unobserved, because DEV refuses sub-merchant
+creates.
+
+Splits that included the issued recipient behaved like splits to the merchant's own id:
+
+- A full split to the issued recipient, and splits shared 40/60 with the merchant's own id, answered
+  at once. Status listed every share `paid` right away and still `paid` 5 s later (W c2102–c2104,
+  c2112–c2114).
+- A `payment/cancel` of the parent cancelled every share, the issued recipient's included (W
+  c2106–c2108, c2116–c2118).
+- Item lines with the probe TIN `123654987`, all on the issued recipient's share or spread over both
+  shares, registered one receipt for the parent within 3 s. A refund then registered the refund
+  receipt within 3 s (W c2129–c2131, c2136–c2138, c2141–c2143). An item without `tin` or `pinfl` on
+  the issued recipient's share answered `ofd_comitent_not_provided` (W c2192).
+- Captured holds, in full and partially, split between both recipients. Their refunds answered
+  `processing_error` with every share still `paid`, as for a hold split to the merchant alone (W
+  c2155–c2161, c2166–c2172).
+- Shares are listed in request order, and one recipient may receive several shares around another
+  recipient's (W c2188, c2189).
 
 Split payments are enabled per merchant: a merchant without them gets `400 permission_denied`
 without `data` from both endpoints, also for an unknown transaction or recipient (W c213, c214,
@@ -65,14 +87,14 @@ enabled by 2026-11-25 (W c1708, c1709).
 
 `POST {BASE_URL}/merchant/splitPayment/`
 
-| Name                       | Type                                           | Required | Description                                                                                                                         | Grade                  |
-| -------------------------- | ---------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `transactionId`            | string (UUID)                                  | Yes      | The paid transaction; "transactionId must be a valid UUID".                                                                         | W (c212, c221)         |
-| `recipients`               | array                                          | Yes      | At least 1 item ("List should have at least 1 item after validation, not 0"); a string fails "Input should be a valid list".        | W (c215, c221)         |
-| `recipients[].recipientId` | string (UUID)                                  | Yes      | Recipient id issued by Paylov; "recipientId must be a valid UUID", so the docs example is invalid.                                  | W (c220, c1725), D     |
-| `recipients[].amount`      | integer                                        | Yes      | Amount in tiyin ([units](README.md#amount-units-by-operation)); recipients must total the transaction amount.                       | W (c220, c1721, c1740) |
-| `recipients[].items`       | array of [items](fiscalization.md#item-object) | No       | Fiscal receipt items for this recipient; sending them starts OFD fiscalization.                                                     | W (c220, c1777), D     |
-| `resendOFD`                | boolean                                        | No       | Resubmit the items of an existing split to the OFD ([resend](#resend-to-the-ofd)); "maybe" fails "Input should be a valid boolean". | W (c220, c1806), D     |
+| Name                       | Type                                           | Required | Description                                                                                                                         | Grade                                |
+| -------------------------- | ---------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `transactionId`            | string (UUID)                                  | Yes      | The paid transaction; "transactionId must be a valid UUID".                                                                         | W (c212, c221)                       |
+| `recipients`               | array                                          | Yes      | At least 1 item ("List should have at least 1 item after validation, not 0"); a string fails "Input should be a valid list".        | W (c215, c221)                       |
+| `recipients[].recipientId` | string (UUID)                                  | Yes      | Recipient id issued by Paylov; "recipientId must be a valid UUID", so the docs example is invalid.                                  | W (c220, c1725), D                   |
+| `recipients[].amount`      | integer                                        | Yes      | Amount in tiyin ([units](README.md#amount-units-by-operation)), at least 10; recipients must total the transaction amount.          | W (c220, c1721, c1740, c2184, c2193) |
+| `recipients[].items`       | array of [items](fiscalization.md#item-object) | No       | Fiscal receipt items for this recipient; sending them starts OFD fiscalization.                                                     | W (c220, c1777), D                   |
+| `resendOFD`                | boolean                                        | No       | Resubmit the items of an existing split to the OFD ([resend](#resend-to-the-ofd)); "maybe" fails "Input should be a valid boolean". | W (c220, c1806), D                   |
 
 The item object is the OFD register item: the validator requires the same six fields and leaves
 `discount` optional (W c220 versus c270). `tin` appears only in the example; the table lists `pinfl`
@@ -128,6 +150,11 @@ Success (D, W c1740, [fixture](../../tests/fixtures/splits/create.success.wire.j
   }
 }
 ```
+
+Shares of 0 and -10000 tiyin failed validation with "Input should be greater than or equal to 10"
+under `recipients.<index>.amount` (W c2184, c2193). The live suite saw a 9 tiyin share fail the same
+way, and a 10 tiyin share carrying every item line split and register its receipt (live run
+2026-11-27).
 
 Checks run in this order: request validation, the transaction (`transaction_not_found`,
 `receipt_not_available_for_split`), the amount total, then recipient lookup: an unknown recipient

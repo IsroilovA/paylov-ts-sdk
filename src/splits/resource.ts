@@ -48,7 +48,8 @@ export interface SplitsResource {
    * @throws {@link PaylovInputError} `sdk_invalid_input` for an item without exactly one of `tin`
    * or `pinfl`, before anything is sent.
    * @throws {@link PaylovApiError} `split_already_done`, `invalid_amount` (amounts do not add up),
-   * `recipient_not_found`, `receipt_not_available_for_split` (the transaction is not paid),
+   * `recipient_not_found` (an id Paylov did not issue to the merchant),
+   * `receipt_not_available_for_split` (the transaction is not paid),
    * `transaction_not_found`, `ofd_commitent_or_subcommission_not_active` (an item's `tin` or
    * `pinfl` has no active OFD contract), `permission_denied`.
    *

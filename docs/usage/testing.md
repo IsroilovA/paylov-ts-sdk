@@ -131,9 +131,9 @@ to 400. An unserved token answer fails `assertDone()`.
 
 ## Simulate gateway state
 
-`new PaylovFakeGateway({ simulate: true })` keeps cards, PAN bindings, payments, transactions, holds
-and fiscal receipts in memory and answers unscripted calls from that state, so a test can run a
-whole flow:
+`new PaylovFakeGateway({ simulate: true })` keeps cards, PAN bindings, payments, transactions,
+holds, splits and fiscal receipts in memory and answers unscripted calls from that state, so a test
+can run a whole flow:
 
 ```ts
 import { PaylovClient } from '@isroilov_an/paylov';
@@ -156,24 +156,29 @@ fake.assertDone();
 
 - It covers `cards.startPanBinding`, `cards.confirmPanBinding`, `cards.get`, `cards.list`,
   `cards.delete`, `payments.create`, `payments.pay`, `payments.refund`, `transactions.get`,
-  `transactions.list` (and so `iterate`), the four hold methods, and
-  `fiscalization.registerReceipt`, `getReceipt` and `refundReceipt`. Others still need a script.
-- It reproduces only what Paylov's test environment and documentation show: one capture per hold, a
-  partial capture ends the hold and charges only the captured amount, a dismiss before expiry makes
-  the held funds available to the card again, an expired hold still reads `held`, capture after
-  expiry fails with `hold_time_expired` and releases the hold, an `externalId` is never reused, a
-  second pay answers `transaction_already_payed`, a second refund or a refund of an unpaid payment
-  `transaction_not_available_for_cancel`, a payment of zero `field_not_valid` on `amount`, a
-  transaction id that is not a UUID `validation_error` on `transactionId` (read, pay and refund), an
-  unknown transaction reads as the HTTP 200 miss, and the list shows paid rows only, newest first,
-  by Tashkent day. A dismissed hold's transaction reads `cancel` on the wire, one released by a
-  failed expired capture `refunded`; both decode as `refunded`.
+  `transactions.list` (and so `iterate`), the four hold methods, all three [split methods](#splits),
+  and `fiscalization.registerReceipt`, `getReceipt` and `refundReceipt`. Others still need a script.
+- Holds: one capture per hold; a partial capture ends the hold and charges only the captured amount.
+  A dismiss before expiry frees the held funds. An expired hold still reads `held` until a capture
+  fails with `hold_time_expired` and releases it. A released hold's transaction decodes as
+  `refunded`. An `externalId` is never reused.
+- Refusals follow the gateway: a second pay answers `transaction_already_payed`; a second refund, or
+  a refund of an unpaid payment, open hold or released hold, `transaction_not_available_for_cancel`;
+  a zero payment `field_not_valid`; a non-UUID transaction id `validation_error`. An unknown
+  transaction reads as the HTTP 200 miss.
+- `transactions.list` shows paid rows only, newest first, by Tashkent day.
 - Two answers are the test's to choose, as Paylov's do not follow from what it reports. `addCard`'s
   `spendableTiyin` is what pays and holds may take from that card in total: Paylov documents no link
   between a reported `balanceTiyin` and an approval, so the balance never decides one.
-  `refundWindowMinutes` is how long after a payment a refund succeeds; a later one answers
-  `transaction_not_available_for_cancel` and the payment stays paid, as Paylov answers once its
-  per-merchant cut-off passed.
+  `refundWindowMinutes` starts at payment or hold capture. At or after that cut-off a refund answers
+  `transaction_not_available_for_cancel` and the transaction stays paid.
+- Paylov confirms that captured holds are refundable, but DEV attempts fail. The simulation applies
+  the saved-card refund rules to captured holds. It returns the captured amount to the card on the
+  same unspecified schedule as a sale refund. `transactions.get` reads `refunded` with `cancelledAt`
+  and keeps the captured amount and capture time. `holds.get` continues to report the capture. Pass
+  `isCaptured: true` to `readRefundState` to confirm the refund. A captured hold on a deleted card
+  is ineligible, as observed when the card was deleted before capture. API refunds have no simulated
+  webhook delivery.
 - A deleted card stays deleted: `addCard` with its id throws `TypeError`, so bind a new card with a
   fresh `cardId`. Its open holds still capture in full and release before they expire, as in
   Paylov's test environment; new pays and holds with it answer `card_not_found`.
@@ -181,11 +186,10 @@ fake.assertDone();
   script that call instead.
 - Paylov has a known answer, which the fake leaves to a script, for:
   - a hold below 10 SUM, outside 1 to 40 320 minutes, or with an `externalId` over 64 characters,
-    and a capture below 10 SUM (`validation_error` or `field_not_valid`);
-  - a refund of a captured hold (`processing_error` on Paylov's test environment).
+    and a capture below 10 SUM (`validation_error` or `field_not_valid`).
 - Paylov's behavior is unknown, so script what your case assumes, for:
-  - a pay or hold on a card added without `spendableTiyin` or past it, and every refund without
-    `refundWindowMinutes`;
+  - a pay or hold on a card added without `spendableTiyin` or past it, and an otherwise eligible
+    refund without `refundWindowMinutes`;
   - a pay or hold that fits only once funds Paylov returns on its own schedule reach the card: a
     refund, the uncaptured rest of a partial capture, or a hold released after it expired, by a
     dismiss or by `hold_time_expired`;
@@ -196,8 +200,8 @@ fake.assertDone();
   - a partial capture after the card was deleted, and a capture or release of an expired hold after
     the card was deleted; a capture both expired and above the held amount; a capture after a hold
     released after it expired; a second capture after `hold_time_expired`;
-  - a release of an unknown or non-hold transaction, `holds.get` of a sale, a `payments.pay` of a
-    hold, and a `payments.refund` of a hold that is not captured;
+  - a release of an unknown or non-hold transaction, `holds.get` of a sale, and a `payments.pay` of
+    a hold;
   - a transaction id in another UUID spelling, and a capture or `holds.get` by an id that is not a
     UUID;
   - `cards.get` or `cards.list` of a card the simulation charged, held or deleted, also after a
@@ -252,12 +256,36 @@ catalogue.
   an unknown transaction (`transaction_not_found`), and a `refundReceipt` of an unknown receipt
   (`ofd_check_not_found`), of a sale not refunded (`receipt_not_available_for_operation`) or after
   the refund receipt shows (`ofd_check_already_generated`).
-- `payments.refund` of a fiscalized payment registers its refund receipt, carrying the refund time,
-  `refundReceiptDelaySeconds` later: until then `getReceipt({ isRefund: true })` answers `null`.
-  Without the option, reads of that payment's refund receipt and `transactions.get` are unsimulated.
+- `payments.refund` of a fiscalized payment or captured hold registers its refund receipt, carrying
+  the refund time, `refundReceiptDelaySeconds` later: until then `getReceipt({ isRefund: true })`
+  answers `null`. Without the option, reads of that payment's refund receipt and `transactions.get`
+  are unsimulated.
 - Unsimulated: other items that do not total the amount (Paylov answers `invalid_amount` by a rule
-  it does not document), a register of an unpaid or refunded transaction, and `refundReceipt` of a
-  captured hold or before the refund receipt shows. `checkActivityType` needs a script.
+  it does not document), a register of an unpaid or refunded transaction, and `refundReceipt` of an
+  unrefunded captured hold or before the refund receipt shows. `checkActivityType` needs a script.
+
+### Splits
+
+`splits.create` allocates a paid sale or captured hold. The shares must total the transaction
+amount, or it answers `invalid_amount`. An unpaid or refunded unsplit transaction answers
+`receipt_not_available_for_split`. A repeat, including after refund, answers `split_already_done`.
+`splits.get` answers `split_not_found` for an existing transaction with no split and
+`transaction_not_found` for an unknown transaction. Recipients are the simulated merchant's own id,
+which `holds.get` reports as `serviceId`, and the ids passed as `splitRecipientIds`; any other
+recipient answers `recipient_not_found` once the shares total the transaction amount. A share below
+10 tiyin answers `validation_error` on its `amount`.
+
+- The split uses the parent transaction's OFD receipt. Item lines from all recipients must total the
+  transaction amount exactly for the simulated OFD to issue a receipt immediately. A split with
+  missing items or a mismatched total keeps its shares and has no new receipt. OFD catalogue checks
+  and registration latency are outside the simulation.
+- `splits.resendReceipt` submits items for the existing split and preserves its original shares. A
+  corrected submission answers `sent_to_ofd`. A split with a fiscal receipt answers
+  `ofd_check_already_generated`, and a missing split answers `split_not_found`. A resend on a
+  refunded split without a fiscal receipt is unsimulated.
+- A refund cancels all the shares. `splits.get` shows no receipt until `refundReceiptDelaySeconds`
+  elapses, then returns the refund receipt with `isRefund: true`. A fiscalized split with no delay
+  configured answers `fake_unsimulated` on this read.
 
 ## Run a gateway simulator
 
@@ -277,6 +305,7 @@ const simulator = await startGatewaySimulator({
   stateFile: '.paylov-simulator.json',
   refundWindowMinutes: 24 * 60,
   refundReceiptDelaySeconds: 15,
+  splitRecipientIds: [sellerRecipientId],
   panCards: [{ cardNumber: testCardNumber, cardExpiry: testCardExpiry }],
   onProblem: (problem) => console.warn(`paylov simulator: ${problem}`),
 });
@@ -291,10 +320,10 @@ itself or sits behind a TLS-terminating proxy:
 - Without `tls` it serves plain HTTP on `host` and `port`; put a proxy that terminates TLS in front
   of it and point `baseUrl` at the proxy.
 
-- The state file holds bound cards, transactions, holds and receipts, never a full card number or an
-  OTP. Every change is saved before its response is sent; a failed save answers
-  `fake_state_not_saved` (HTTP 501), an unknown outcome for a write. The PAN cards come from
-  `panCards` at every start.
+- The state file holds bound cards, transactions, holds, split shares and receipts. Full card
+  numbers, OTPs and submitted receipt items stay out of the file. Every change is saved before its
+  response is sent. A failed save answers `fake_state_not_saved` (HTTP 501), an unknown outcome for
+  a write. The PAN cards come from `panCards` at every start.
 - `now` defaults to the system clock; pass a controllable clock in tests. Holds expire by it, so a
   stopped simulator does not stop their clocks.
 - What it does not simulate answers `fake_unsimulated` (HTTP 501). The SDK withholds the gateway's

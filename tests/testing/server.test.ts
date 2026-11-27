@@ -13,6 +13,8 @@ import {
   type PaylovSimulator,
   type PaylovSimulatorOptions,
 } from '../../src/testing/server.js';
+import { decodeSimulationState } from '../../src/testing/simulationState.js';
+import { readRefundState } from '../../src/transactions/state.js';
 import { captureAsync, expectApiError, expectInputError } from '../helpers/asserts.js';
 import { testCardNumber } from '../helpers/cardNumbers.js';
 import { nodeFetch } from '../helpers/nodeFetch.js';
@@ -20,6 +22,17 @@ import { nodeFetch } from '../helpers/nodeFetch.js';
 const USER = 'user-42';
 const CARD_NUMBER = testCardNumber('860000000000001');
 const PAN_CARD: PaylovFakePanCard = { cardNumber: CARD_NUMBER, cardExpiry: '9912' };
+const RECIPIENT = '5eed0000-0000-4000-8000-000000000101';
+const OTHER_RECIPIENT = '5eed0000-0000-4000-8000-000000000102';
+const BOOKING_ITEM = {
+  title: 'Consultation',
+  priceTiyin: 60_000,
+  count: 1,
+  code: 'IKPU',
+  vatPercent: 12,
+  packageCode: 'PACKAGE',
+  tin: 'TIN',
+};
 const CREDENTIALS = {
   consumerKey: 'EXAMPLE-SIMULATOR-KEY',
   consumerSecret: 'EXAMPLE-SIMULATOR-SECRET',
@@ -42,7 +55,11 @@ function temporaryDirectory(): string {
 }
 
 async function start(options: PaylovSimulatorOptions = {}): Promise<PaylovSimulator> {
-  const simulator = await startGatewaySimulator({ panCards: [PAN_CARD], ...options });
+  const simulator = await startGatewaySimulator({
+    panCards: [PAN_CARD],
+    splitRecipientIds: [RECIPIENT, OTHER_RECIPIENT],
+    ...options,
+  });
   running.push(simulator);
   return simulator;
 }
@@ -139,6 +156,162 @@ describe('the gateway simulator server', () => {
       code: 'hold_time_expired',
     });
     expect(await paylov.holds.get({ transactionId })).toMatchObject({ status: 'released' });
+    await paylov.close();
+  });
+
+  it('splits and refunds a partially captured booking across state-file restarts', async () => {
+    const stateFile = join(temporaryDirectory(), 'state.json');
+    let now = new Date('2026-11-12T10:00:00Z');
+    const options = {
+      stateFile,
+      now: () => now,
+      refundWindowMinutes: 5,
+      refundReceiptDelaySeconds: 5,
+    };
+    const first = await start(options);
+    const api = clientOf(first);
+    const cardId = await bindCard(api);
+    const { transactionId } = await api.holds.create({
+      userId: USER,
+      cardId,
+      amountTiyin: 100_000,
+      durationMinutes: 30,
+      externalId: 'booking-split',
+    });
+    const lookup = { transactionId };
+    now = new Date('2026-11-12T10:10:00Z');
+    const { capturedAt } = await api.holds.capture({ ...lookup, amountTiyin: 60_000 });
+    now = new Date('2026-11-12T10:10:01Z');
+    const recipients = [
+      { recipientId: RECIPIENT, amountTiyin: 20_000, items: [BOOKING_ITEM] },
+      { recipientId: OTHER_RECIPIENT, amountTiyin: 40_000 },
+    ];
+    await expect(api.splits.create({ ...lookup, recipients })).resolves.toEqual(lookup);
+    const shares = [
+      { recipientId: RECIPIENT, amountTiyin: 20_000, status: 'paid', createdAt: now },
+      { recipientId: OTHER_RECIPIENT, amountTiyin: 40_000, status: 'paid', createdAt: now },
+    ];
+    await api.close();
+    await first.close();
+
+    const second = await start(options);
+    const worker = clientOf(second);
+    const split = await worker.splits.get(lookup);
+    expect(split.shares).toEqual(shares);
+    expect(split.receipt).toMatchObject({ isRefund: false });
+    expect(split.receipt?.receiptUrl).toMatch(/^https:\/\/ofd\.soliq\.uz\/epi\?/);
+    expect(await worker.fiscalization.getReceipt(lookup)).toEqual(split.receipt);
+    await expectApiError(worker.splits.create({ ...lookup, recipients }), {
+      code: 'split_already_done',
+    });
+
+    now = new Date('2026-11-12T10:14:59Z');
+    const { refundedAt } = await worker.payments.refund(lookup);
+    expect(refundedAt).toEqual(now);
+    const saved = decodeSimulationState(JSON.parse(readFileSync(stateFile, 'utf8')));
+    expect(saved.cards.get(cardId)?.ledger).toEqual({ takenTiyin: 0, returningTiyin: 100_000 });
+    const cancelledShares = shares.map((share) => ({ ...share, status: 'cancelled' }));
+    expect(await worker.splits.get(lookup)).toEqual({ shares: cancelledShares, receipt: null });
+    await worker.close();
+    await second.close();
+
+    now = new Date('2026-11-12T10:15:04Z');
+    const restarted = clientOf(await start(options));
+    const transaction = await restarted.transactions.get(lookup);
+    expect(transaction).toMatchObject({
+      status: 'refunded',
+      isHold: true,
+      isSplit: true,
+      amountTiyin: 60_000,
+      paidOrCreatedAt: capturedAt,
+      cancelledAt: refundedAt,
+    });
+    expect(readRefundState({ transaction, isCaptured: true })).toEqual({
+      kind: 'refunded',
+      refundedAt,
+    });
+    expect(await restarted.holds.get(lookup)).toMatchObject({ status: 'captured', capturedAt });
+    expect(transaction.fiscalReceipts.map(({ isRefund }) => isRefund)).toEqual([false, true]);
+    const refundedSplit = await restarted.splits.get(lookup);
+    expect(refundedSplit).toMatchObject({ shares: cancelledShares, receipt: { isRefund: true } });
+    expect(refundedSplit.receipt?.receiptId).not.toBe(split.receipt?.receiptId);
+    expect(await restarted.fiscalization.getReceipt({ ...lookup, isRefund: true })).toEqual(
+      refundedSplit.receipt,
+    );
+    await expectApiError(restarted.payments.refund(lookup), {
+      code: 'transaction_not_available_for_cancel',
+    });
+    await restarted.close();
+  });
+
+  it('keeps a split when OFD totals fail and accepts a corrected resend', async () => {
+    const paylov = clientOf(await start({ refundWindowMinutes: 60, refundReceiptDelaySeconds: 0 }));
+    const cardId = await bindCard(paylov);
+    const sale = await paylov.payments.create({ amountTiyin: 60_000 });
+    const allocations = [
+      { recipientId: RECIPIENT, amountTiyin: 30_000 },
+      { recipientId: OTHER_RECIPIENT, amountTiyin: 30_000 },
+    ] as const;
+    const corrected = [{ ...allocations[0], items: [BOOKING_ITEM] }, allocations[1]];
+    await expectApiError(paylov.splits.get(sale), { code: 'split_not_found', httpStatus: 400 });
+    await expectApiError(paylov.splits.resendReceipt({ ...sale, recipients: corrected }), {
+      code: 'split_not_found',
+    });
+    await expectApiError(paylov.splits.create({ ...sale, recipients: allocations }), {
+      code: 'receipt_not_available_for_split',
+    });
+    await paylov.payments.pay({ ...sale, cardId, userId: USER });
+    await expectApiError(paylov.splits.create({ ...sale, recipients: [allocations[0]] }), {
+      code: 'invalid_amount',
+    });
+    await paylov.splits.create({
+      ...sale,
+      recipients: [
+        { ...allocations[0], items: [{ ...BOOKING_ITEM, priceTiyin: 30_000 }] },
+        allocations[1],
+      ],
+    });
+    const split = await paylov.splits.get(sale);
+    expect(split).toMatchObject({ shares: allocations, receipt: null });
+    expect(await paylov.splits.resendReceipt({ ...sale, recipients: corrected })).toEqual({
+      ...sale,
+      status: 'sent_to_ofd',
+    });
+    expect(await paylov.splits.get(sale)).toMatchObject({
+      shares: split.shares,
+      receipt: { isRefund: false },
+    });
+    await expectApiError(paylov.splits.resendReceipt({ ...sale, recipients: corrected }), {
+      code: 'ofd_check_already_generated',
+    });
+    await paylov.payments.refund(sale);
+    expect(await paylov.splits.get(sale)).toMatchObject({
+      shares: [{ status: 'cancelled' }, { status: 'cancelled' }],
+      receipt: { isRefund: true },
+    });
+    await paylov.close();
+  });
+
+  it('rejects splitting a refunded unsplit sale and distinguishes an unknown transaction', async () => {
+    const paylov = clientOf(await start({ refundWindowMinutes: 60 }));
+    const unknown = { transactionId: '5eed0000-0000-4000-8000-000000000202' };
+    await expectApiError(paylov.splits.get(unknown), {
+      code: 'transaction_not_found',
+      httpStatus: 400,
+    });
+
+    const cardId = await bindCard(paylov);
+    const sale = await paylov.payments.create({ amountTiyin: 60_000 });
+    await paylov.payments.pay({ ...sale, cardId, userId: USER });
+    await paylov.payments.refund(sale);
+    await expectApiError(
+      paylov.splits.create({
+        ...sale,
+        recipients: [{ recipientId: RECIPIENT, amountTiyin: 60_000 }],
+      }),
+      { code: 'receipt_not_available_for_split' },
+    );
+    await expectApiError(paylov.splits.get(sale), { code: 'split_not_found' });
     await paylov.close();
   });
 

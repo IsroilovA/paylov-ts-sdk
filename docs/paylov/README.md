@@ -11,8 +11,8 @@ reference only through the
 
 The merchant server holds the credentials and calls the REST gateway with a Bearer token. The
 customer (cardholder) enters card data and OTPs either on a Paylov page or through the merchant.
-Paylov calls the merchant back for checkout and some events. Every flow ends in a transaction that
-is read separately from the call that made it.
+Paylov calls the merchant back for checkout and some events. Payments and holds are reconciled with
+a separate transaction read.
 
 - [authentication.md](authentication.md): onboarding, OAuth2 token and refresh, revoke, Bearer
   failures, gateway status, bank list.
@@ -37,10 +37,7 @@ is read separately from the call that made it.
 
 No request takes an idempotency key, and a replayed money-moving call answers a state code that does
 not prove the earlier outcome ([payments](payments.md#common-rules)). Merchant permission gates
-splits, sub-merchants, fiscalization and Card Bind (D). Permissions change per merchant over time:
-the DEV merchant's captures through 2026-11-14 pass only Card Bind and refuse fiscalization, splits
-and sub-merchants (W c082, c271, c1452, c1453), while its captures of 2026-11-25 register a fiscal
-receipt and create a split (W c1629, c1740, c1741).
+splits, sub-merchants, fiscalization and Card Bind (D).
 
 ## Hosts
 
@@ -107,8 +104,8 @@ Additional routes and their evidence limits. SDK scope decisions belong to
 | Area                                                                                | Method and path                                                                                                                                                         | Evidence limit                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Credit to card                                                                      | `POST /merchant/creditToCard/`                                                                                                                                          | No docs page and no success shape; the `amount` unit is unknown (W c237, c241)                                                                                                                           |
-| WLCM fiscalization                                                                  | `POST /merchant/wlcm/fiscal/register/`, `POST /merchant/wlcm/fiscalization/refund/`                                                                                     | No docs page; the schema is only partly known and no success shape exists (W c286–c293)                                                                                                                  |
-| Didox three-party contracts                                                         | `POST /merchant/didox/three-party-contract/`, `GET .../{id}/status/`                                                                                                    | The [docs page](../vendor/paylov/didox.md) is access-restricted and no success shape exists (W c310–c323)                                                                                                |
+| WLCM fiscalization                                                                  | `POST /merchant/wlcm/fiscal/register/`, `POST /merchant/wlcm/fiscalization/refund/`                                                                                     | No docs page; the schema is only partly known and no success was observed (W c286–c293)                                                                                                                  |
+| Didox three-party contracts                                                         | `POST /merchant/didox/three-party-contract/`, `GET .../{id}/status/`                                                                                                    | The [docs page](../vendor/paylov/didox.md) is access-restricted and no success was observed (W c310–c323)                                                                                                |
 | Saved-card `payment/` flow                                                          | `POST /merchant/payment/`                                                                                                                                               | Tester-only receipts-like flow with an `is_hold` flag; zero amount is `invalid_amount` (W c120–c126, c333–c339)                                                                                          |
 | P2P transfers and QR payments                                                       | `p2p/…`, `qr/…`                                                                                                                                                         | The [p2p](../vendor/paylov/subscribe/p2p-transfer.md) and [qr](../vendor/paylov/qr-payments.md) pages are access-restricted and every candidate route is `404 not_found` (W c238, c306–c309, c312, c313) |
 | Bound cards                                                                         | `GET /merchant/boundCards/`                                                                                                                                             | Tester route, `404 not_found` (W c077)                                                                                                                                                                   |
@@ -128,9 +125,8 @@ Additional routes and their evidence limits. SDK scope decisions belong to
   sandbox page bundle on `sandbox.paylov.uz`.
 - **S:** request forms and examples in the sandbox page bundle. They often contradict D and W with
   mock fields and units, so they prove at most that a route exists.
-- **W:** a DEV gateway response, cited as `W (cNNN)` in the maintainer’s numbered live-capture set
-  of redacted request/response pairs, kept in the git-ignored `captures/` and never committed. W is
-  DEV evidence only; production may differ.
+- **W:** a DEV gateway response, cited as `W (cNNN)` from the maintainer’s numbered capture set
+  ([runbook](../runbook.md#probes)). W is DEV evidence only; production may differ.
 - **Live run:** a DEV live-suite observation without a numbered capture, cited as
   `live run YYYY-MM-DD`. It supports logged codes, HTTP statuses, counts, booleans and clock skew,
   never a body shape.

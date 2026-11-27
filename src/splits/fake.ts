@@ -14,7 +14,6 @@ import { ENDPOINTS, type SplitsResource } from './resource.js';
 import type {
   CreateSplitParams,
   GetSplitParams,
-  ResendSplitReceiptParams,
   Split,
   SplitReceiptResent,
   SplitRecipient,
@@ -45,14 +44,7 @@ function encodeSplitReceiptResent(resent: SplitReceiptResent): unknown {
   return { transactionId: resent.transactionId, status: resent.status };
 }
 
-function decodeCreateRequest({ body }: FakeRequest): CreateSplitParams {
-  return {
-    transactionId: body.string('transactionId'),
-    recipients: body.array('recipients', decodeRecipient),
-  };
-}
-
-function decodeResendReceiptRequest({ body }: FakeRequest): ResendSplitReceiptParams {
+function decodeSplitRequest({ body }: FakeRequest): CreateSplitParams {
   return {
     transactionId: body.string('transactionId'),
     recipients: body.array('recipients', decodeRecipient),
@@ -72,13 +64,13 @@ export const SPLIT_FAKES: FakeSpecTable<SplitsResource> = {
   create: {
     endpoint: ENDPOINTS.create,
     encode: encodeTransactionReference,
-    decodeRequest: decodeCreateRequest,
+    decodeRequest: decodeSplitRequest,
     matches: (request) => !isResend(request),
   },
   resendReceipt: {
     endpoint: ENDPOINTS.resendReceipt,
     encode: encodeSplitReceiptResent,
-    decodeRequest: decodeResendReceiptRequest,
+    decodeRequest: decodeSplitRequest,
     matches: isResend,
   },
   get: {

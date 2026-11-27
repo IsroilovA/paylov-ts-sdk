@@ -29,8 +29,11 @@ const split = await paylov.splits.get({ transactionId });
   transaction without a split and `transaction_not_found` for an unknown one. Right after an
   ambiguous `splits.create`, `split_not_found` proves nothing: read again after a backoff before
   splitting again.
-- Recipients are ids Paylov issues. Paylov's test environment accepted only the merchant's own id
-  (the `serviceId` a hold reports); whether sub-merchant ids are recipients is undocumented.
+- Recipients are the merchant's own id (the `serviceId` a hold reports) and ids Paylov issues to the
+  merchant; Paylov answers an unknown id with `recipient_not_found`. Whether a sub-merchant's id is
+  a recipient is undocumented. One recipient may receive several shares, and `splits.get` lists the
+  shares in the order you sent them.
+- Each share must be at least 10 tiyin; Paylov answers a smaller one with `validation_error`.
 - `payments.refund` of the paid transaction refunds the split: every share reads `cancelled`.
 - A captured hold, also a partially captured one, splits like a paid payment, by its transaction id:
   the shares total the captured amount, which `transactions.get` reports as `amountTiyin`. Paylov's

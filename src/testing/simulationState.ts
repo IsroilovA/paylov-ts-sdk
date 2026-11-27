@@ -57,7 +57,12 @@ export interface SimulatedSale {
 /** Where a hold stands; the hold record and its transaction row both derive from it. */
 export type Settlement =
   | { readonly kind: 'held' }
-  | { readonly kind: 'captured'; readonly amountTiyin: number; readonly at: Date }
+  | {
+      readonly kind: 'captured';
+      readonly amountTiyin: number;
+      readonly at: Date;
+      readonly refundedAt: Date | null;
+    }
   | {
       readonly kind: 'released';
       readonly at: Date;
@@ -115,6 +120,18 @@ export interface TransactionReceipts {
   readonly refund: RefundReceipt | undefined;
 }
 
+interface SimulatedShare {
+  readonly recipientId: string;
+  readonly amountTiyin: number;
+}
+
+/** One allocation per submitted recipient; share statuses follow the parent transaction. */
+export interface SimulatedSplit {
+  readonly transactionId: string;
+  readonly createdAt: Date;
+  readonly shares: readonly SimulatedShare[];
+}
+
 export interface SimulationState {
   nextId: number;
   nextReceiptId: number;
@@ -122,6 +139,7 @@ export interface SimulationState {
   readonly cardLists: Map<string, CachedCardList>;
   readonly sales: Map<string, SimulatedSale>;
   readonly holds: Map<string, SimulatedHold>;
+  readonly splits: Map<string, SimulatedSplit>;
   /** Keyed by the binding's `cardId`. */
   readonly bindings: Map<string, PanBinding>;
   /** Keyed by transaction id. */
@@ -136,6 +154,7 @@ export function emptySimulationState(): SimulationState {
     cardLists: new Map(),
     sales: new Map(),
     holds: new Map(),
+    splits: new Map(),
     bindings: new Map(),
     receipts: new Map(),
   };
@@ -183,7 +202,12 @@ function encodeSale(sale: SimulatedSale): unknown {
 function encodeSettlement(settlement: Settlement): unknown {
   if (settlement.kind === 'held') return { kind: 'held' };
   if (settlement.kind === 'captured') {
-    return { kind: 'captured', amountTiyin: settlement.amountTiyin, at: settlement.at.getTime() };
+    return {
+      kind: 'captured',
+      amountTiyin: settlement.amountTiyin,
+      at: settlement.at.getTime(),
+      ...nullableEntry('refundedAt', msOf(settlement.refundedAt)),
+    };
   }
   return {
     kind: 'released',
@@ -201,6 +225,10 @@ function encodeHold({ maskedCardNumber, ...hold }: SimulatedHold): unknown {
     expiresAt: hold.expiresAt.getTime(),
     settlement: encodeSettlement(hold.settlement),
   };
+}
+
+function encodeSplit(split: SimulatedSplit): unknown {
+  return { ...split, createdAt: split.createdAt.getTime() };
 }
 
 function encodeBinding(binding: PanBinding): unknown {
@@ -237,6 +265,7 @@ export function encodeSimulationState(state: SimulationState): unknown {
     cardLists: [...state.cardLists.values()].map(encodeCachedCardList),
     sales: [...state.sales.values()].map(encodeSale),
     holds: [...state.holds.values()].map(encodeHold),
+    splits: [...state.splits.values()].map(encodeSplit),
     bindings: [...state.bindings.values()].map(encodeBinding),
     receipts: [...state.receipts].map(([id, receipts]) => encodeReceipts(id, receipts)),
   };
@@ -304,7 +333,12 @@ function decodeSettlement(params: Params): Settlement {
   const kind = params.literal('kind', ['held', 'captured', 'released']);
   if (kind === 'held') return { kind };
   if (kind === 'captured') {
-    return { kind, amountTiyin: params.tiyin('amountTiyin'), at: dateAt(params, 'at') };
+    return {
+      kind,
+      amountTiyin: params.tiyin('amountTiyin'),
+      at: dateAt(params, 'at'),
+      refundedAt: optionalDateAt(params, 'refundedAt'),
+    };
   }
   return {
     kind,
@@ -326,6 +360,17 @@ function decodeHold(params: Params): SimulatedHold {
     expiresAt: dateAt(params, 'expiresAt'),
     serviceId: params.string('serviceId'),
     settlement: params.object('settlement', decodeSettlement),
+  };
+}
+
+function decodeSplit(params: Params): SimulatedSplit {
+  return {
+    transactionId: params.string('transactionId'),
+    createdAt: dateAt(params, 'createdAt'),
+    shares: params.array('shares', (share) => ({
+      recipientId: share.string('recipientId'),
+      amountTiyin: share.tiyin('amountTiyin'),
+    })),
   };
 }
 
@@ -397,6 +442,7 @@ export function decodeSimulationState(value: unknown): SimulationState {
     ),
     sales: byKey(state.array('sales', decodeSale), (sale) => sale.transactionId),
     holds: byKey(state.array('holds', decodeHold), (hold) => hold.transactionId),
+    splits: byKey(state.optionalArray('splits', decodeSplit) ?? [], (split) => split.transactionId),
     bindings: byKey(state.array('bindings', decodeBinding), (binding) => binding.cardId),
     receipts: new Map(state.array('receipts', decodeReceipts)),
   };

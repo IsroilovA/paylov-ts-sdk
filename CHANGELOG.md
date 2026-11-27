@@ -3,6 +3,20 @@
 Consumer-visible changes, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `/testing` simulates `splits.create`, `splits.get` and `splits.resendReceipt` for paid sales and
+  captured holds, including OFD receipts and share cancellation on refund. The standalone gateway
+  simulator persists splits across restarts. Configure issued recipients with `splitRecipientIds`.
+- `/testing` simulates full refunds of captured holds. The refund window starts at capture, and
+  `transactions.get` reports the refund time for reconciliation with `readRefundState`.
+
+### Changed
+
+- Documented which recipient ids splits accept and the 10 tiyin share minimum.
+
 ## [0.0.8] - 2026-11-27
 
 ### Changed

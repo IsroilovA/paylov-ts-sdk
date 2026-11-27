@@ -70,11 +70,11 @@ try {
   anything was sent reports `isSent: false`.
 - **Retries.** Only GETs retry a failure: `maxGetRetries` times (an integer from 0 to 5, default 2),
   after a network error, a timeout or HTTP 500/502/503/504, with a jittered backoff of up to 200 ms
-  that doubles per retry. POST and DELETE never retry a failure, whatever `maxGetRetries` says; the
-  token replay below is the only second send of any method. Nothing retries a 429: wait
-  `retryAfterSeconds`, on a `PaylovApiError` or, when the body is unusable, a `PaylovProtocolError`.
-  A 429's `Retry-After` header sets it, ahead of a delay in its body, only as delta-seconds from 1
-  to 3600. A caller abort while a 429 body is read is `sdk_aborted`.
+  that doubles per retry. POST and DELETE never retry a failure, whatever `maxGetRetries` says; they
+  are sent twice only by the token replay below. Nothing retries a 429: wait `retryAfterSeconds`, on
+  a `PaylovApiError` or, when the body is unusable, a `PaylovProtocolError`. A 429's `Retry-After`
+  header sets it, ahead of a delay in its body, only as delta-seconds from 1 to 3600. A caller abort
+  while a 429 body is read is `sdk_aborted`.
 - **Tokens.** Acquired lazily on the first authenticated call, shared by concurrent calls and
   refreshed before expiry. After an authenticated HTTP 401 `permission_denied` in Paylov's complete
   error envelope (`result: null` and a string `error.message`), which the gateway sends before it

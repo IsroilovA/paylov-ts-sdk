@@ -15,6 +15,7 @@ import type {
   RequestMatcher,
   RequestOf,
 } from '../core/fake.js';
+import { isUuid } from '../core/decoding.js';
 import { isNonNegativeSafeInteger } from '../core/numbers.js';
 import { isClock, systemClock } from '../core/time.js';
 import type { Endpoint } from '../core/types.js';
@@ -24,6 +25,8 @@ import { HOLD_FAKES, type HoldsFakeReplies } from '../holds/fake.js';
 import type { HoldsResource } from '../holds/resource.js';
 import { PAYMENT_FAKES } from '../payments/fake.js';
 import type { PaymentsResource } from '../payments/resource.js';
+import { SPLIT_FAKES } from '../splits/fake.js';
+import type { SplitsResource } from '../splits/resource.js';
 import { TRANSACTION_FAKES } from '../transactions/fake.js';
 import type { TransactionsResource } from '../transactions/resource.js';
 import { methodFailureAnswer, successAnswer, type Answer } from './answers.js';
@@ -67,6 +70,12 @@ export const FISCALIZATION_SIMULATORS: SimulatorTable<FiscalizationResource> = {
   registerReceipt: (simulation, params) => simulation.registerReceipt(params),
   getReceipt: (simulation, params) => simulation.getReceipt(params),
   refundReceipt: (simulation, params) => simulation.refundReceipt(params),
+};
+
+export const SPLIT_SIMULATORS: SimulatorTable<SplitsResource> = {
+  create: (simulation, params) => simulation.createSplit(params),
+  get: (simulation, params) => simulation.getSplit(params),
+  resendReceipt: (simulation, params) => simulation.resendSplitReceipt(params),
 };
 
 /** A simulated answer encoded with the method's own spec, or why the simulation has none. */
@@ -139,6 +148,7 @@ export const SIMULATED_ROUTES: readonly SimulatedRoute[] = [
   ...routesOf('transactions', TRANSACTION_FAKES, TRANSACTION_SIMULATORS),
   ...routesOf('holds', HOLD_FAKES, HOLD_SIMULATORS),
   ...routesOf('fiscalization', FISCALIZATION_FAKES, FISCALIZATION_SIMULATORS),
+  ...routesOf('splits', SPLIT_FAKES, SPLIT_SIMULATORS),
 ];
 
 /** The simulation options shared by the fake gateway and the simulator server. */
@@ -149,20 +159,26 @@ export interface PaylovSimulationOptions {
    */
   readonly now?: () => Date;
   /**
-   * How long after a saved-card payment the simulation refunds it, in whole minutes, measured
-   * between the whole-second times the gateway reports; a later refund answers
-   * `transaction_not_available_for_cancel` and the payment stays paid. Paylov agrees the refund
-   * cut-off with each merchant, so set yours; unset, every refund of a paid payment answers
-   * `fake_unsimulated`. A non-negative safe integer.
+   * How long after a saved-card payment or a hold capture the simulation refunds it, in whole
+   * minutes between the whole-second times the gateway reports. At or after that cut-off, the
+   * refund answers `transaction_not_available_for_cancel` and the transaction stays paid. Paylov
+   * agrees the refund cut-off with each merchant. Without this option, an otherwise eligible
+   * refund answers `fake_unsimulated`. A non-negative safe integer.
    */
   readonly refundWindowMinutes?: number;
   /**
-   * How many seconds after the refund of a fiscalized payment its refund receipt shows in
-   * `fiscalization.getReceipt` and `transactions.get`. Paylov registers it in the background,
-   * seconds to minutes later, so choose; unset, those reads answer `fake_unsimulated`. A
-   * non-negative safe integer.
+   * How many seconds after refunding a fiscalized transaction its refund receipt shows in
+   * `fiscalization.getReceipt`, `transactions.get` and, for a split, `splits.get`. Paylov registers
+   * it in the background. Without this option, those refund receipt reads answer
+   * `fake_unsimulated`. A non-negative safe integer.
    */
   readonly refundReceiptDelaySeconds?: number;
+  /**
+   * The split recipient ids Paylov issued to the merchant. `splits.create` accepts these and the
+   * merchant's own id, which `holds.get` reports as `serviceId`, and answers `recipient_not_found`
+   * for any other recipient. UUIDs.
+   */
+  readonly splitRecipientIds?: readonly string[];
 }
 
 /** The simulation clock, failing loudly on a value the wire cannot carry. */
@@ -174,6 +190,14 @@ function checkedClock(now: () => Date, owner: string): () => Date {
     }
     return date;
   };
+}
+
+function readRecipientIds(value: unknown): ReadonlySet<string> {
+  if (value === undefined) return new Set();
+  if (!Array.isArray(value) || !value.every(isUuid)) {
+    throw new TypeError('splitRecipientIds must be an array of UUIDs');
+  }
+  return new Set(value);
 }
 
 function optionalCount(value: unknown, name: string): number | undefined {
@@ -188,7 +212,7 @@ export function readSimulationSettings(
   options: PaylovSimulationOptions,
   owner: string,
 ): SimulationSettings {
-  const { now, refundWindowMinutes, refundReceiptDelaySeconds } = options;
+  const { now, refundWindowMinutes, refundReceiptDelaySeconds, splitRecipientIds } = options;
   if (now !== undefined && !isClock(now)) throw new TypeError('now must be a function');
   return {
     now: checkedClock(now ?? systemClock, owner),
@@ -197,5 +221,6 @@ export function readSimulationSettings(
       refundReceiptDelaySeconds,
       'refundReceiptDelaySeconds',
     ),
+    splitRecipientIds: readRecipientIds(splitRecipientIds),
   };
 }

@@ -595,6 +595,43 @@ describe('the simulated gateway: evidenced refusals', () => {
 
   it.each([
     [
+      'a refund of an uncaptured hold',
+      async ({ paylov }: Simulated) => paylov.payments.refund(await paylov.holds.create(HOLD)),
+      'transaction_not_available_for_cancel',
+    ],
+    [
+      'a refund of a hold released after it expired',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
+        advance(2);
+        await expectApiError(paylov.holds.capture({ ...created, amountTiyin: 100_000 }), {
+          code: 'hold_time_expired',
+        });
+        return paylov.payments.refund(created);
+      },
+      'transaction_not_available_for_cancel',
+    ],
+    [
+      'a refund at the captured hold refund cut-off',
+      async ({ paylov, advance }: Simulated) => {
+        const created = await paylov.holds.create(HOLD);
+        await paylov.holds.capture({ ...created, amountTiyin: 100_000 });
+        advance(REFUND_WINDOW_MINUTES);
+        return paylov.payments.refund(created);
+      },
+      'transaction_not_available_for_cancel',
+    ],
+    [
+      'a refund of a hold captured after its card was deleted',
+      async ({ paylov }: Simulated) => {
+        const created = await paylov.holds.create(HOLD);
+        await paylov.cards.delete({ cardId: CARD.cardId });
+        await paylov.holds.capture({ ...created, amountTiyin: 100_000 });
+        return paylov.payments.refund(created);
+      },
+      'transaction_not_available_for_cancel',
+    ],
+    [
       'a pay of an unknown transaction',
       ({ paylov }: Simulated) => paylov.payments.pay({ transactionId: UNKNOWN_ID, ...PAY }),
       'transaction_not_found',
@@ -648,6 +685,68 @@ describe('the simulated gateway: evidenced refusals', () => {
   });
 });
 
+const ISSUED_RECIPIENT = '00000000-0000-4000-8000-0000000000e2';
+
+async function paidSale(simulation: Simulated): Promise<string> {
+  const { transactionId } = await sell(simulation, 100_000);
+  return transactionId;
+}
+
+/** A hold without a `serviceId` reports the merchant's own id, as on the gateway. */
+async function merchantId({ paylov }: Simulated): Promise<string> {
+  const hold = await paylov.holds.create(HOLD);
+  const { serviceId } = await paylov.holds.get(hold);
+  await paylov.holds.release(hold);
+  return serviceId;
+}
+
+describe('the simulated gateway: split recipients', () => {
+  it('splits to the merchant and the recipients Paylov issued, and refuses any other', async () => {
+    const simulation = simulated({ splitRecipientIds: [ISSUED_RECIPIENT] });
+    const { fake, paylov } = simulation;
+    const ownId = await merchantId(simulation);
+    const transactionId = await paidSale(simulation);
+    const unknown = [
+      { recipientId: ownId, amountTiyin: 40_000 },
+      { recipientId: UNKNOWN_ID, amountTiyin: 60_000 },
+    ];
+    await expectApiError(paylov.splits.create({ transactionId, recipients: unknown }), {
+      code: 'recipient_not_found',
+    });
+    // The total is checked before the recipients.
+    await expectApiError(
+      paylov.splits.create({
+        transactionId,
+        recipients: [{ recipientId: UNKNOWN_ID, amountTiyin: 50_000 }],
+      }),
+      { code: 'invalid_amount' },
+    );
+
+    const recipients = [
+      { recipientId: ownId, amountTiyin: 40_000 },
+      { recipientId: ISSUED_RECIPIENT, amountTiyin: 60_000 },
+    ];
+    await paylov.splits.create({ transactionId, recipients });
+    const { shares } = await paylov.splits.get({ transactionId });
+    expect(shares).toMatchObject(recipients.map((share) => ({ ...share, status: 'paid' })));
+    fake.assertDone();
+  });
+
+  it('refuses a share below 10 tiyin on its amount field', async () => {
+    const simulation = simulated({ splitRecipientIds: [ISSUED_RECIPIENT] });
+    const transactionId = await paidSale(simulation);
+    const recipients = [
+      { recipientId: ISSUED_RECIPIENT, amountTiyin: 99_991 },
+      { recipientId: ISSUED_RECIPIENT, amountTiyin: 9 },
+    ];
+    await expectApiError(simulation.paylov.splits.create({ transactionId, recipients }), {
+      code: 'validation_error',
+      fields: ['recipients.1.amount'],
+    });
+    simulation.fake.assertDone();
+  });
+});
+
 describe('the simulated gateway: scripted overrides and limits', () => {
   it('serves a scripted failure first and leaves the state as it was', async () => {
     const { fake, paylov } = simulated();
@@ -681,15 +780,6 @@ describe('the simulated gateway: scripted overrides and limits', () => {
 
   it.each([
     [
-      'a refund of a captured hold',
-      async ({ paylov }: Simulated) => {
-        const created = await paylov.holds.create(HOLD);
-        await paylov.holds.capture({ ...created, amountTiyin: 100_000 });
-        return paylov.payments.refund(created);
-      },
-      'payments.refund',
-    ],
-    [
       'a partial capture after the card was deleted',
       async ({ paylov }: Simulated) => {
         const created = await paylov.holds.create(HOLD);
@@ -707,16 +797,6 @@ describe('the simulated gateway: scripted overrides and limits', () => {
         return paylov.holds.capture({ ...created, amountTiyin: 100_000 });
       },
       'holds.capture',
-    ],
-    [
-      'a refund of a hold released after it expired',
-      async ({ paylov, advance }: Simulated) => {
-        const created = await paylov.holds.create({ ...HOLD, durationMinutes: 1 });
-        advance(2);
-        await captureAsync(paylov.holds.capture({ ...created, amountTiyin: 100_000 }));
-        return paylov.payments.refund(created);
-      },
-      'payments.refund',
     ],
     [
       'a second capture after hold_time_expired',
@@ -1003,6 +1083,12 @@ describe('the simulated gateway: scripted overrides and limits', () => {
     );
     expect(() => new PaylovFakeGateway({ refundWindowMinutes: 60 })).toThrow(
       'refundWindowMinutes needs simulate: true',
+    );
+    expect(
+      () => new PaylovFakeGateway({ simulate: true, splitRecipientIds: ['recipient-1'] }),
+    ).toThrow('splitRecipientIds must be an array of UUIDs');
+    expect(() => new PaylovFakeGateway({ splitRecipientIds: [SERVICE_ID] })).toThrow(
+      'splitRecipientIds needs simulate: true',
     );
   });
 });

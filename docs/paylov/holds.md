@@ -31,24 +31,20 @@ Charge captures once, possibly partially ([charge](#charge)). Deleting the card 
 holds: after [`deleteUserCard/`](cards.md#delete-user-card) an open hold still read `hold`, charged
 and dismissed, also 30 seconds after the delete, when `getCard/` already answered `card_not_found`
 (W c1901–c1908, c1918–c1926). A captured hold is fiscalized for its captured amount
-([register](fiscalization.md#register-fiscal-receipt)). The API refunds a captured hold and a
-captured hold can be [split](splits.md#flow), per the Paylov team (answers relayed by the
-maintainer, 2026-11-25 and 2026-11-26). DEV split fully and partially captured holds for their
-captured amount (W c1975, c1976, c1995, c1996). Refunding a captured hold failed on DEV
-([cancel](payments.md#cancel-refund-payment)), split or not, and the hold status stayed `paid` and
-the transaction `payed` (W c561, c887, c1529, c1530, c1981, c2001, c2009, c2012).
+([register](fiscalization.md#register-fiscal-receipt)). A captured hold can be
+[split](splits.md#flow) and [refunded](payments.md#cancel-refund-payment); those pages hold the DEV
+results.
 
-Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)), and
-only a charge attempt (`hold_time_expired`) or a [dismiss](#dismiss) moves them to `cancelled`. The
-docs state neither when the `time` countdown starts nor the exact moment charge starts answering
-`hold_time_expired` (D); captures bound it only coarsely, with a 1-minute hold refusing charge about
-2.5 minutes after create ([observed behavior](#observed-behavior)). A hold's duration cannot be
-extended after create; 28 days is the maximum, per the Paylov team (answer relayed by the
-maintainer, 2026-11-25: "no, it cannot. 28 days max", translated from Russian). After an uncertain
-create, look the hold up by its `externalId`; a create the client aborted after sending still ran
-and read `hold` a second later (W c1581–c1587). A found record or a duplicate-id error proves only
-that a record with that `externalId` exists, not that it reserves funds: it may be released or
-declined ([create](#create), W c1284, c1285, c1555, c1557).
+Expiry does not release a hold by itself: expired holds keep reading `hold` ([status](#status)); a
+charge attempt (`hold_time_expired`) and a [dismiss](#dismiss) were seen to move them to
+`cancelled`. The docs state neither when the `time` countdown starts nor the exact moment charge
+starts answering `hold_time_expired` (D); captures bound it only coarsely, with a 1-minute hold
+refusing charge about 2.5 minutes after create ([observed behavior](#observed-behavior)). A hold's
+duration cannot be extended after create, and 28 days is the maximum (Paylov team, 2026-11-25).
+After an uncertain create, look the hold up by its `externalId`; a create the client aborted after
+sending still ran and read `hold` a second later (W c1581–c1587). A found record or a duplicate-id
+error proves only that a record with that `externalId` exists, not that it reserves funds: it may be
+released or declined ([create](#create), W c1284, c1285, c1555, c1557).
 
 ## Create
 

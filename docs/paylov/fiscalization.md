@@ -30,10 +30,8 @@ checks. No money moves here. Grades: [evidence](README.md#evidence).
   (D). Live, the cancel registers the refund receipt seconds to minutes later (W c1666, c1689,
   c1691).
 
-A merchant fiscalizes in one of two modes, per the Paylov team (answer relayed by the maintainer,
-2026-11-25: "it can be done by the merchant itself or automatically (if one fiscal product number is
-fine)", translated from Russian): it registers receipts itself, or Paylov fiscalizes its payments
-automatically with one fiscal product code for every item. No page states automatic fiscalization
+A merchant registers receipts itself, or Paylov fiscalizes its payments automatically with one
+fiscal product code for every item (Paylov team, 2026-11-25). No page states automatic fiscalization
 (D). The DEV merchant registers its receipts through register: register succeeds, set-receipt
 answers `permission_denied` (W c1629, c1601), and two payments it did not register kept an empty
 `ofd` array for more than four minutes after payment (W c1700, c1701). An item line totals

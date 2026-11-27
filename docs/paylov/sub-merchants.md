@@ -15,10 +15,10 @@ Creates a child merchant under the calling merchant (D). Vendor pages:
 The parent merchant submits the child's name and tax identity, using the parent's organization or a
 new one (D). A `201` returns the child's id and name; Paylov staff then activate it, and no endpoint
 reads, lists or reports the activation of sub-merchants (D). Creation moves no money; OFD settings
-describe the child (D). Whether the id is a [split recipient id](splits.md) is undocumented. A
-duplicate within the same parent answers `sub_merchant_already_created`, with no documented way to
-find the existing child (D). On DEV the permission gate prevents a successful create (W c301,
-c1453).
+describe the child (D). Whether the id is a [split recipient id](splits.md#recipients) is
+undocumented. A duplicate within the same parent answers `sub_merchant_already_created`, with no
+documented way to find the existing child (D). On DEV the permission gate prevents a successful
+create (W c301, c1453).
 
 ## Create sub-merchant
 

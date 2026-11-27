@@ -30,6 +30,7 @@ function busyState(): SimulationState {
     now: () => now,
     refundWindowMinutes: 60,
     refundReceiptDelaySeconds: 15,
+    splitRecipientIds: new Set(),
   };
   const simulation = new GatewaySimulation(settings);
   simulation.addPanCard(readPanCard({ cardNumber: CARD_NUMBER, cardExpiry: '9912' }));
@@ -87,6 +88,7 @@ describe('the simulation state', () => {
         now: () => new Date('2026-11-12T11:00:00Z'),
         refundWindowMinutes: undefined,
         refundReceiptDelaySeconds: 15,
+        splitRecipientIds: new Set(),
       },
       state,
     );

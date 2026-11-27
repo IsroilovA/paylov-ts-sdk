@@ -34,6 +34,11 @@ interface LiveConfig {
   readonly refund: boolean;
   /** `PAYLOV_LIVE_SLOW=1` (with writes): the hold-expiry lane (about 2.5 minutes). */
   readonly slow: boolean;
+  /**
+   * `PAYLOV_SPLIT_RECIPIENT_ID` (with writes): the recipient Paylov issued the test merchant; the
+   * splits write lane needs it.
+   */
+  readonly splitRecipientId: string | undefined;
 }
 
 type LiveGate =
@@ -57,6 +62,7 @@ function readConfig(): LiveConfig | string {
     writes,
     refund: writes && flag('PAYLOV_LIVE_REFUND'),
     slow: writes && flag('PAYLOV_LIVE_SLOW'),
+    splitRecipientId: writes ? env('PAYLOV_SPLIT_RECIPIENT_ID') : undefined,
   };
 }
 

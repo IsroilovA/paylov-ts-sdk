@@ -57,6 +57,7 @@ import {
   PAYMENT_SIMULATORS,
   readSimulationSettings,
   simulatedAnswer,
+  SPLIT_SIMULATORS,
   TRANSACTION_SIMULATORS,
   type PaylovSimulationOptions,
   type Simulator,
@@ -104,10 +105,10 @@ type ReadOutcome =
 /** Options of `PaylovFakeGateway`. */
 export interface PaylovFakeGatewayOptions extends PaylovSimulationOptions {
   /**
-   * Keep bound cards, PAN bindings, payments, transactions, holds and fiscal receipts in memory,
-   * and answer requests that no scripted answer takes from that state. Default `false`: every
-   * request must be scripted, and `refundWindowMinutes` and `refundReceiptDelaySeconds` are
-   * refused.
+   * Keep bound cards, PAN bindings, payments, transactions, holds, split shares and fiscal receipts
+   * in memory, and use that state to answer unscripted requests. Default `false`: every
+   * request must be scripted, and `refundWindowMinutes`, `refundReceiptDelaySeconds` and
+   * `splitRecipientIds` are refused.
    */
   readonly simulate?: boolean;
 }
@@ -198,8 +199,13 @@ export class PaylovFakeGateway {
     const { simulate = false, now } = options;
     if (typeof simulate !== 'boolean') throw new TypeError('simulate must be a boolean');
     const settings = readSimulationSettings(options, 'PaylovFakeGateway');
-    for (const name of ['refundWindowMinutes', 'refundReceiptDelaySeconds'] as const) {
-      if (settings[name] !== undefined && !simulate) {
+    const simulationOnly = [
+      'refundWindowMinutes',
+      'refundReceiptDelaySeconds',
+      'splitRecipientIds',
+    ] as const;
+    for (const name of simulationOnly) {
+      if (options[name] !== undefined && !simulate) {
         throw new TypeError(`${name} needs simulate: true`);
       }
     }
@@ -243,7 +249,7 @@ export class PaylovFakeGateway {
       release: holds('release'),
       get: holds('get'),
     };
-    const splits = this.#surface('splits', SPLIT_FAKES);
+    const splits = this.#surface('splits', SPLIT_FAKES, SPLIT_SIMULATORS);
     this.splits = {
       create: splits('create'),
       resendReceipt: splits('resendReceipt'),

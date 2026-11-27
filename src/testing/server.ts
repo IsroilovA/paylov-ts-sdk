@@ -77,7 +77,8 @@ export interface PaylovSimulatorOptions extends PaylovSimulationOptions {
   readonly tls?: PaylovSimulatorTls;
   /**
    * Persist the state to this JSON file, written atomically after every change and read at start.
-   * It holds bound cards, transactions, holds and receipts, never a full card number or an OTP.
+   * It holds bound cards, transactions, holds, split shares and receipts. Full card numbers, OTPs
+   * and submitted receipt items stay out of the file.
    */
   readonly stateFile?: string;
   /** Persist the state elsewhere; not with `stateFile`. Without either the state lives in memory. */

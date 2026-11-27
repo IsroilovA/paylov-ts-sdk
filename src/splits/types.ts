@@ -16,9 +16,13 @@ export interface CreateSplitParams {
 }
 
 export interface SplitRecipient {
-  /** Recipient id issued by Paylov (UUID); Paylov answers `validation_error` for another shape. */
+  /**
+   * The merchant's own id, which `holds.get` reports as `serviceId`, or a recipient id Paylov
+   * issued to the merchant (UUID). Paylov answers `recipient_not_found` for any other UUID and
+   * `validation_error` for another shape. One id may receive several shares.
+   */
   readonly recipientId: string;
-  /** Integer tiyin. */
+  /** Integer tiyin; Paylov answers `validation_error` below 10. */
   readonly amountTiyin: number;
   /**
    * Receipt lines carried on this recipient's share. Paylov registers one receipt for the whole

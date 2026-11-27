@@ -11,9 +11,8 @@ Unofficial server-side TypeScript SDK for the [Paylov](https://paylov.uz) paymen
 
 - Card binding by card number and OTP; saved-card and one-off payments; full refunds.
 - Holds with single capture or release, and OFD fiscal receipts.
-- Splits of a paid transaction among recipients identified by Paylov-issued ids, with each split's
-  fiscal receipt. Only the merchant's own id has been verified as a recipient on Paylov's test
-  environment.
+- Splits of a paid transaction among the merchant and Paylov-issued recipients, with one fiscal
+  receipt for the transaction.
 - Transaction reconciliation and authenticated webhook decoding.
 - Integer tiyin money, typed errors with recovery guidance for ambiguous failures, GET-only retries,
   and metadata-only logging that never records credentials or card data.
